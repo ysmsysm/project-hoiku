@@ -9,7 +9,7 @@ type ShortageInputListProps = {
 
 export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
   return (
-    <section className="rounded-[28px] bg-white p-5 shadow-soft ring-1 ring-[#edf3ef]">
+    <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
       <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
         持ち物
       </h2>
@@ -55,7 +55,7 @@ export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
                     className={`h-8 w-8 shrink-0 rounded-full border-2 transition active:scale-95 ${
                       isChecked
                         ? "border-hoiku-green bg-hoiku-green"
-                        : "border-[#cfdcd4] bg-white"
+                        : "border-[#cfdcd4] bg-surface"
                     }`}
                   />
                 );

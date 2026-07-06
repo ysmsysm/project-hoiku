@@ -15,7 +15,7 @@ export function PreparationChecklist({
 
   if (items.length === 0) {
     return (
-      <section className="rounded-[28px] bg-white p-5 shadow-soft ring-1 ring-[#edf3ef]">
+      <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
         <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
           持ち物
         </h2>
@@ -27,7 +27,7 @@ export function PreparationChecklist({
   }
 
   return (
-    <section className="rounded-[28px] bg-white p-5 shadow-soft ring-1 ring-[#edf3ef]">
+    <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
           バッグに入れるもの
@@ -54,7 +54,7 @@ export function PreparationChecklist({
                 className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg border-2 text-[15px] font-bold ${
                   item.checked
                     ? "border-hoiku-green bg-hoiku-green text-white"
-                    : "border-[#cfdcd4] bg-white text-transparent"
+                    : "border-[#cfdcd4] bg-surface text-transparent"
                 }`}
               >
                 ✓

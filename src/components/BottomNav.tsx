@@ -21,7 +21,7 @@ const tabs: Array<{
 
 export function BottomNav({ activeTab, onChange }: BottomNavProps) {
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-[430px] border-t border-[#edf3ef] bg-white/95 px-5 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 backdrop-blur">
+    <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-[430px] border-t border-[#edf3ef] bg-surface/95 px-5 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 backdrop-blur">
       <div className="grid grid-cols-3 gap-1 text-center text-[12px] font-bold">
         {tabs.map(({ id, label, Icon }) => {
           const isActive = activeTab === id;

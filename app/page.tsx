@@ -443,7 +443,7 @@ export default function Home() {
               onChange={updateShortageCount}
             />
 
-            <section className="rounded-[28px] bg-white p-5 shadow-soft ring-1 ring-[#edf3ef]">
+            <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
@@ -479,7 +479,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="rounded-[28px] bg-white p-5 shadow-soft ring-1 ring-[#edf3ef]">
+            <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
               <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
                 ざっくり管理
               </h2>
@@ -525,7 +525,7 @@ export default function Home() {
         ) : null}
 
         {activeTab === "settings" ? (
-          <section className="rounded-[28px] bg-white p-5 shadow-soft ring-1 ring-[#edf3ef]">
+          <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
             <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
               設定
             </h2>
@@ -584,7 +584,7 @@ export default function Home() {
                               <button
                                 type="button"
                                 onClick={() => deleteCustomItem(customItem.id)}
-                                className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-white px-2.5 text-[12px] font-bold text-[#b45a53] ring-1 ring-[#f0d8d5] transition active:scale-95"
+                                className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-surface px-2.5 text-[12px] font-bold text-[#b45a53] ring-1 ring-[#f0d8d5] transition active:scale-95"
                               >
                                 <Trash2 size={13} strokeWidth={2.4} />
                                 削除
@@ -599,7 +599,7 @@ export default function Home() {
                                   name: event.target.value,
                                 })
                               }
-                              className="mt-1.5 h-9 w-full rounded-xl bg-white px-3 text-[15px] font-bold text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                              className="mt-1.5 h-9 w-full rounded-xl bg-surface px-3 text-[15px] font-bold text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
                             />
 
                             <div className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
@@ -619,7 +619,7 @@ export default function Home() {
                                       ),
                                     })
                                   }
-                                  className="mt-1 h-9 w-full rounded-xl bg-white px-2.5 text-[15px] font-bold text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                                  className="mt-1 h-9 w-full rounded-xl bg-surface px-2.5 text-[15px] font-bold text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
                                 />
                               </div>
 
@@ -635,7 +635,7 @@ export default function Home() {
                                         .value as CustomItemCategory,
                                     })
                                   }
-                                  className="mt-1 h-9 w-full rounded-xl bg-white px-2.5 text-[14px] font-bold text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                                  className="mt-1 h-9 w-full rounded-xl bg-surface px-2.5 text-[14px] font-bold text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
                                 >
                                   {itemCategories.map((category) => (
                                     <option key={category} value={category}>
@@ -679,7 +679,7 @@ export default function Home() {
             className="absolute inset-0 h-full w-full bg-black/20"
             onClick={() => setIsTodayOnlySheetOpen(false)}
           />
-          <div className="absolute inset-x-0 bottom-0 mx-auto h-[54dvh] w-full max-w-[430px] rounded-t-[30px] bg-white px-5 pb-[max(24px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-20px_50px_rgba(38,53,45,0.18)]">
+          <div className="absolute inset-x-0 bottom-0 mx-auto h-[54dvh] w-full max-w-[430px] rounded-t-[30px] bg-surface px-5 pb-[max(24px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-20px_50px_rgba(38,53,45,0.18)]">
             <div className="mx-auto h-1.5 w-11 rounded-full bg-[#dce5df]" />
             <div className="mt-5 flex items-center justify-between">
               <h2 className="text-xl font-bold text-hoiku-ink">
