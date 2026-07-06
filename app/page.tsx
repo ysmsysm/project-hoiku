@@ -1,6 +1,15 @@
 "use client";
 
-import { Baby, Check, ChevronDown, Plus, Trash2 } from "lucide-react";
+import {
+  Baby,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Package,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { BottomNav } from "../src/components/BottomNav";
 import { PreparationChecklist } from "../src/components/PreparationChecklist";
@@ -391,7 +400,7 @@ export default function Home() {
   return (
     <main
       className={`min-h-screen ${
-        activeTab === "check" ? "bg-background" : "bg-[#fbfcfb]"
+        activeTab === "settings" ? "bg-[#fbfcfb]" : "bg-background"
       }`}
     >
       <div
@@ -399,122 +408,143 @@ export default function Home() {
           activeTab === "check" ? "px-6" : "px-5"
         }`}
       >
-        <header className="pb-6">
-          <p className="text-[18px] font-bold text-hoiku-deep">
+        <header className="mb-4 rounded-card bg-surface p-4 shadow-card ring-1 ring-border-soft">
+          <p className="sr-only">
             Project Hoiku
           </p>
-          <div className="mt-5 flex items-center gap-3">
-            <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-hoiku-mint text-hoiku-deep">
-              <Baby size={30} strokeWidth={2} />
+          <div className="flex items-center gap-4">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-avatar bg-[#f8ead8] text-[#c78b4f] shadow-card">
+              <Baby size={30} strokeWidth={2.1} />
             </div>
             <div className="min-w-0">
-              <h1 className="text-[34px] font-bold leading-none tracking-normal text-hoiku-ink">
+              <h1 className="text-[24px] font-bold leading-none tracking-normal text-text-primary">
                 そうた
               </h1>
             </div>
-            <div className="ml-auto flex h-14 w-[150px] shrink-0 flex-col justify-center text-right">
-              {activeTab === "check" ? (
-                <div className="space-y-1 text-[11px] font-bold leading-4 text-[#607066]">
-                  <p className="whitespace-nowrap">
-                    最終確認　{lastConfirmedDate ? `${session.checkedBy}　${lastConfirmedDate}` : "未確認"}
-                  </p>
-                  <p className="whitespace-nowrap">
-                    最終準備　{lastPreparedDate ? `${session.checkedBy}　${lastPreparedDate}` : "未準備"}
-                  </p>
-                </div>
-              ) : activeTab === "items" && canShowPreparationStatus ? (
-                <>
-                  <div className="flex items-center justify-end gap-1 whitespace-nowrap text-[11px] font-bold text-hoiku-deep">
-                    <span className="grid h-5 w-5 shrink-0 place-items-center rounded-lg border-2 border-hoiku-green bg-hoiku-green text-[11px] text-white">
-                      ✓
+            <div className="h-16 w-px shrink-0 bg-divider" />
+            <div className="ml-auto flex min-w-0 flex-1 flex-col justify-center gap-2 text-[12px] font-bold text-text-primary">
+              {activeTab === "check" || activeTab === "items" ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-[10px]">
+                    <CheckCircle2 size={16} className="text-[#3b9de9]" strokeWidth={2.2} />
+                    <span className="whitespace-nowrap">確認</span>
+                    <span className="rounded-button bg-card-items px-2 py-0.5 text-center text-[10px] text-icon-items">
+                      {lastConfirmedDate ? session.checkedBy : "未確認"}
                     </span>
-                    <span>準備OK</span>
-                    <span>{session.checkedBy}</span>
-                    <span>{completedTime}</span>
+                    <span className="whitespace-nowrap text-right text-[10px]">
+                      {lastConfirmedDate ?? "--"}
+                    </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={sendThanks}
-                    className="mt-1 h-7 rounded-full bg-hoiku-mint px-3 text-[12px] font-bold text-hoiku-deep ring-1 ring-[#dcefe4] transition active:scale-[0.99]"
-                  >
-                    {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
-                  </button>
-                </>
+                  <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-[10px]">
+                    <span className="h-4 w-4 rounded-button border-2 border-dashed border-text-tertiary" />
+                    <span className="whitespace-nowrap">準備</span>
+                    <span className="rounded-button bg-[#eeeeee] px-2 py-0.5 text-center text-[10px] text-text-secondary">
+                      {lastPreparedDate ? session.checkedBy : "まだ"}
+                    </span>
+                    <span className="whitespace-nowrap text-right text-[10px]">
+                      {lastPreparedDate ?? "--"}
+                    </span>
+                  </div>
+                  {activeTab === "items" && canShowPreparationStatus ? (
+                    <button
+                      type="button"
+                      onClick={sendThanks}
+                      className="ml-auto block rounded-button bg-tab-active px-3 py-1 text-[12px] font-bold text-danger ring-1 ring-[#ffd1dc]"
+                    >
+                      {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </div>
         </header>
 
         {activeTab === "check" ? (
-          <div className="space-y-6 pb-24">
+          <div className="space-y-5 pb-24">
             <ShortageInputList
               items={lockerItems}
               onChange={updateShortageCount}
             />
 
-            <SectionCard tone="today">
+            <SectionCard tone="today" className="p-3">
               <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-card-title font-bold tracking-normal text-text-primary">
-                    今日だけ追加
-                  </h2>
-                  {selectedTodayOnlyIds.length > 0 ? (
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {todayOnlyOptions
-                        .filter((item) => selectedTodayOnlyIds.includes(item.id))
-                        .map((item) => (
-                          <span
-                            key={item.id}
-                            className="rounded-button bg-surface px-4 py-2 text-status font-semibold text-text-primary ring-1 ring-border-soft"
-                          >
-                            {item.name}
-                          </span>
-                        ))}
-                    </div>
-                  ) : (
-                    <p className="mt-4 text-status font-medium text-text-secondary">
-                      追加の持ち物はありません
-                    </p>
-                  )}
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-avatar bg-surface text-icon-today shadow-card">
+                    <CalendarDays size={22} strokeWidth={2.1} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="whitespace-nowrap text-list-item font-bold tracking-normal text-text-primary">
+                      今日だけ追加
+                    </h2>
+                    {selectedTodayOnlyIds.length === 0 ? (
+                      <p className="mt-1 whitespace-nowrap text-caption font-medium text-text-secondary">
+                        追加の持ち物はありません
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsTodayOnlySheetOpen(true)}
-                  className="inline-flex h-12 shrink-0 items-center gap-1.5 rounded-button bg-surface px-5 text-status font-bold text-text-primary shadow-card ring-1 ring-border-soft transition active:scale-95"
+                  className="-mt-2 inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-button bg-surface px-5 text-status font-bold text-danger ring-1 ring-danger/30 transition active:scale-95"
                 >
                   <Plus size={18} strokeWidth={2.5} className="text-icon-today" />
                   持ち物を追加
                 </button>
               </div>
+              {selectedTodayOnlyIds.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2 pl-[52px]">
+                  {todayOnlyOptions
+                    .filter((item) => selectedTodayOnlyIds.includes(item.id))
+                    .map((item) => (
+                      <span
+                        key={item.id}
+                        className="max-w-full truncate whitespace-nowrap rounded-button bg-surface px-4 py-2 text-status font-semibold text-text-primary ring-1 ring-border-soft"
+                      >
+                        {item.name}
+                      </span>
+                    ))}
+                </div>
+              ) : null}
             </SectionCard>
 
-            <SectionCard tone="stock">
-              <h2 className="text-card-title font-bold tracking-normal text-text-primary">
-                ざっくり管理
-              </h2>
-              <div className="mt-4 divide-y divide-divider">
+            <SectionCard tone="stock" className="p-3">
+              <div className="mb-3 flex items-center gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-avatar bg-surface text-icon-stock shadow-card">
+                  <Package size={22} strokeWidth={2.1} />
+                </span>
+                <h2 className="text-list-item font-bold tracking-normal text-text-primary">
+                  ざっくり管理
+                </h2>
+              </div>
+              <div className="overflow-hidden rounded-section bg-surface px-5 py-2 shadow-card">
                 {roughItems.map((item) => (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => toggleRoughState(item.id)}
-                    className="grid min-h-[50px] w-full grid-cols-[minmax(0,1fr)_7.5rem] items-center gap-4 py-2.5 text-left"
+                    className="grid min-h-[39px] w-full grid-cols-[minmax(0,1fr)_13rem] items-center gap-3 border-b border-divider py-1.5 text-left last:border-b-0"
                   >
-                    <div className="flex min-w-0 items-baseline gap-2">
-                      <p className="truncate text-list-item font-semibold text-text-primary">
+                    <div className="min-w-0">
+                      <p className="truncate text-[15px] font-bold text-text-primary">
                         {item.name}
                       </p>
-                      <p className="shrink-0 text-caption font-medium text-text-tertiary">
-                        {item.count}{item.unit}
-                      </p>
                     </div>
-                    <div className="flex w-[7.5rem] shrink-0 items-center justify-start gap-2 text-status font-bold text-text-secondary">
-                      <span
-                        className={`h-3.5 w-3.5 rounded-full ${
-                          roughStateStyles[roughStates[item.id] ?? "十分"]
-                        }`}
-                      />
-                      {roughStates[item.id] ?? "十分"}
+                    <div className="grid w-48 shrink-0 grid-cols-[5.25rem_minmax(0,1fr)] items-center gap-3 pl-1 text-[13px] font-bold text-text-primary">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span
+                          className={`h-3 w-3 shrink-0 rounded-full ${
+                            roughStateStyles[roughStates[item.id] ?? "十分"]
+                          }`}
+                        />
+                        <span className="truncate">
+                          {roughStates[item.id] ?? "十分"}
+                        </span>
+                      </div>
+                      <span className="truncate text-caption font-medium text-text-tertiary">
+                        {item.count}{item.unit}
+                      </span>
                     </div>
                   </button>
                 ))}
@@ -667,7 +697,7 @@ export default function Home() {
       </div>
 
       {activeTab === "check" ? (
-        <div className="fixed inset-x-0 bottom-[calc(78px_+_env(safe-area-inset-bottom))] z-20 mx-auto w-full max-w-[430px] px-6">
+        <div className="fixed inset-x-0 bottom-[calc(88px_+_env(safe-area-inset-bottom))] z-20 mx-auto w-full max-w-[430px] px-6">
           <button
             type="button"
             onClick={completeCheck}

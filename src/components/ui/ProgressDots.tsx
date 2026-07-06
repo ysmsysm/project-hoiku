@@ -4,6 +4,7 @@ type ProgressDotsProps = {
   total: number;
   value: number;
   label: string;
+  columns?: number;
   onChange?: (nextValue: number) => void;
   className?: string;
 };
@@ -12,12 +13,18 @@ export function ProgressDots({
   total,
   value,
   label,
+  columns = total,
   onChange,
   className = "",
 }: ProgressDotsProps) {
+  const columnCount = Math.max(total, columns);
+
   return (
     <div
-      className={`flex items-center justify-start gap-1.5 ${className}`}
+      className={`grid justify-start gap-1.5 ${className}`}
+      style={{
+        gridTemplateColumns: `repeat(${columnCount}, 1.5rem)`,
+      }}
       aria-label={`${label} ${value} / ${total}`}
     >
       {Array.from({ length: total }).map((_, index) => {
@@ -30,12 +37,16 @@ export function ProgressDots({
             type="button"
             aria-label={`${label} ${index + 1}個目`}
             onClick={() => onChange?.(nextValue)}
-            className={`h-8 w-8 shrink-0 rounded-button border-2 transition active:scale-95 ${
-              isChecked
-                ? "border-success bg-success"
-                : "border-border-soft bg-surface"
-            }`}
-          />
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-button transition active:scale-95"
+          >
+            <span
+              className={`h-4 w-4 rounded-button border-2 ${
+                isChecked
+                  ? "border-icon-items bg-icon-items"
+                  : "border-text-tertiary bg-surface"
+              }`}
+            />
+          </button>
         );
       })}
     </div>

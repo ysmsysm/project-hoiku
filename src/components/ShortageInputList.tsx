@@ -1,5 +1,6 @@
 "use client";
 
+import { Shirt } from "lucide-react";
 import type { LockerItem } from "../types/preparation";
 import { ItemRow } from "./ui/ItemRow";
 import { ProgressDots } from "./ui/ProgressDots";
@@ -11,37 +12,61 @@ type ShortageInputListProps = {
 };
 
 export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
-  return (
-    <SectionCard tone="items">
-      <h2 className="text-card-title font-bold tracking-normal text-text-primary">
-        持ち物
-      </h2>
+  const maxRequiredCount = Math.max(
+    1,
+    ...items.map((item) => item.requiredCount),
+  );
+  const dotAreaWidthRem =
+    maxRequiredCount * 1.5 + Math.max(0, maxRequiredCount - 1) * 0.375;
+  const dotAreaWidth = `${dotAreaWidthRem}rem`;
+  const actionAreaWidth = `${dotAreaWidthRem + 3}rem`;
 
-      <div className="mt-4 divide-y divide-divider">
+  return (
+    <SectionCard tone="items" className="p-3">
+      <div className="mb-3 flex items-center gap-3">
+        <span className="grid h-10 w-10 place-items-center rounded-avatar bg-surface text-icon-items shadow-card">
+          <Shirt size={22} strokeWidth={2.1} />
+        </span>
+        <h2 className="text-list-item font-bold tracking-normal text-icon-items">
+          持ち物
+        </h2>
+      </div>
+
+      <div className="overflow-hidden rounded-section bg-surface px-5 py-2 shadow-card">
         {items.map((item) => (
           <ItemRow
             key={item.id}
             name={item.name}
-            quantity={`${item.shortageCount}/${item.requiredCount}`}
-            className="grid min-h-[43px] grid-cols-[minmax(0,1fr)_11.5rem] items-center gap-3 py-1.5"
+            className="grid min-h-[39px] grid-cols-[minmax(0,1fr)_max-content] items-center gap-3 border-b border-divider py-1.5 last:border-b-0"
             contentClassName="flex min-w-0 items-baseline gap-2"
             textClassName="flex min-w-0 items-baseline gap-2"
-            nameClassName="truncate text-list-item font-semibold text-text-primary"
-            quantityClassName={`shrink-0 text-[13px] font-semibold ${
-              item.shortageCount === item.requiredCount
-                ? "text-success"
-                : item.requiredCount - item.shortageCount === 1
-                  ? "text-warning"
-                  : "text-danger"
-            }`}
+            nameClassName="truncate text-[15px] font-bold text-text-primary"
             progress={
-              <ProgressDots
-                total={item.requiredCount}
-                value={item.shortageCount}
-                label={item.name}
-                onChange={(nextCount) => onChange(item.id, nextCount)}
-                className="w-[11.5rem] shrink-0"
-              />
+              <div
+                className="grid shrink-0 items-center gap-4"
+                style={{
+                  gridTemplateColumns: `${dotAreaWidth} 2rem`,
+                  width: actionAreaWidth,
+                }}
+              >
+                <ProgressDots
+                  total={item.requiredCount}
+                  value={item.shortageCount}
+                  label={item.name}
+                  columns={maxRequiredCount}
+                  onChange={(nextCount) => onChange(item.id, nextCount)}
+                  className="shrink-0 justify-start"
+                />
+                <span
+                  className={`text-right text-[13px] font-semibold ${
+                    item.shortageCount === item.requiredCount
+                      ? "text-text-tertiary"
+                      : "text-primary"
+                  }`}
+                >
+                  {item.shortageCount}/{item.requiredCount}
+                </span>
+              </div>
             }
           />
         ))}
