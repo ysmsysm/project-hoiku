@@ -1,4 +1,5 @@
 import type { PreparationItem } from "../types/preparation";
+import { ItemRow } from "./ui/ItemRow";
 import { SectionCard } from "./ui/SectionCard";
 
 type PreparationChecklistProps = {
@@ -44,13 +45,16 @@ export function PreparationChecklist({
 
       <div className="mt-4 divide-y divide-[#edf3ef]">
         {items.map((item) => (
-          <button
+          <ItemRow
             key={item.id}
-            type="button"
+            as="button"
             onClick={() => onToggle(item.id)}
             className="flex min-h-[58px] w-full items-center justify-between gap-4 py-3 text-left"
-          >
-            <div className="flex min-w-0 items-center gap-3">
+            contentClassName="flex min-w-0 items-center gap-3"
+            textClassName="contents"
+            name={item.name}
+            nameClassName="truncate text-[17px] font-bold text-hoiku-ink"
+            icon={
               <span
                 className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg border-2 text-[15px] font-bold ${
                   item.checked
@@ -60,14 +64,12 @@ export function PreparationChecklist({
               >
                 ✓
               </span>
-              <p className="truncate text-[17px] font-bold text-hoiku-ink">
-                {item.name}
-              </p>
-            </div>
+            }
+          >
             <p className="shrink-0 text-[16px] font-bold text-[#607066]">
               {item.count}{item.unit}
             </p>
-          </button>
+          </ItemRow>
         ))}
       </div>
     </SectionCard>
