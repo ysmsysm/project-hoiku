@@ -56,9 +56,9 @@ const defaultRoughStates: Record<string, RoughState> = {
 };
 
 const roughStateStyles: Record<RoughState, string> = {
-  十分: "bg-[#bfe5ce] text-hoiku-deep",
-  少ない: "bg-[#f6df76] text-[#6f5a10]",
-  補充: "bg-[#f3a1a8] text-[#8a3038]",
+  十分: "bg-success text-surface",
+  少ない: "bg-warning text-text-primary",
+  補充: "bg-danger text-surface",
 };
 
 const settingsItems = [
@@ -389,8 +389,16 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-[#fbfcfb]">
-      <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col px-5 pb-[calc(98px_+_env(safe-area-inset-bottom))] pt-5">
+    <main
+      className={`min-h-screen ${
+        activeTab === "check" ? "bg-background" : "bg-[#fbfcfb]"
+      }`}
+    >
+      <div
+        className={`mx-auto flex min-h-screen w-full max-w-[430px] flex-col pb-[calc(98px_+_env(safe-area-inset-bottom))] pt-5 ${
+          activeTab === "check" ? "px-6" : "px-5"
+        }`}
+      >
         <header className="pb-6">
           <p className="text-[18px] font-bold text-hoiku-deep">
             Project Hoiku
@@ -438,16 +446,16 @@ export default function Home() {
         </header>
 
         {activeTab === "check" ? (
-          <div className="space-y-5 pb-24">
+          <div className="space-y-6 pb-24">
             <ShortageInputList
               items={lockerItems}
               onChange={updateShortageCount}
             />
 
-            <SectionCard appearance="current">
+            <SectionCard tone="today">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
+                  <h2 className="text-card-title font-bold tracking-normal text-text-primary">
                     今日だけ追加
                   </h2>
                   {selectedTodayOnlyIds.length > 0 ? (
@@ -457,14 +465,14 @@ export default function Home() {
                         .map((item) => (
                           <span
                             key={item.id}
-                            className="rounded-full bg-[#f4faf6] px-4 py-2 text-[15px] font-semibold text-hoiku-deep ring-1 ring-[#dcefe4]"
+                            className="rounded-button bg-surface px-4 py-2 text-status font-semibold text-text-primary ring-1 ring-border-soft"
                           >
                             {item.name}
                           </span>
                         ))}
                     </div>
                   ) : (
-                    <p className="mt-4 text-[15px] font-medium text-[#8a948e]">
+                    <p className="mt-4 text-status font-medium text-text-secondary">
                       追加の持ち物はありません
                     </p>
                   )}
@@ -472,19 +480,19 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setIsTodayOnlySheetOpen(true)}
-                  className="inline-flex h-12 shrink-0 items-center gap-1.5 rounded-full bg-hoiku-mint px-5 text-[15px] font-bold text-hoiku-deep transition active:scale-95"
+                  className="inline-flex h-12 shrink-0 items-center gap-1.5 rounded-button bg-surface px-5 text-status font-bold text-text-primary shadow-card ring-1 ring-border-soft transition active:scale-95"
                 >
-                  <Plus size={18} strokeWidth={2.5} />
+                  <Plus size={18} strokeWidth={2.5} className="text-icon-today" />
                   持ち物を追加
                 </button>
               </div>
             </SectionCard>
 
-            <SectionCard appearance="current">
-              <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
+            <SectionCard tone="stock">
+              <h2 className="text-card-title font-bold tracking-normal text-text-primary">
                 ざっくり管理
               </h2>
-              <div className="mt-4 divide-y divide-[#edf3ef]">
+              <div className="mt-4 divide-y divide-divider">
                 {roughItems.map((item) => (
                   <button
                     key={item.id}
@@ -493,14 +501,14 @@ export default function Home() {
                     className="grid min-h-[50px] w-full grid-cols-[minmax(0,1fr)_7.5rem] items-center gap-4 py-2.5 text-left"
                   >
                     <div className="flex min-w-0 items-baseline gap-2">
-                      <p className="truncate text-[17px] font-semibold text-hoiku-ink">
+                      <p className="truncate text-list-item font-semibold text-text-primary">
                         {item.name}
                       </p>
-                      <p className="shrink-0 text-[12px] font-medium text-[#a5aea8]">
+                      <p className="shrink-0 text-caption font-medium text-text-tertiary">
                         {item.count}{item.unit}
                       </p>
                     </div>
-                    <div className="flex w-[7.5rem] shrink-0 items-center justify-start gap-2 text-[15px] font-bold text-[#607066]">
+                    <div className="flex w-[7.5rem] shrink-0 items-center justify-start gap-2 text-status font-bold text-text-secondary">
                       <span
                         className={`h-3.5 w-3.5 rounded-full ${
                           roughStateStyles[roughStates[item.id] ?? "十分"]
@@ -659,11 +667,11 @@ export default function Home() {
       </div>
 
       {activeTab === "check" ? (
-        <div className="fixed inset-x-0 bottom-[calc(78px_+_env(safe-area-inset-bottom))] z-20 mx-auto w-full max-w-[430px] px-5">
+        <div className="fixed inset-x-0 bottom-[calc(78px_+_env(safe-area-inset-bottom))] z-20 mx-auto w-full max-w-[430px] px-6">
           <button
             type="button"
             onClick={completeCheck}
-            className="h-[52px] w-full rounded-full bg-hoiku-green text-[17px] font-bold text-white shadow-[0_10px_22px_rgba(124,200,154,0.24)] transition active:scale-[0.99]"
+            className="h-[52px] w-full rounded-button bg-primary text-button font-bold text-surface shadow-button transition hover:bg-primary-hover active:scale-[0.99]"
           >
             確認完了
           </button>
@@ -680,17 +688,17 @@ export default function Home() {
             className="absolute inset-0 h-full w-full bg-black/20"
             onClick={() => setIsTodayOnlySheetOpen(false)}
           />
-          <div className="absolute inset-x-0 bottom-0 mx-auto h-[54dvh] w-full max-w-[430px] rounded-t-[30px] bg-surface px-5 pb-[max(24px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-20px_50px_rgba(38,53,45,0.18)]">
-            <div className="mx-auto h-1.5 w-11 rounded-full bg-[#dce5df]" />
+          <div className="absolute inset-x-0 bottom-0 mx-auto h-[54dvh] w-full max-w-[430px] rounded-t-card bg-surface px-6 pb-[max(24px,env(safe-area-inset-bottom))] pt-3 shadow-floating">
+            <div className="mx-auto h-1.5 w-11 rounded-button bg-divider" />
             <div className="mt-5 flex items-center justify-between">
-              <h2 className="text-xl font-bold text-hoiku-ink">
+              <h2 className="text-card-title font-bold text-text-primary">
                 今日だけ追加
               </h2>
               <button
                 type="button"
                 aria-label="シートを閉じる"
                 onClick={() => setIsTodayOnlySheetOpen(false)}
-                className="grid h-10 w-10 place-items-center rounded-full bg-[#f2f6f4] text-[#6e7a73] transition active:scale-95"
+                className="grid h-10 w-10 place-items-center rounded-button bg-card-today text-icon-today transition active:scale-95"
               >
                 <ChevronDown size={22} />
               </button>
@@ -701,14 +709,14 @@ export default function Home() {
                     key={item.id}
                     type="button"
                     onClick={() => toggleTodayOnlyItem(item.id)}
-                    className="flex h-14 w-full items-center justify-between rounded-2xl bg-[#f8fbf9] px-4 text-left text-[17px] font-bold text-hoiku-ink ring-1 ring-[#edf3ef] transition active:scale-[0.99]"
+                    className="flex h-14 w-full items-center justify-between rounded-section bg-card-today px-4 text-left text-list-item font-bold text-text-primary ring-1 ring-border-soft transition active:scale-[0.99]"
                   >
                     <span>{item.name}</span>
                     <span
                       className={`grid h-8 w-8 place-items-center rounded-full ${
                         selectedTodayOnlyIds.includes(item.id)
-                          ? "bg-hoiku-green text-white"
-                          : "bg-hoiku-mint text-hoiku-deep"
+                          ? "bg-primary text-surface"
+                          : "bg-surface text-icon-today"
                       }`}
                     >
                       {selectedTodayOnlyIds.includes(item.id) ? (
