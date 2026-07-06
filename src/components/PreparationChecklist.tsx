@@ -1,4 +1,5 @@
 import type { PreparationItem } from "../types/preparation";
+import { SectionCard } from "./ui/SectionCard";
 
 type PreparationChecklistProps = {
   items: PreparationItem[];
@@ -15,19 +16,19 @@ export function PreparationChecklist({
 
   if (items.length === 0) {
     return (
-      <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
+      <SectionCard appearance="current">
         <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
           持ち物
         </h2>
         <p className="mt-3 text-[15px] font-semibold text-[#7a867e]">
           追加で準備する持ち物はありません。
         </p>
-      </section>
+      </SectionCard>
     );
   }
 
   return (
-    <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
+    <SectionCard appearance="current">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
           バッグに入れるもの
@@ -69,6 +70,6 @@ export function PreparationChecklist({
           </button>
         ))}
       </div>
-    </section>
+    </SectionCard>
   );
 }

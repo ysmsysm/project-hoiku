@@ -1,6 +1,7 @@
 "use client";
 
 import type { LockerItem } from "../types/preparation";
+import { SectionCard } from "./ui/SectionCard";
 
 type ShortageInputListProps = {
   items: LockerItem[];
@@ -9,7 +10,7 @@ type ShortageInputListProps = {
 
 export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
   return (
-    <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
+    <SectionCard appearance="current">
       <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
         持ち物
       </h2>
@@ -64,6 +65,6 @@ export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
           </div>
         ))}
       </div>
-    </section>
+    </SectionCard>
   );
 }

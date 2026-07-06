@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BottomNav } from "../src/components/BottomNav";
 import { PreparationChecklist } from "../src/components/PreparationChecklist";
 import { ShortageInputList } from "../src/components/ShortageInputList";
+import { SectionCard } from "../src/components/ui/SectionCard";
 import {
   createPreparationSession,
   loadCheckCounts,
@@ -443,7 +444,7 @@ export default function Home() {
               onChange={updateShortageCount}
             />
 
-            <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
+            <SectionCard appearance="current">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
@@ -477,9 +478,9 @@ export default function Home() {
                   持ち物を追加
                 </button>
               </div>
-            </section>
+            </SectionCard>
 
-            <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
+            <SectionCard appearance="current">
               <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
                 ざっくり管理
               </h2>
@@ -510,7 +511,7 @@ export default function Home() {
                   </button>
                 ))}
               </div>
-            </section>
+            </SectionCard>
           </div>
         ) : null}
 
@@ -525,7 +526,7 @@ export default function Home() {
         ) : null}
 
         {activeTab === "settings" ? (
-          <section className="rounded-card bg-surface p-5 shadow-soft ring-1 ring-[#edf3ef]">
+          <SectionCard appearance="current">
             <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
               設定
             </h2>
@@ -653,7 +654,7 @@ export default function Home() {
                 </div>
               ))}
             </div>
-          </section>
+          </SectionCard>
         ) : null}
       </div>
 
