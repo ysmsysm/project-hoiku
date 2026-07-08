@@ -12,6 +12,7 @@ export type PreparationItem = {
   unit: string;
   count: number;
   checked: boolean;
+  later?: boolean;
 };
 
 export type PreparationSession = {
@@ -32,4 +33,8 @@ export type CustomizableItem = {
   unit: string;
   count: number;
   category: CustomItemCategory;
+};
+
+export type TodayOnlyTemporaryItem = CustomizableItem & {
+  date: string;
 };

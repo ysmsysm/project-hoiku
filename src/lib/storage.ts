@@ -2,11 +2,13 @@ import type {
   CustomizableItem,
   PreparationItem,
   PreparationSession,
+  TodayOnlyTemporaryItem,
 } from "../types/preparation";
 
 const sessionKey = "project-hoiku:preparation-session";
 const checkCountsKey = "project-hoiku:locker-counts";
 const customItemsKey = "project-hoiku:custom-items";
+const todayOnlyTemporaryItemsKey = "project-hoiku:today-only-temporary-items";
 
 const defaultSession: PreparationSession = {
   checkedBy: "ママ",
@@ -18,6 +20,15 @@ const defaultSession: PreparationSession = {
 
 const canUseStorage = () => typeof window !== "undefined";
 
+const getTodayKey = () => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const date = String(today.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${date}`;
+};
+
 export function loadPreparationSession(): PreparationSession {
   if (!canUseStorage()) {
     return defaultSession;
@@ -25,7 +36,19 @@ export function loadPreparationSession(): PreparationSession {
 
   try {
     const saved = window.localStorage.getItem(sessionKey);
-    return saved ? { ...defaultSession, ...JSON.parse(saved) } : defaultSession;
+    if (!saved) {
+      return defaultSession;
+    }
+
+    const parsed = { ...defaultSession, ...JSON.parse(saved) };
+
+    return {
+      ...parsed,
+      items: parsed.items.map((item: PreparationItem) => ({
+        ...item,
+        later: item.later ?? false,
+      })),
+    };
   } catch {
     return defaultSession;
   }
@@ -81,6 +104,62 @@ export function saveCustomItems(items: CustomizableItem[]) {
   }
 
   window.localStorage.setItem(customItemsKey, JSON.stringify(items));
+}
+
+export function loadTodayOnlyTemporaryItems(): TodayOnlyTemporaryItem[] {
+  if (!canUseStorage()) {
+    return [];
+  }
+
+  try {
+    const saved = window.localStorage.getItem(todayOnlyTemporaryItemsKey);
+    if (!saved) {
+      return [];
+    }
+
+    const parsed = JSON.parse(saved) as {
+      date?: string;
+      items?: TodayOnlyTemporaryItem[];
+    };
+
+    if (parsed.date !== getTodayKey()) {
+      window.localStorage.removeItem(todayOnlyTemporaryItemsKey);
+      return [];
+    }
+
+    return parsed.items ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveTodayOnlyTemporaryItems(
+  items: TodayOnlyTemporaryItem[],
+) {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  window.localStorage.setItem(
+    todayOnlyTemporaryItemsKey,
+    JSON.stringify({
+      date: getTodayKey(),
+      items,
+    }),
+  );
+}
+
+export function createTodayOnlyTemporaryItem(
+  name: string,
+): TodayOnlyTemporaryItem {
+  return {
+    id: `today-only-${Date.now()}`,
+    name,
+    unit: "個",
+    count: 1,
+    category: "今日だけ追加",
+    date: getTodayKey(),
+  };
 }
 
 export function createPreparationSession(

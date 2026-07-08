@@ -56,7 +56,7 @@ const config: Config = {
       fontSize: {
         "app-title": "32px",
         "child-name": "36px",
-        "card-title": "24px",
+        "card-title": "22px",
         button: "18px",
         "list-item": "18px",
         number: "16px",

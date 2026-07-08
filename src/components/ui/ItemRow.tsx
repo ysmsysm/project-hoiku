@@ -36,9 +36,9 @@ export function ItemRow({
   className = defaultRowClassName,
   contentClassName = "flex min-w-0 items-center gap-3",
   textClassName = "flex min-w-0 items-baseline gap-2",
-  nameClassName = "truncate font-semibold text-text-primary",
-  quantityClassName = "shrink-0 text-status font-medium text-text-secondary",
-  statusClassName = "shrink-0 text-status font-medium text-text-secondary",
+  nameClassName = "truncate text-list-item font-medium text-text-primary",
+  quantityClassName = "shrink-0 text-number font-normal text-text-secondary",
+  statusClassName = "shrink-0 text-number font-normal text-text-secondary",
 }: ItemRowProps) {
   const action = renderAction ? renderAction() : children;
   const content = (

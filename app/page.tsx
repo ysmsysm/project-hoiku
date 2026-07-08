@@ -9,20 +9,26 @@ import {
   Package,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BottomNav } from "../src/components/BottomNav";
 import { PreparationChecklist } from "../src/components/PreparationChecklist";
 import { ShortageInputList } from "../src/components/ShortageInputList";
+import { CardListRow } from "../src/components/ui/CardListRow";
+import { ReusableCard } from "../src/components/ui/ReusableCard";
 import { SectionCard } from "../src/components/ui/SectionCard";
 import {
   createPreparationSession,
+  createTodayOnlyTemporaryItem,
   loadCheckCounts,
   loadCustomItems,
   loadPreparationSession,
+  loadTodayOnlyTemporaryItems,
   saveCheckCounts,
   saveCustomItems,
   savePreparationSession,
+  saveTodayOnlyTemporaryItems,
 } from "../src/lib/storage";
 import type {
   AppTab,
@@ -31,6 +37,7 @@ import type {
   LockerItem,
   PreparationItem,
   PreparationSession,
+  TodayOnlyTemporaryItem,
 } from "../src/types/preparation";
 
 const defaultCustomItems: CustomizableItem[] = [
@@ -121,6 +128,7 @@ const buildPreparationItems = (items: PreparationItem[]): PreparationItem[] =>
         ...item,
         count: existingItem ? existingItem.count + item.count : item.count,
         checked: false,
+        later: false,
       });
 
       return mergedItems;
@@ -145,8 +153,18 @@ export default function Home() {
     () => createDefaultRoughStates(defaultCustomItems),
   );
   const [selectedTodayOnlyIds, setSelectedTodayOnlyIds] = useState<string[]>([]);
+  const [temporaryTodayOnlyItems, setTemporaryTodayOnlyItems] = useState<
+    TodayOnlyTemporaryItem[]
+  >([]);
   const [isTodayOnlySheetOpen, setIsTodayOnlySheetOpen] = useState(false);
+  const [isTodayOnlyInputOpen, setIsTodayOnlyInputOpen] = useState(false);
+  const [todayOnlyInputValue, setTodayOnlyInputValue] = useState("");
+  const [swipedTodayOnlyItemId, setSwipedTodayOnlyItemId] = useState<
+    string | null
+  >(null);
   const [isItemSettingsOpen, setIsItemSettingsOpen] = useState(false);
+  const todayOnlyInputRef = useRef<HTMLInputElement>(null);
+  const swipeStartXRef = useRef<number | null>(null);
 
   useEffect(() => {
     const savedCustomItems = loadCustomItems(defaultCustomItems);
@@ -156,6 +174,33 @@ export default function Home() {
     );
     setRoughStates(createDefaultRoughStates(savedCustomItems));
     setSession(loadPreparationSession());
+    setTemporaryTodayOnlyItems(loadTodayOnlyTemporaryItems());
+  }, []);
+
+  useEffect(() => {
+    if (isTodayOnlyInputOpen) {
+      todayOnlyInputRef.current?.focus();
+    }
+  }, [isTodayOnlyInputOpen]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      const freshTemporaryItems = loadTodayOnlyTemporaryItems();
+      const freshTemporaryIds = new Set(
+        freshTemporaryItems.map((item) => item.id),
+      );
+
+      setTemporaryTodayOnlyItems(freshTemporaryItems);
+      setSelectedTodayOnlyIds((current) =>
+        current.filter(
+          (itemId) =>
+            !itemId.startsWith("today-only-") ||
+            freshTemporaryIds.has(itemId),
+        ),
+      );
+    }, 60_000);
+
+    return () => window.clearInterval(intervalId);
   }, []);
 
   const baseLockerItems = useMemo(
@@ -165,6 +210,10 @@ export default function Home() {
   const todayOnlyOptions = useMemo(
     () => customItems.filter((item) => item.category === "今日だけ追加"),
     [customItems],
+  );
+  const allTodayOnlyOptions = useMemo(
+    () => [...todayOnlyOptions, ...temporaryTodayOnlyItems],
+    [temporaryTodayOnlyItems, todayOnlyOptions],
   );
   const roughItems = useMemo(
     () => customItems.filter((item) => item.category === "ざっくり管理"),
@@ -186,9 +235,14 @@ export default function Home() {
       }),
     [baseLockerItems, shortageCounts],
   );
+  const maxLockerRequiredCount = Math.max(
+    1,
+    ...lockerItems.map((item) => item.requiredCount),
+  );
 
   const isPreparationDone =
-    session.items.length === 0 || session.items.every((item) => item.checked);
+    session.items.length === 0 ||
+    session.items.every((item) => item.checked || item.later);
   const canShowPreparationStatus =
     session.items.length > 0 && isPreparationDone && Boolean(session.completedAt);
   const completedTime = session.completedAt
@@ -254,6 +308,69 @@ export default function Home() {
     );
   };
 
+  const cancelTodayOnlyInput = () => {
+    setIsTodayOnlyInputOpen(false);
+    setTodayOnlyInputValue("");
+  };
+
+  const closeTodayOnlySheet = () => {
+    cancelTodayOnlyInput();
+    setSwipedTodayOnlyItemId(null);
+    setIsTodayOnlySheetOpen(false);
+  };
+
+  const startTemporaryItemSwipe = (clientX: number) => {
+    swipeStartXRef.current = clientX;
+  };
+
+  const endTemporaryItemSwipe = (itemId: string, clientX: number) => {
+    if (swipeStartXRef.current === null) {
+      return;
+    }
+
+    const deltaX = clientX - swipeStartXRef.current;
+    swipeStartXRef.current = null;
+
+    if (deltaX < -36) {
+      setSwipedTodayOnlyItemId(itemId);
+      return;
+    }
+
+    if (deltaX > 24) {
+      setSwipedTodayOnlyItemId(null);
+    }
+  };
+
+  const addTemporaryTodayOnlyItem = () => {
+    const itemName = todayOnlyInputValue.trim();
+
+    if (!itemName) {
+      cancelTodayOnlyInput();
+      return;
+    }
+
+    const newItem = createTodayOnlyTemporaryItem(itemName);
+    const nextItems = [...temporaryTodayOnlyItems, newItem];
+
+    setTemporaryTodayOnlyItems(nextItems);
+    saveTodayOnlyTemporaryItems(nextItems);
+    setSelectedTodayOnlyIds((current) => [...current, newItem.id]);
+    cancelTodayOnlyInput();
+  };
+
+  const deleteTemporaryTodayOnlyItem = (itemId: string) => {
+    const nextItems = temporaryTodayOnlyItems.filter(
+      (item) => item.id !== itemId,
+    );
+
+    setTemporaryTodayOnlyItems(nextItems);
+    saveTodayOnlyTemporaryItems(nextItems);
+    setSelectedTodayOnlyIds((current) =>
+      current.filter((selectedId) => selectedId !== itemId),
+    );
+    setSwipedTodayOnlyItemId(null);
+  };
+
   const createLockerPreparationItems = (): PreparationItem[] =>
     lockerItems.map((item) => ({
       id: item.id,
@@ -261,10 +378,11 @@ export default function Home() {
       unit: item.unit,
       count: Math.max(0, item.requiredCount - item.shortageCount),
       checked: false,
+      later: false,
     }));
 
   const createTodayOnlyPreparationItems = (): PreparationItem[] =>
-    todayOnlyOptions
+    allTodayOnlyOptions
       .filter((item) => selectedTodayOnlyIds.includes(item.id))
       .map((item) => ({
         id: item.id,
@@ -272,6 +390,7 @@ export default function Home() {
         unit: item.unit,
         count: item.count,
         checked: false,
+        later: false,
       }));
 
   const createRoughPreparationItems = (): PreparationItem[] =>
@@ -283,13 +402,20 @@ export default function Home() {
         unit: item.unit,
         count: item.count,
         checked: false,
+        later: false,
       }));
 
   const togglePreparationItem = (itemId: string) => {
     const nextItems = session.items.map((item) =>
-      item.id === itemId ? { ...item, checked: !item.checked } : item,
+      item.id === itemId
+        ? {
+            ...item,
+            checked: !item.checked,
+            later: !item.checked ? false : item.later,
+          }
+        : item,
     );
-    const allChecked = nextItems.every((item) => item.checked);
+    const allChecked = nextItems.every((item) => item.checked || item.later);
     const nextSession = {
       ...session,
       items: nextItems,
@@ -307,6 +433,7 @@ export default function Home() {
     const nextItems = session.items.map((item) => ({
       ...item,
       checked: !allChecked,
+      later: !allChecked ? false : item.later,
     }));
     const nextSession = {
       ...session,
@@ -316,6 +443,36 @@ export default function Home() {
     };
 
     updateSession(nextSession);
+  };
+
+  const togglePreparationItemLater = (itemId: string) => {
+    const nextItems = session.items.map((item) =>
+      item.id === itemId
+        ? { ...item, later: item.checked ? false : !item.later }
+        : item,
+    );
+    const allDone = nextItems.every((item) => item.checked || item.later);
+    const nextSession = {
+      ...session,
+      items: nextItems,
+      completedAt: allDone ? session.completedAt : null,
+      thanksSent: allDone ? session.thanksSent : false,
+    };
+
+    updateSession(nextSession);
+  };
+
+  const completePreparation = () => {
+    const nextItems = session.items.map((item) => ({
+      ...item,
+      checked: item.later ? item.checked : true,
+    }));
+
+    updateSession({
+      ...session,
+      items: nextItems,
+      completedAt: new Date().toISOString(),
+    });
   };
 
   const sendThanks = () => {
@@ -422,26 +579,26 @@ export default function Home() {
               </h1>
             </div>
             <div className="h-16 w-px shrink-0 bg-divider" />
-            <div className="ml-auto flex min-w-0 flex-1 flex-col justify-center gap-2 text-[12px] font-bold text-text-primary">
+            <div className="ml-auto flex min-w-0 flex-1 flex-col justify-center gap-2 text-status font-normal text-text-primary">
               {activeTab === "check" || activeTab === "items" ? (
                 <div className="space-y-2">
-                  <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-[10px]">
+                  <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-status font-normal">
                     <CheckCircle2 size={16} className="text-[#3b9de9]" strokeWidth={2.2} />
                     <span className="whitespace-nowrap">確認</span>
-                    <span className="rounded-button bg-card-items px-2 py-0.5 text-center text-[10px] text-icon-items">
+                    <span className="rounded-button bg-card-items px-2 py-0.5 text-center text-status font-normal text-icon-items">
                       {lastConfirmedDate ? session.checkedBy : "未確認"}
                     </span>
-                    <span className="whitespace-nowrap text-right text-[10px]">
+                    <span className="whitespace-nowrap text-right text-status font-normal">
                       {lastConfirmedDate ?? "--"}
                     </span>
                   </div>
-                  <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-[10px]">
+                  <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-status font-normal">
                     <span className="h-4 w-4 rounded-button border-2 border-dashed border-text-tertiary" />
                     <span className="whitespace-nowrap">準備</span>
-                    <span className="rounded-button bg-[#eeeeee] px-2 py-0.5 text-center text-[10px] text-text-secondary">
+                    <span className="rounded-button bg-[#eeeeee] px-2 py-0.5 text-center text-status font-normal text-text-secondary">
                       {lastPreparedDate ? session.checkedBy : "まだ"}
                     </span>
-                    <span className="whitespace-nowrap text-right text-[10px]">
+                    <span className="whitespace-nowrap text-right text-status font-normal">
                       {lastPreparedDate ?? "--"}
                     </span>
                   </div>
@@ -449,7 +606,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={sendThanks}
-                      className="ml-auto block rounded-button bg-tab-active px-3 py-1 text-[12px] font-bold text-danger ring-1 ring-[#ffd1dc]"
+                      className="ml-auto block rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc]"
                     >
                       {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
                     </button>
@@ -467,89 +624,81 @@ export default function Home() {
               onChange={updateShortageCount}
             />
 
-            <SectionCard tone="today" className="p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-avatar bg-surface text-icon-today shadow-card">
-                    <CalendarDays size={22} strokeWidth={2.1} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="whitespace-nowrap text-list-item font-bold tracking-normal text-text-primary">
-                      今日だけ追加
-                    </h2>
-                    {selectedTodayOnlyIds.length === 0 ? (
-                      <p className="mt-1 whitespace-nowrap text-caption font-medium text-text-secondary">
-                        追加の持ち物はありません
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
+            <ReusableCard
+              title="今日だけ追加"
+              icon={<CalendarDays size={22} strokeWidth={2.1} />}
+              tone="pink"
+              action={
                 <button
                   type="button"
                   onClick={() => setIsTodayOnlySheetOpen(true)}
-                  className="-mt-2 inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-button bg-surface px-5 text-status font-bold text-danger ring-1 ring-danger/30 transition active:scale-95"
+                  className="-mt-1 inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-button bg-surface px-5 text-number font-normal text-danger ring-1 ring-danger/30 transition active:scale-95"
                 >
                   <Plus size={18} strokeWidth={2.5} className="text-icon-today" />
                   持ち物を追加
                 </button>
-              </div>
+              }
+              contentClassName="grid min-h-[56px] place-items-center rounded-section bg-surface px-5 py-4 shadow-card"
+            >
               {selectedTodayOnlyIds.length > 0 ? (
-                <div className="mt-3 flex flex-wrap gap-2 pl-[52px]">
-                  {todayOnlyOptions
+                <div className="flex flex-wrap gap-2">
+                  {allTodayOnlyOptions
                     .filter((item) => selectedTodayOnlyIds.includes(item.id))
                     .map((item) => (
                       <span
                         key={item.id}
-                        className="max-w-full truncate whitespace-nowrap rounded-button bg-surface px-4 py-2 text-status font-semibold text-text-primary ring-1 ring-border-soft"
+                        className="max-w-full truncate whitespace-nowrap rounded-button bg-surface px-4 py-2 text-number font-normal text-text-primary ring-1 ring-border-soft"
                       >
                         {item.name}
                       </span>
                     ))}
                 </div>
-              ) : null}
-            </SectionCard>
+              ) : (
+                <p className="whitespace-nowrap text-number font-normal text-text-secondary">
+                  追加の持ち物はありません
+                </p>
+              )}
+            </ReusableCard>
 
-            <SectionCard tone="stock" className="p-3">
-              <div className="mb-3 flex items-center gap-3">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-avatar bg-surface text-icon-stock shadow-card">
-                  <Package size={22} strokeWidth={2.1} />
-                </span>
-                <h2 className="text-list-item font-bold tracking-normal text-text-primary">
-                  ざっくり管理
-                </h2>
-              </div>
-              <div className="overflow-hidden rounded-section bg-surface px-5 py-2 shadow-card">
-                {roughItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => toggleRoughState(item.id)}
-                    className="grid min-h-[39px] w-full grid-cols-[minmax(0,1fr)_13rem] items-center gap-3 border-b border-divider py-1.5 text-left last:border-b-0"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-[15px] font-bold text-text-primary">
-                        {item.name}
-                      </p>
-                    </div>
-                    <div className="grid w-48 shrink-0 grid-cols-[5.25rem_minmax(0,1fr)] items-center gap-3 pl-1 text-[13px] font-bold text-text-primary">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span
-                          className={`h-3 w-3 shrink-0 rounded-full ${
-                            roughStateStyles[roughStates[item.id] ?? "十分"]
-                          }`}
-                        />
-                        <span className="truncate">
-                          {roughStates[item.id] ?? "十分"}
-                        </span>
-                      </div>
-                      <span className="truncate text-caption font-medium text-text-tertiary">
-                        {item.count}{item.unit}
+            <ReusableCard
+              title="ざっくり管理"
+              icon={<Package size={22} strokeWidth={2.1} />}
+              tone="green"
+            >
+              {roughItems.map((item) => (
+                <CardListRow
+                  key={item.id}
+                  as="button"
+                  onClick={() => toggleRoughState(item.id)}
+                  left={item.name}
+                  center={
+                    <div
+                      className="grid w-36 items-center"
+                      style={{
+                        gridTemplateColumns: `repeat(${
+                          maxLockerRequiredCount + 1
+                        }, minmax(0, 1fr))`,
+                      }}
+                    >
+                      <div
+                        className="flex min-w-0 items-center gap-2"
+                        style={{ gridColumn: "2 / -1" }}
+                      >
+                      <span
+                        className={`h-5 w-5 shrink-0 rounded-full ${
+                          roughStateStyles[roughStates[item.id] ?? "十分"]
+                        }`}
+                      />
+                      <span className="truncate">
+                        {roughStates[item.id] ?? "十分"}
                       </span>
+                      </div>
                     </div>
-                  </button>
-                ))}
-              </div>
-            </SectionCard>
+                  }
+                  right={`${item.count}${item.unit}`}
+                />
+              ))}
+            </ReusableCard>
           </div>
         ) : null}
 
@@ -559,13 +708,15 @@ export default function Home() {
               items={session.items}
               onToggle={togglePreparationItem}
               onCheckAll={checkAllPreparationItems}
+              onToggleLater={togglePreparationItemLater}
+              onComplete={completePreparation}
             />
           </div>
         ) : null}
 
         {activeTab === "settings" ? (
           <SectionCard appearance="current">
-            <h2 className="text-xl font-bold tracking-normal text-hoiku-ink">
+            <h2 className="text-card-title font-semibold tracking-normal text-hoiku-ink">
               設定
             </h2>
             <div className="mt-4 divide-y divide-[#edf3ef]">
@@ -578,17 +729,17 @@ export default function Home() {
                         setIsItemSettingsOpen((current) => !current);
                       }
                     }}
-                    className="flex min-h-[58px] w-full items-center justify-between gap-4 py-3 text-left"
+                    className="flex min-h-[50px] w-full items-center justify-between gap-4 py-2 text-left"
                   >
-                    <span className="text-[17px] font-bold text-hoiku-ink">
+                    <span className="text-list-item font-medium text-hoiku-ink">
                       {item.label}
                     </span>
                     {item.id === "items" ? (
-                      <span className="shrink-0 text-[13px] font-bold text-[#7a867e]">
+                      <span className="shrink-0 text-number font-normal text-[#7a867e]">
                         {isItemSettingsOpen ? "閉じる" : "編集"}
                       </span>
                     ) : item.status ? (
-                      <span className="shrink-0 rounded-full bg-hoiku-mint px-3 py-1 text-[13px] font-bold text-hoiku-deep">
+                      <span className="shrink-0 rounded-full bg-hoiku-mint px-3 py-1 text-number font-normal text-hoiku-deep">
                         {item.status}
                       </span>
                     ) : null}
@@ -597,13 +748,13 @@ export default function Home() {
                   {item.id === "items" && isItemSettingsOpen ? (
                     <div className="pb-4">
                       <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#f8fbf9] px-3 py-2 ring-1 ring-[#edf3ef]">
-                        <h3 className="text-[15px] font-bold text-hoiku-ink">
+                        <h3 className="text-card-title font-semibold text-hoiku-ink">
                           持ち物カスタマイズ
                         </h3>
                         <button
                           type="button"
                           onClick={addCustomItem}
-                          className="inline-flex h-9 shrink-0 items-center gap-1 rounded-full bg-hoiku-mint px-3 text-[13px] font-bold text-hoiku-deep transition active:scale-95"
+                          className="inline-flex h-9 shrink-0 items-center gap-1 rounded-full bg-hoiku-mint px-3 text-number font-normal text-hoiku-deep transition active:scale-95"
                         >
                           <Plus size={15} strokeWidth={2.6} />
                           追加
@@ -617,13 +768,13 @@ export default function Home() {
                             className="rounded-2xl bg-[#f8fbf9] p-2.5 ring-1 ring-[#edf3ef]"
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <label className="text-[12px] font-bold text-[#7a867e]">
+                              <label className="text-status font-normal text-[#7a867e]">
                                 持ち物名
                               </label>
                               <button
                                 type="button"
                                 onClick={() => deleteCustomItem(customItem.id)}
-                                className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-surface px-2.5 text-[12px] font-bold text-[#b45a53] ring-1 ring-[#f0d8d5] transition active:scale-95"
+                                className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-surface px-2.5 text-status font-normal text-[#b45a53] ring-1 ring-[#f0d8d5] transition active:scale-95"
                               >
                                 <Trash2 size={13} strokeWidth={2.4} />
                                 削除
@@ -638,12 +789,12 @@ export default function Home() {
                                   name: event.target.value,
                                 })
                               }
-                              className="mt-1.5 h-9 w-full rounded-xl bg-surface px-3 text-[15px] font-bold text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                              className="mt-1.5 h-9 w-full rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
                             />
 
                             <div className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
                               <div>
-                                <label className="block text-[12px] font-bold text-[#7a867e]">
+                                <label className="block text-status font-normal text-[#7a867e]">
                                   数量
                                 </label>
                                 <input
@@ -658,12 +809,12 @@ export default function Home() {
                                       ),
                                     })
                                   }
-                                  className="mt-1 h-9 w-full rounded-xl bg-surface px-2.5 text-[15px] font-bold text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                                  className="mt-1 h-9 w-full rounded-xl bg-surface px-2.5 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
                                 />
                               </div>
 
                               <div>
-                                <label className="block text-[12px] font-bold text-[#7a867e]">
+                                <label className="block text-status font-normal text-[#7a867e]">
                                   表示カテゴリ
                                 </label>
                                 <select
@@ -674,7 +825,7 @@ export default function Home() {
                                         .value as CustomItemCategory,
                                     })
                                   }
-                                  className="mt-1 h-9 w-full rounded-xl bg-surface px-2.5 text-[14px] font-bold text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                                  className="mt-1 h-9 w-full rounded-xl bg-surface px-2.5 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
                                 >
                                   {itemCategories.map((category) => (
                                     <option key={category} value={category}>
@@ -716,47 +867,140 @@ export default function Home() {
             type="button"
             aria-label="閉じる"
             className="absolute inset-0 h-full w-full bg-black/20"
-            onClick={() => setIsTodayOnlySheetOpen(false)}
+            onClick={closeTodayOnlySheet}
           />
           <div className="absolute inset-x-0 bottom-0 mx-auto h-[54dvh] w-full max-w-[430px] rounded-t-card bg-surface px-6 pb-[max(24px,env(safe-area-inset-bottom))] pt-3 shadow-floating">
             <div className="mx-auto h-1.5 w-11 rounded-button bg-divider" />
             <div className="mt-5 flex items-center justify-between">
-              <h2 className="text-card-title font-bold text-text-primary">
+              <h2 className="text-card-title font-semibold text-text-primary">
                 今日だけ追加
               </h2>
               <button
                 type="button"
                 aria-label="シートを閉じる"
-                onClick={() => setIsTodayOnlySheetOpen(false)}
+                onClick={closeTodayOnlySheet}
                 className="grid h-10 w-10 place-items-center rounded-button bg-card-today text-icon-today transition active:scale-95"
               >
                 <ChevronDown size={22} />
               </button>
             </div>
-              <div className="mt-4 space-y-3">
-                {todayOnlyOptions.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => toggleTodayOnlyItem(item.id)}
-                    className="flex h-14 w-full items-center justify-between rounded-section bg-card-today px-4 text-left text-list-item font-bold text-text-primary ring-1 ring-border-soft transition active:scale-[0.99]"
-                  >
-                    <span>{item.name}</span>
-                    <span
-                      className={`grid h-8 w-8 place-items-center rounded-full ${
-                        selectedTodayOnlyIds.includes(item.id)
-                          ? "bg-primary text-surface"
-                          : "bg-surface text-icon-today"
+              <div className="mt-4 max-h-[calc(54dvh-104px)] space-y-3 overflow-y-auto pb-2">
+                {allTodayOnlyOptions.map((item) => {
+                  const isTemporaryItem = temporaryTodayOnlyItems.some(
+                    (temporaryItem) => temporaryItem.id === item.id,
+                  );
+                  const isSelected = selectedTodayOnlyIds.includes(item.id);
+                  const isSwiped = swipedTodayOnlyItemId === item.id;
+
+                  const itemButton = (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isSwiped) {
+                          setSwipedTodayOnlyItemId(null);
+                          return;
+                        }
+
+                        toggleTodayOnlyItem(item.id);
+                      }}
+                      className={`flex h-14 w-full items-center justify-between rounded-section bg-card-today px-4 text-left text-list-item font-medium text-text-primary ring-1 ring-border-soft transition active:scale-[0.99] ${
+                        isTemporaryItem && isSwiped ? "-translate-x-20" : ""
                       }`}
                     >
-                      {selectedTodayOnlyIds.includes(item.id) ? (
-                        <Check size={18} strokeWidth={2.6} />
-                      ) : (
-                        <Plus size={18} strokeWidth={2.6} />
-                      )}
-                    </span>
+                      <span className="min-w-0 truncate">{item.name}</span>
+                      <span
+                        className={`ml-3 grid h-8 w-8 shrink-0 place-items-center rounded-full ${
+                          isSelected
+                            ? "bg-primary text-surface"
+                            : "bg-surface text-icon-today"
+                        }`}
+                      >
+                        {isSelected ? (
+                          <Check size={18} strokeWidth={2.6} />
+                        ) : (
+                          <Plus size={18} strokeWidth={2.6} />
+                        )}
+                      </span>
+                    </button>
+                  );
+
+                  if (!isTemporaryItem) {
+                    return <div key={item.id}>{itemButton}</div>;
+                  }
+
+                  return (
+                    <div
+                      key={item.id}
+                      className="relative overflow-hidden rounded-section"
+                      onPointerDown={(event) =>
+                        startTemporaryItemSwipe(event.clientX)
+                      }
+                      onPointerUp={(event) =>
+                        endTemporaryItemSwipe(item.id, event.clientX)
+                      }
+                      onPointerCancel={() => {
+                        swipeStartXRef.current = null;
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => deleteTemporaryTodayOnlyItem(item.id)}
+                        className="absolute inset-y-0 right-0 grid w-20 place-items-center rounded-section bg-danger text-number font-normal text-surface"
+                      >
+                        削除
+                      </button>
+                      {itemButton}
+                    </div>
+                  );
+                })}
+                {isTodayOnlyInputOpen ? (
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      addTemporaryTodayOnlyItem();
+                    }}
+                    onBlur={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) {
+                        cancelTodayOnlyInput();
+                      }
+                    }}
+                    className="flex h-14 w-full items-center gap-2 rounded-section bg-surface px-4 ring-1 ring-border-soft"
+                  >
+                    <input
+                      ref={todayOnlyInputRef}
+                      type="text"
+                      value={todayOnlyInputValue}
+                      onChange={(event) => setTodayOnlyInputValue(event.target.value)}
+                      placeholder="持ち物名"
+                      className="min-w-0 flex-1 bg-transparent text-list-item font-medium text-text-primary outline-none placeholder:text-text-tertiary"
+                    />
+                    <button
+                      type="button"
+                      aria-label="入力をキャンセル"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={cancelTodayOnlyInput}
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-button bg-card-today text-icon-today transition active:scale-95"
+                    >
+                      <X size={16} strokeWidth={2.4} />
+                    </button>
+                    <button
+                      type="submit"
+                      onMouseDown={(event) => event.preventDefault()}
+                      className="h-9 shrink-0 rounded-button bg-primary px-4 text-number font-normal text-surface transition active:scale-95"
+                    >
+                      追加
+                    </button>
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsTodayOnlyInputOpen(true)}
+                    className="flex h-14 w-full items-center gap-2 rounded-section bg-surface px-4 text-left text-list-item font-medium text-icon-today ring-1 ring-border-soft transition active:scale-[0.99]"
+                  >
+                    <Plus size={18} strokeWidth={2.5} />
+                    持ち物を入力...
                   </button>
-                ))}
+                )}
             </div>
           </div>
         </div>
