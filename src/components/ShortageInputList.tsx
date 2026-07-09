@@ -2,7 +2,10 @@
 
 import { Shirt } from "lucide-react";
 import type { LockerItem } from "../types/preparation";
-import { CardListRow } from "./ui/CardListRow";
+import {
+  CardListRow,
+  getCardListRowIndicatorWidth,
+} from "./ui/CardListRow";
 import { ProgressDots } from "./ui/ProgressDots";
 import { ReusableCard } from "./ui/ReusableCard";
 
@@ -15,6 +18,9 @@ export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
   const maxRequiredCount = Math.max(
     1,
     ...items.map((item) => item.requiredCount),
+  );
+  const indicatorColumnWidth = getCardListRowIndicatorWidth(
+    maxRequiredCount + 1,
   );
 
   return (
@@ -34,10 +40,11 @@ export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
               label={item.name}
               columns={maxRequiredCount}
               onChange={(nextCount) => onChange(item.id, nextCount)}
-              className="w-36"
+              className="w-full"
             />
           }
           right={`${item.shortageCount}/${item.requiredCount}`}
+          indicatorWidth={indicatorColumnWidth}
           statusColor={
             item.shortageCount === item.requiredCount
               ? "text-text-tertiary"

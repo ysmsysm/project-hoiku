@@ -38,6 +38,7 @@ const config: Config = {
       },
       borderRadius: {
         card: "28px",
+        panel: "16px",
         section: "24px",
         button: "999px",
         input: "18px",

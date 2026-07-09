@@ -6,6 +6,8 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
+  GripVertical,
   Package,
   Plus,
   Trash2,
@@ -15,7 +17,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BottomNav } from "../src/components/BottomNav";
 import { PreparationChecklist } from "../src/components/PreparationChecklist";
 import { ShortageInputList } from "../src/components/ShortageInputList";
-import { CardListRow } from "../src/components/ui/CardListRow";
+import {
+  CardListRow,
+  getCardListRowIndicatorWidth,
+} from "../src/components/ui/CardListRow";
 import { ReusableCard } from "../src/components/ui/ReusableCard";
 import { SectionCard } from "../src/components/ui/SectionCard";
 import {
@@ -78,10 +83,18 @@ const roughStateStyles: Record<RoughState, string> = {
 };
 
 const settingsItems = [
-  { id: "child", label: "子ども設定", status: "" },
-  { id: "items", label: "持ち物設定", status: "" },
-  { id: "family", label: "家族共有", status: "準備中" },
-  { id: "notification", label: "通知設定", status: "準備中" },
+  { id: "child", label: "子ども設定", status: "準備中", enabled: false },
+  { id: "items", label: "持ち物設定", status: "", enabled: true },
+  { id: "family", label: "家族共有", status: "準備中", enabled: false },
+  { id: "notification", label: "通知設定", status: "準備中", enabled: false },
+];
+
+const otherSettingsItems = [
+  { id: "about", label: "このアプリについて", value: "準備中" },
+  { id: "terms", label: "利用規約", value: "準備中" },
+  { id: "privacy", label: "プライバシーポリシー", value: "準備中" },
+  { id: "contact", label: "お問い合わせ", value: "準備中" },
+  { id: "version", label: "バージョン", value: "v1.0.0" },
 ];
 
 const createDefaultShortageCounts = (items: CustomizableItem[]) =>
@@ -163,8 +176,26 @@ export default function Home() {
     string | null
   >(null);
   const [isItemSettingsOpen, setIsItemSettingsOpen] = useState(false);
+  const [customItemQuantityInputs, setCustomItemQuantityInputs] = useState<
+    Record<string, string>
+  >({});
+  const [pendingFocusItemId, setPendingFocusItemId] = useState<string | null>(
+    null,
+  );
+  const [isZeroQuantityToastVisible, setIsZeroQuantityToastVisible] =
+    useState(false);
+  const [sortingCategory, setSortingCategory] =
+    useState<CustomItemCategory | null>(null);
+  const [draggingCustomItemId, setDraggingCustomItemId] = useState<
+    string | null
+  >(null);
   const todayOnlyInputRef = useRef<HTMLInputElement>(null);
   const swipeStartXRef = useRef<number | null>(null);
+  const customItemNameRefs = useRef<Record<string, HTMLInputElement | null>>(
+    {},
+  );
+  const zeroQuantityToastTimeoutRef = useRef<number | null>(null);
+  const customItemDragOverIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const savedCustomItems = loadCustomItems(defaultCustomItems);
@@ -175,6 +206,11 @@ export default function Home() {
     setRoughStates(createDefaultRoughStates(savedCustomItems));
     setSession(loadPreparationSession());
     setTemporaryTodayOnlyItems(loadTodayOnlyTemporaryItems());
+    setCustomItemQuantityInputs(
+      Object.fromEntries(
+        savedCustomItems.map((item) => [item.id, String(item.count)]),
+      ),
+    );
   }, []);
 
   useEffect(() => {
@@ -182,6 +218,24 @@ export default function Home() {
       todayOnlyInputRef.current?.focus();
     }
   }, [isTodayOnlyInputOpen]);
+
+  useEffect(() => {
+    if (!pendingFocusItemId) {
+      return;
+    }
+
+    customItemNameRefs.current[pendingFocusItemId]?.focus();
+    setPendingFocusItemId(null);
+  }, [customItems, pendingFocusItemId]);
+
+  useEffect(
+    () => () => {
+      if (zeroQuantityToastTimeoutRef.current !== null) {
+        window.clearTimeout(zeroQuantityToastTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -204,11 +258,17 @@ export default function Home() {
   }, []);
 
   const baseLockerItems = useMemo(
-    () => customItems.filter((item) => item.category === "持ち物"),
+    () =>
+      customItems.filter(
+        (item) => item.category === "持ち物" && item.count > 0,
+      ),
     [customItems],
   );
   const todayOnlyOptions = useMemo(
-    () => customItems.filter((item) => item.category === "今日だけ追加"),
+    () =>
+      customItems.filter(
+        (item) => item.category === "今日だけ追加" && item.count > 0,
+      ),
     [customItems],
   );
   const allTodayOnlyOptions = useMemo(
@@ -216,7 +276,10 @@ export default function Home() {
     [temporaryTodayOnlyItems, todayOnlyOptions],
   );
   const roughItems = useMemo(
-    () => customItems.filter((item) => item.category === "ざっくり管理"),
+    () =>
+      customItems.filter(
+        (item) => item.category === "ざっくり管理" && item.count > 0,
+      ),
     [customItems],
   );
 
@@ -238,6 +301,9 @@ export default function Home() {
   const maxLockerRequiredCount = Math.max(
     1,
     ...lockerItems.map((item) => item.requiredCount),
+  );
+  const lockerIndicatorColumnWidth = getCardListRowIndicatorWidth(
+    maxLockerRequiredCount + 1,
   );
 
   const isPreparationDone =
@@ -408,20 +474,20 @@ export default function Home() {
   const togglePreparationItem = (itemId: string) => {
     const nextItems = session.items.map((item) =>
       item.id === itemId
-        ? {
-            ...item,
-            checked: !item.checked,
-            later: !item.checked ? false : item.later,
-          }
+        ? item.later && !item.checked
+          ? item
+          : {
+              ...item,
+              checked: !item.checked,
+              later: !item.checked ? false : item.later,
+            }
         : item,
     );
     const allChecked = nextItems.every((item) => item.checked || item.later);
     const nextSession = {
       ...session,
       items: nextItems,
-      completedAt: allChecked
-        ? session.completedAt ?? new Date().toISOString()
-        : null,
+      completedAt: allChecked ? session.completedAt : null,
       thanksSent: allChecked ? session.thanksSent : false,
     };
 
@@ -429,17 +495,20 @@ export default function Home() {
   };
 
   const checkAllPreparationItems = () => {
-    const allChecked = session.items.every((item) => item.checked);
-    const nextItems = session.items.map((item) => ({
-      ...item,
-      checked: !allChecked,
-      later: !allChecked ? false : item.later,
-    }));
+    const nextItems = session.items.map((item) =>
+      !item.checked && !item.later
+        ? {
+            ...item,
+            checked: true,
+          }
+        : item,
+    );
+    const allDone = nextItems.every((item) => item.checked || item.later);
     const nextSession = {
       ...session,
       items: nextItems,
-      completedAt: allChecked ? null : new Date().toISOString(),
-      thanksSent: allChecked ? false : session.thanksSent,
+      completedAt: allDone ? session.completedAt : null,
+      thanksSent: allDone ? session.thanksSent : false,
     };
 
     updateSession(nextSession);
@@ -487,30 +556,83 @@ export default function Home() {
     saveCustomItems(nextItems);
   };
 
-  const addCustomItem = () => {
+  const showZeroQuantityToast = () => {
+    setIsZeroQuantityToastVisible(true);
+
+    if (zeroQuantityToastTimeoutRef.current !== null) {
+      window.clearTimeout(zeroQuantityToastTimeoutRef.current);
+    }
+
+    zeroQuantityToastTimeoutRef.current = window.setTimeout(() => {
+      setIsZeroQuantityToastVisible(false);
+      zeroQuantityToastTimeoutRef.current = null;
+    }, 3_000);
+  };
+
+  const addCustomItem = (category: CustomItemCategory) => {
     const newItem: CustomizableItem = {
       id: `custom-${Date.now()}`,
       name: "新しい持ち物",
-      unit: "個",
+      unit:
+        category === "ざっくり管理"
+          ? ""
+          : category === "今日だけ追加"
+            ? "個"
+            : "枚",
       count: 1,
-      category: "持ち物",
+      category,
     };
+    const categoryStartIndex = customItems.findIndex(
+      (item) => item.category === category,
+    );
+    const nextItems =
+      categoryStartIndex === -1
+        ? [...customItems, newItem]
+        : [
+            ...customItems.slice(0, categoryStartIndex),
+            newItem,
+            ...customItems.slice(categoryStartIndex),
+          ];
 
-    updateCustomItems([...customItems, newItem]);
-    setShortageCounts((current) => {
-      const nextCounts = { ...current, [newItem.id]: 0 };
-      saveCheckCounts(nextCounts);
-      return nextCounts;
-    });
+    updateCustomItems(nextItems);
+    setCustomItemQuantityInputs((current) => ({
+      ...current,
+      [newItem.id]: String(newItem.count),
+    }));
+    setPendingFocusItemId(newItem.id);
+
+    if (category === "持ち物") {
+      setShortageCounts((current) => {
+        const nextCounts = { ...current, [newItem.id]: 0 };
+        saveCheckCounts(nextCounts);
+        return nextCounts;
+      });
+    }
+
+    if (category === "ざっくり管理") {
+      setRoughStates((current) => ({
+        ...current,
+        [newItem.id]: current[newItem.id] ?? "十分",
+      }));
+    }
   };
 
   const updateCustomItem = (
     itemId: string,
     changes: Partial<Omit<CustomizableItem, "id">>,
   ) => {
+    const currentItem = customItems.find((item) => item.id === itemId);
     const nextItems = customItems.map((item) =>
       item.id === itemId ? { ...item, ...changes } : item,
     );
+
+    if (
+      changes.count === 0 &&
+      currentItem !== undefined &&
+      currentItem.count !== 0
+    ) {
+      showZeroQuantityToast();
+    }
 
     updateCustomItems(nextItems);
 
@@ -536,6 +658,10 @@ export default function Home() {
 
   const deleteCustomItem = (itemId: string) => {
     updateCustomItems(customItems.filter((item) => item.id !== itemId));
+    setCustomItemQuantityInputs((current) => {
+      const { [itemId]: _deletedQuantity, ...nextInputs } = current;
+      return nextInputs;
+    });
     setSelectedTodayOnlyIds((current) =>
       current.filter((selectedId) => selectedId !== itemId),
     );
@@ -554,17 +680,260 @@ export default function Home() {
     });
   };
 
+  const updateCustomItemQuantityInput = (itemId: string, value: string) => {
+    if (!/^\d*$/.test(value)) {
+      return;
+    }
+
+    setCustomItemQuantityInputs((current) => ({
+      ...current,
+      [itemId]: value,
+    }));
+
+    if (value === "") {
+      return;
+    }
+
+    updateCustomItem(itemId, {
+      count: Number(value),
+    });
+  };
+
+  const saveCustomItemQuantityInput = (itemId: string) => {
+    const value = customItemQuantityInputs[itemId];
+
+    if (value !== "") {
+      return;
+    }
+
+    setCustomItemQuantityInputs((current) => ({
+      ...current,
+      [itemId]: "0",
+    }));
+    updateCustomItem(itemId, {
+      count: 0,
+    });
+  };
+
+  const reorderCustomItemsInCategory = (
+    category: CustomItemCategory,
+    activeItemId: string,
+    overItemId: string,
+  ) => {
+    if (activeItemId === overItemId) {
+      return;
+    }
+
+    const categoryItems = customItems.filter(
+      (item) => item.category === category,
+    );
+    const activeIndex = categoryItems.findIndex(
+      (item) => item.id === activeItemId,
+    );
+    const overIndex = categoryItems.findIndex((item) => item.id === overItemId);
+
+    if (activeIndex === -1 || overIndex === -1) {
+      return;
+    }
+
+    const nextCategoryItems = [...categoryItems];
+    const [movedItem] = nextCategoryItems.splice(activeIndex, 1);
+    nextCategoryItems.splice(overIndex, 0, movedItem);
+
+    let replacementIndex = 0;
+    const nextItems = customItems.map((item) =>
+      item.category === category
+        ? nextCategoryItems[replacementIndex++]
+        : item,
+    );
+
+    updateCustomItems(nextItems);
+  };
+
+  const startCustomItemSorting = (category: CustomItemCategory) => {
+    setSortingCategory(category);
+    setDraggingCustomItemId(null);
+  };
+
+  const finishCustomItemSorting = () => {
+    setSortingCategory(null);
+    setDraggingCustomItemId(null);
+  };
+
+  const renderCustomItemCard = (
+    customItem: CustomizableItem,
+    isSorting: boolean,
+  ) => {
+    const isRoughItem = customItem.category === "ざっくり管理";
+    const isDragging = draggingCustomItemId === customItem.id;
+
+    return (
+      <div
+        key={customItem.id}
+        draggable={isSorting}
+        onDragStart={() => {
+          if (isSorting) {
+            customItemDragOverIdRef.current = null;
+            setDraggingCustomItemId(customItem.id);
+          }
+        }}
+        onDragOver={(event) => {
+          if (isSorting) {
+            event.preventDefault();
+          }
+        }}
+        onDragEnter={() => {
+          if (!isSorting || draggingCustomItemId === null) {
+            return;
+          }
+
+          if (customItemDragOverIdRef.current === customItem.id) {
+            return;
+          }
+
+          customItemDragOverIdRef.current = customItem.id;
+          reorderCustomItemsInCategory(
+            customItem.category,
+            draggingCustomItemId,
+            customItem.id,
+          );
+        }}
+        onDragEnd={() => {
+          customItemDragOverIdRef.current = null;
+          setDraggingCustomItemId(null);
+        }}
+        className={`rounded-2xl bg-[#f8fbf9] p-2.5 ring-1 ring-[#edf3ef] transition ${
+          isSorting ? "cursor-grab active:cursor-grabbing" : ""
+        } ${isDragging ? "relative z-10 scale-[1.02] shadow-card" : ""}`}
+      >
+        <div
+          className={`grid items-center gap-2 ${
+            isRoughItem
+              ? isSorting
+                ? "grid-cols-[1.75rem_minmax(0,1fr)_4.5rem_4.5rem]"
+                : "grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_auto]"
+              : isSorting
+                ? "grid-cols-[1.75rem_minmax(0,1fr)_4.5rem]"
+                : "grid-cols-[minmax(0,1fr)_4.5rem_auto]"
+          }`}
+        >
+          {isSorting ? (
+            <span className="grid h-9 w-7 place-items-center text-text-tertiary">
+              <GripVertical size={18} strokeWidth={2} />
+            </span>
+          ) : null}
+          <input
+            ref={(element) => {
+              customItemNameRefs.current[customItem.id] = element;
+            }}
+            type="text"
+            disabled={isSorting}
+            value={customItem.name}
+            placeholder="持ち物名"
+            onChange={(event) =>
+              updateCustomItem(customItem.id, {
+                name: event.target.value,
+              })
+            }
+            className="h-9 min-w-0 rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
+          />
+          <input
+            type="text"
+            inputMode="numeric"
+            disabled={isSorting}
+            value={
+              customItemQuantityInputs[customItem.id] ?? String(customItem.count)
+            }
+            placeholder="数量"
+            onChange={(event) =>
+              updateCustomItemQuantityInput(customItem.id, event.target.value)
+            }
+            onBlur={() => saveCustomItemQuantityInput(customItem.id)}
+            className="h-9 w-full rounded-xl bg-surface px-2.5 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
+          />
+          {isRoughItem ? (
+            <input
+              type="text"
+              disabled={isSorting}
+              value={customItem.unit}
+              placeholder="単位"
+              onChange={(event) =>
+                updateCustomItem(customItem.id, {
+                  unit: event.target.value,
+                })
+              }
+              className="h-9 w-full rounded-xl bg-surface px-2.5 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
+            />
+          ) : null}
+          {!isSorting ? (
+            <button
+              type="button"
+              onClick={() => deleteCustomItem(customItem.id)}
+              className="inline-flex h-9 shrink-0 items-center gap-1 rounded-full bg-surface px-2.5 text-status font-normal text-[#b45a53] ring-1 ring-[#f0d8d5] transition active:scale-95"
+            >
+              <Trash2 size={13} strokeWidth={2.4} />
+              削除
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
+  const renderCustomItemCategory = (category: CustomItemCategory) => {
+    const isSorting = sortingCategory === category;
+
+    return (
+      <section key={category} className="space-y-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <h4 className="text-list-item font-medium text-hoiku-ink">
+            {category}
+          </h4>
+          <div className="flex shrink-0 items-center gap-3 text-number font-normal">
+            {isSorting ? (
+              <button
+                type="button"
+                onClick={finishCustomItemSorting}
+                className="text-[#7a867e]"
+              >
+                完了
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => startCustomItemSorting(category)}
+                  className="text-[#7a867e]"
+                >
+                  並び替え
+                </button>
+                <button
+                  type="button"
+                  onClick={() => addCustomItem(category)}
+                  className="text-hoiku-deep"
+                >
+                  ＋追加
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="space-y-2">
+          {customItems
+            .filter((customItem) => customItem.category === category)
+            .map((customItem) => renderCustomItemCard(customItem, isSorting))}
+        </div>
+      </section>
+    );
+  };
+
   return (
     <main
       className={`min-h-screen ${
         activeTab === "settings" ? "bg-[#fbfcfb]" : "bg-background"
       }`}
     >
-      <div
-        className={`mx-auto flex min-h-screen w-full max-w-[430px] flex-col pb-[calc(98px_+_env(safe-area-inset-bottom))] pt-5 ${
-          activeTab === "check" ? "px-6" : "px-5"
-        }`}
-      >
+      <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col px-4 pb-[calc(98px_+_env(safe-area-inset-bottom))] pt-5">
         <header className="mb-4 rounded-card bg-surface p-4 shadow-card ring-1 ring-border-soft">
           <p className="sr-only">
             Project Hoiku
@@ -606,7 +975,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={sendThanks}
-                      className="ml-auto block rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc]"
+                      className="mx-auto block rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc]"
                     >
                       {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
                     </button>
@@ -618,7 +987,7 @@ export default function Home() {
         </header>
 
         {activeTab === "check" ? (
-          <div className="space-y-5 pb-24">
+          <div className="space-y-4 pb-24">
             <ShortageInputList
               items={lockerItems}
               onChange={updateShortageCount}
@@ -632,13 +1001,13 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setIsTodayOnlySheetOpen(true)}
-                  className="-mt-1 inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-button bg-surface px-5 text-number font-normal text-danger ring-1 ring-danger/30 transition active:scale-95"
+                  className="inline-flex h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded-button bg-surface/80 px-4 text-status font-normal text-danger ring-1 ring-danger/20 transition active:scale-95"
                 >
-                  <Plus size={18} strokeWidth={2.5} className="text-icon-today" />
+                  <Plus size={16} strokeWidth={2.4} className="text-icon-today" />
                   持ち物を追加
                 </button>
               }
-              contentClassName="grid min-h-[56px] place-items-center rounded-section bg-surface px-5 py-4 shadow-card"
+              contentClassName="grid min-h-20 place-items-center px-4 py-4"
             >
               {selectedTodayOnlyIds.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
@@ -673,7 +1042,7 @@ export default function Home() {
                   left={item.name}
                   center={
                     <div
-                      className="grid w-36 items-center"
+                      className="grid w-full items-center"
                       style={{
                         gridTemplateColumns: `repeat(${
                           maxLockerRequiredCount + 1
@@ -696,6 +1065,7 @@ export default function Home() {
                     </div>
                   }
                   right={`${item.count}${item.unit}`}
+                  indicatorWidth={lockerIndicatorColumnWidth}
                 />
               ))}
             </ReusableCard>
@@ -703,9 +1073,10 @@ export default function Home() {
         ) : null}
 
         {activeTab === "items" ? (
-          <div className="space-y-5">
+          <div className="space-y-4">
             <PreparationChecklist
               items={session.items}
+              completedAt={session.completedAt}
               onToggle={togglePreparationItem}
               onCheckAll={checkAllPreparationItems}
               onToggleLater={togglePreparationItemLater}
@@ -715,135 +1086,89 @@ export default function Home() {
         ) : null}
 
         {activeTab === "settings" ? (
-          <SectionCard appearance="current">
-            <h2 className="text-card-title font-semibold tracking-normal text-hoiku-ink">
-              設定
-            </h2>
-            <div className="mt-4 divide-y divide-[#edf3ef]">
-              {settingsItems.map((item) => (
-                <div key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (item.id === "items") {
-                        setIsItemSettingsOpen((current) => !current);
-                      }
-                    }}
+          <div className="space-y-4">
+            <SectionCard appearance="current">
+              <h2 className="text-card-title font-semibold tracking-normal text-hoiku-ink">
+                設定
+              </h2>
+              <div className="mt-4 divide-y divide-[#edf3ef]">
+                {settingsItems.map((item) => (
+                  <div key={item.id}>
+                    <button
+                      type="button"
+                      disabled={!item.enabled}
+                      onClick={() => {
+                        if (item.id === "items") {
+                          setIsItemSettingsOpen((current) => !current);
+                        }
+                      }}
+                      className="flex min-h-[50px] w-full items-center justify-between gap-4 py-2 text-left disabled:cursor-default"
+                    >
+                      <span className="text-list-item font-medium text-hoiku-ink">
+                        {item.label}
+                      </span>
+                      {item.id === "items" ? (
+                        <ChevronRight
+                          size={20}
+                          strokeWidth={2}
+                          className={`shrink-0 text-text-tertiary transition ${
+                            isItemSettingsOpen ? "rotate-90" : ""
+                          }`}
+                        />
+                      ) : (
+                        <span className="shrink-0 rounded-full bg-[#eeeeee] px-3 py-1 text-number font-normal text-text-secondary">
+                          {item.status}
+                        </span>
+                      )}
+                    </button>
+
+                    {item.id === "items" && isItemSettingsOpen ? (
+                      <div className="pb-4">
+                        <div className="rounded-2xl bg-[#f8fbf9] px-3 py-2 ring-1 ring-[#edf3ef]">
+                          <h3 className="text-card-title font-semibold text-hoiku-ink">
+                            持ち物カスタマイズ
+                          </h3>
+                        </div>
+
+                        <div className="mt-4 space-y-4">
+                          {itemCategories.map((category) =>
+                            renderCustomItemCategory(category),
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+
+            <SectionCard appearance="current">
+              <h2 className="text-card-title font-semibold tracking-normal text-hoiku-ink">
+                その他
+              </h2>
+              <div className="mt-4 divide-y divide-[#edf3ef]">
+                {otherSettingsItems.map((item) => (
+                  <div
+                    key={item.id}
                     className="flex min-h-[50px] w-full items-center justify-between gap-4 py-2 text-left"
                   >
                     <span className="text-list-item font-medium text-hoiku-ink">
                       {item.label}
                     </span>
-                    {item.id === "items" ? (
-                      <span className="shrink-0 text-number font-normal text-[#7a867e]">
-                        {isItemSettingsOpen ? "閉じる" : "編集"}
+                    {item.id === "version" ? (
+                      <span className="shrink-0 text-number font-normal text-text-secondary">
+                        {item.value}
                       </span>
-                    ) : item.status ? (
-                      <span className="shrink-0 rounded-full bg-hoiku-mint px-3 py-1 text-number font-normal text-hoiku-deep">
-                        {item.status}
+                    ) : (
+                      <span className="shrink-0 rounded-full bg-[#eeeeee] px-3 py-1 text-number font-normal text-text-secondary">
+                        {item.value}
                       </span>
-                    ) : null}
-                  </button>
-
-                  {item.id === "items" && isItemSettingsOpen ? (
-                    <div className="pb-4">
-                      <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#f8fbf9] px-3 py-2 ring-1 ring-[#edf3ef]">
-                        <h3 className="text-card-title font-semibold text-hoiku-ink">
-                          持ち物カスタマイズ
-                        </h3>
-                        <button
-                          type="button"
-                          onClick={addCustomItem}
-                          className="inline-flex h-9 shrink-0 items-center gap-1 rounded-full bg-hoiku-mint px-3 text-number font-normal text-hoiku-deep transition active:scale-95"
-                        >
-                          <Plus size={15} strokeWidth={2.6} />
-                          追加
-                        </button>
-                      </div>
-
-                      <div className="mt-3 space-y-2.5">
-                        {customItems.map((customItem) => (
-                          <div
-                            key={customItem.id}
-                            className="rounded-2xl bg-[#f8fbf9] p-2.5 ring-1 ring-[#edf3ef]"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <label className="text-status font-normal text-[#7a867e]">
-                                持ち物名
-                              </label>
-                              <button
-                                type="button"
-                                onClick={() => deleteCustomItem(customItem.id)}
-                                className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-surface px-2.5 text-status font-normal text-[#b45a53] ring-1 ring-[#f0d8d5] transition active:scale-95"
-                              >
-                                <Trash2 size={13} strokeWidth={2.4} />
-                                削除
-                              </button>
-                            </div>
-
-                            <input
-                              type="text"
-                              value={customItem.name}
-                              onChange={(event) =>
-                                updateCustomItem(customItem.id, {
-                                  name: event.target.value,
-                                })
-                              }
-                              className="mt-1.5 h-9 w-full rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
-                            />
-
-                            <div className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
-                              <div>
-                                <label className="block text-status font-normal text-[#7a867e]">
-                                  数量
-                                </label>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  value={customItem.count}
-                                  onChange={(event) =>
-                                    updateCustomItem(customItem.id, {
-                                      count: Math.max(
-                                        1,
-                                        Number(event.target.value) || 1,
-                                      ),
-                                    })
-                                  }
-                                  className="mt-1 h-9 w-full rounded-xl bg-surface px-2.5 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-status font-normal text-[#7a867e]">
-                                  表示カテゴリ
-                                </label>
-                                <select
-                                  value={customItem.category}
-                                  onChange={(event) =>
-                                    updateCustomItem(customItem.id, {
-                                      category: event.target
-                                        .value as CustomItemCategory,
-                                    })
-                                  }
-                                  className="mt-1 h-9 w-full rounded-xl bg-surface px-2.5 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
-                                >
-                                  {itemCategories.map((category) => (
-                                    <option key={category} value={category}>
-                                      {category}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </SectionCard>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+          </div>
         ) : null}
       </div>
 
@@ -856,6 +1181,14 @@ export default function Home() {
           >
             確認完了
           </button>
+        </div>
+      ) : null}
+
+      {isZeroQuantityToastVisible ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(96px_+_env(safe-area-inset-bottom))] z-40 mx-auto w-full max-w-[430px] px-5">
+          <div className="rounded-button bg-text-primary px-4 py-3 text-center text-status font-normal text-surface shadow-floating">
+            数量0の項目は確認画面に表示されません。
+          </div>
         </div>
       ) : null}
 

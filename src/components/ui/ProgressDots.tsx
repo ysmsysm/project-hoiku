@@ -1,5 +1,7 @@
 "use client";
 
+import type { CSSProperties } from "react";
+
 type ProgressDotsProps = {
   total: number;
   value: number;
@@ -7,6 +9,7 @@ type ProgressDotsProps = {
   columns?: number;
   onChange?: (nextValue: number) => void;
   className?: string;
+  style?: CSSProperties;
 };
 
 export function ProgressDots({
@@ -16,6 +19,7 @@ export function ProgressDots({
   columns = total,
   onChange,
   className = "",
+  style,
 }: ProgressDotsProps) {
   const columnCount = Math.max(total, columns) + 1;
 
@@ -23,6 +27,7 @@ export function ProgressDots({
     <div
       className={`grid items-center ${className}`}
       style={{
+        ...style,
         gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
       }}
       aria-label={`${label} ${value} / ${total}`}
@@ -32,7 +37,7 @@ export function ProgressDots({
         data-testid="progress-zero-button"
         aria-label={`${label} 0個に設定`}
         onClick={() => onChange?.(0)}
-        className="grid h-6 w-6 shrink-0 place-items-center justify-self-center rounded-button transition active:scale-95"
+        className="grid h-11 w-11 shrink-0 place-items-center justify-self-center rounded-button transition active:scale-95"
       >
         <span className="grid h-5 w-5 place-items-center rounded-button border border-divider bg-[#f7f7f7] text-[11px] font-bold leading-none text-text-tertiary">
           0
@@ -48,7 +53,7 @@ export function ProgressDots({
             type="button"
             aria-label={`${label} ${index + 1}個目`}
             onClick={() => onChange?.(nextValue)}
-            className="grid h-6 w-6 shrink-0 place-items-center justify-self-center rounded-button transition active:scale-95"
+            className="grid h-11 w-11 shrink-0 place-items-center justify-self-center rounded-button transition active:scale-95"
           >
             <span
               className={`h-5 w-5 rounded-button border-2 ${

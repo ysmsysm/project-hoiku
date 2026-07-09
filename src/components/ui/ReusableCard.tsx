@@ -16,23 +16,27 @@ type ReusableCardProps = {
 const toneClasses: Record<
   ReusableCardTone,
   {
-    background: string;
+    header: string;
+    border: string;
     icon: string;
     title: string;
   }
 > = {
   blue: {
-    background: "bg-card-items",
+    header: "bg-card-items",
+    border: "border-icon-items/20",
     icon: "text-icon-items",
     title: "text-icon-items",
   },
   pink: {
-    background: "bg-card-today",
+    header: "bg-card-today",
+    border: "border-icon-today/20",
     icon: "text-icon-today",
     title: "text-icon-today",
   },
   green: {
-    background: "bg-card-stock",
+    header: "bg-card-stock",
+    border: "border-icon-stock/20",
     icon: "text-icon-stock",
     title: "text-icon-stock",
   },
@@ -45,24 +49,26 @@ export function ReusableCard({
   action,
   children,
   className = "",
-  contentClassName = "overflow-hidden rounded-section bg-surface px-5 py-2 shadow-card",
+  contentClassName = "px-4 py-2",
   titleClassName = "",
 }: ReusableCardProps) {
   const classes = toneClasses[tone];
 
   return (
     <section
-      className={`rounded-card p-3 shadow-card ring-1 ring-border-soft ${classes.background} ${className}`}
+      className={`overflow-hidden rounded-panel border bg-surface shadow-none ${classes.border} ${className}`}
     >
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
+      <div
+        className={`flex h-14 items-center justify-between gap-4 px-4 ${classes.header}`}
+      >
+        <div className="flex min-w-[6em] flex-1 items-center gap-2">
           <span
-            className={`grid h-10 w-10 shrink-0 place-items-center rounded-avatar bg-surface shadow-card ${classes.icon}`}
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded-avatar bg-surface ${classes.icon}`}
           >
             {icon}
           </span>
           <h2
-            className={`truncate text-card-title font-semibold tracking-normal ${classes.title} ${titleClassName}`}
+            className={`min-w-0 truncate text-[20px] font-semibold tracking-normal ${classes.title} ${titleClassName}`}
           >
             {title}
           </h2>

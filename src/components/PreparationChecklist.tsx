@@ -2,10 +2,11 @@ import { Briefcase } from "lucide-react";
 import { useState } from "react";
 import type { PreparationItem } from "../types/preparation";
 import { ItemRow } from "./ui/ItemRow";
-import { SectionCard } from "./ui/SectionCard";
+import { ReusableCard } from "./ui/ReusableCard";
 
 type PreparationChecklistProps = {
   items: PreparationItem[];
+  completedAt: string | null;
   onToggle: (itemId: string) => void;
   onCheckAll: () => void;
   onToggleLater: (itemId: string) => void;
@@ -14,16 +15,21 @@ type PreparationChecklistProps = {
 
 export function PreparationChecklist({
   items,
+  completedAt,
   onToggle,
   onCheckAll,
   onToggleLater,
   onComplete,
 }: PreparationChecklistProps) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const allChecked = items.length > 0 && items.every((item) => item.checked);
+  const isCompleted = Boolean(completedAt);
   const laterCount = items.filter((item) => item.later && !item.checked).length;
 
   const completePreparation = () => {
+    if (isCompleted) {
+      return;
+    }
+
     if (laterCount > 0) {
       setIsConfirmOpen(true);
       return;
@@ -39,80 +45,94 @@ export function PreparationChecklist({
 
   if (items.length === 0) {
     return (
-      <SectionCard tone="today" className="p-3">
-        <div className="mb-3 flex items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-avatar bg-surface text-icon-today shadow-card">
-            <Briefcase size={22} strokeWidth={2.1} />
-          </span>
-          <h2 className="text-card-title font-semibold tracking-normal text-text-primary">
-            準備するもの
-          </h2>
-        </div>
-        <div className="rounded-section bg-surface px-5 py-5 shadow-card">
-          <p className="text-number font-normal text-text-secondary">
-            追加で準備する持ち物はありません。
-          </p>
-        </div>
-      </SectionCard>
+      <ReusableCard
+        title="準備するもの"
+        icon={<Briefcase size={22} strokeWidth={2.1} />}
+        tone="pink"
+        contentClassName="grid min-h-20 place-items-center px-4 py-4"
+      >
+        <p className="text-number font-normal text-text-secondary">
+          追加で準備する持ち物はありません。
+        </p>
+      </ReusableCard>
     );
   }
 
   return (
-    <SectionCard tone="today" className="p-3">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-avatar bg-surface text-icon-today shadow-card">
-            <Briefcase size={22} strokeWidth={2.1} />
-          </span>
-          <h2 className="truncate text-card-title font-semibold tracking-normal text-text-primary">
-            準備するもの
-          </h2>
-        </div>
+    <ReusableCard
+      title="準備するもの"
+      icon={<Briefcase size={22} strokeWidth={2.1} />}
+      tone="pink"
+      action={
         <button
           type="button"
           onClick={onCheckAll}
-          className="h-10 shrink-0 rounded-button bg-surface px-5 text-number font-normal text-danger ring-1 ring-danger/30 transition active:scale-95"
+          className="h-9 shrink-0 rounded-button bg-surface/80 px-4 text-status font-normal text-danger ring-1 ring-danger/20 transition active:scale-95"
         >
-          {allChecked ? "チェックを外す" : "一括チェック"}
+          一括チェック
         </button>
-      </div>
+      }
+    >
+      {isCompleted ? (
+        <div className="mb-2 flex items-center gap-2 rounded-section bg-primary/10 px-4 py-2 text-number font-normal text-primary ring-1 ring-primary/20">
+          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-button bg-primary/20 text-status text-primary">
+            ✓
+          </span>
+          <span>準備完了しました！</span>
+        </div>
+      ) : null}
 
-      <div className="overflow-hidden rounded-section bg-surface px-5 py-3 shadow-card">
-        {items.map((item) => (
+      {items.map((item) => {
+        const isLater = Boolean(item.later && !item.checked);
+        const mutedTextClass = isLater
+          ? "text-text-tertiary"
+          : "text-text-primary";
+
+        return (
           <ItemRow
             key={item.id}
             as="div"
-            className="flex min-h-[50px] w-full items-center justify-between gap-4 border-b border-divider py-2 text-left last:border-b-0"
-            contentClassName="flex min-w-0 items-center gap-3"
-            textClassName="contents"
+            className="flex min-h-14 w-full items-center justify-between gap-2 border-b border-divider py-2 text-left last:border-b-0"
+            contentClassName="flex min-w-[7.75em] flex-1 items-center gap-3"
+            textClassName="min-w-0"
             name={item.name}
-            nameClassName="truncate text-list-item font-medium text-text-primary"
+            nameClassName={`block overflow-hidden text-list-item font-medium leading-snug ${mutedTextClass} [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]`}
             icon={
               <button
                 type="button"
-                onClick={() => onToggle(item.id)}
+                onClick={() => {
+                  if (!isLater) {
+                    onToggle(item.id);
+                  }
+                }}
+                disabled={isLater}
                 aria-label={`${item.name}をチェック`}
-                className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 text-status font-normal ${
+                className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 text-status font-normal disabled:pointer-events-none ${
                   item.checked
                     ? "border-danger bg-danger text-surface"
-                    : "border-text-secondary bg-surface text-transparent"
+                    : isLater
+                      ? "border-divider bg-[#eeeeee] text-transparent"
+                      : "border-text-secondary bg-surface text-transparent"
                 }`}
               >
                 ✓
               </button>
             }
           >
-            <div className="flex shrink-0 items-center gap-3">
-              <p className="w-12 shrink-0 text-right text-number font-normal text-text-primary">
-                {item.count}{item.unit}
+            <div className="flex shrink-0 items-center gap-2">
+              <p
+                className={`w-14 shrink-0 whitespace-nowrap text-right text-number font-normal ${mutedTextClass}`}
+              >
+                {item.count}
+                {item.unit}
               </p>
               <button
                 type="button"
                 onClick={() => onToggleLater(item.id)}
                 disabled={item.checked}
-                className={`h-8 w-16 shrink-0 rounded-button text-status font-normal transition active:scale-95 disabled:pointer-events-none ${
-                  item.later && !item.checked
-                    ? "bg-warning/35 text-text-primary ring-1 ring-warning/40"
+                className={`h-8 w-14 shrink-0 rounded-button px-2 text-status font-normal transition active:scale-95 disabled:pointer-events-none ${
+                  isLater
+                    ? "bg-warning/45 text-text-primary ring-1 ring-warning/50"
                     : "bg-warning/15 text-text-secondary ring-1 ring-warning/20"
                 } ${item.checked ? "opacity-35" : ""}`}
               >
@@ -120,22 +140,29 @@ export function PreparationChecklist({
               </button>
             </div>
           </ItemRow>
-        ))}
-      </div>
+        );
+      })}
 
-      <button
-        type="button"
-        onClick={completePreparation}
-        className="mt-4 h-[52px] w-full rounded-button bg-primary text-button font-bold text-surface shadow-button transition hover:bg-primary-hover active:scale-[0.99]"
-      >
-        準備完了
-      </button>
+      <div className="py-4">
+        <button
+          type="button"
+          onClick={completePreparation}
+          disabled={isCompleted}
+          className={`h-[52px] w-full rounded-button text-button font-bold transition ${
+            isCompleted
+              ? "bg-primary/35 text-primary shadow-none"
+              : "bg-primary text-surface shadow-button hover:bg-primary-hover active:scale-[0.99]"
+          }`}
+        >
+          {isCompleted ? "✓ 準備済み" : "準備完了"}
+        </button>
+      </div>
 
       {isConfirmOpen ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-6">
           <div className="w-full max-w-[340px] rounded-card bg-surface p-5 shadow-floating ring-1 ring-border-soft">
             <p className="text-list-item font-medium leading-relaxed text-text-primary">
-              『あとで』の持ち物がありますが、準備完了にしますか？
+              「あとで」の持ち物がありますが、準備完了にしますか？
             </p>
             <div className="mt-5 grid grid-cols-2 gap-3">
               <button
@@ -156,6 +183,6 @@ export function PreparationChecklist({
           </div>
         </div>
       ) : null}
-    </SectionCard>
+    </ReusableCard>
   );
 }
