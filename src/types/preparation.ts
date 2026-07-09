@@ -13,6 +13,8 @@ export type PreparationItem = {
   count: number;
   checked: boolean;
   later?: boolean;
+  source?: "locker" | "spot" | "stock";
+  dueDate?: string | null;
 };
 
 export type PreparationSession = {
@@ -25,7 +27,7 @@ export type PreparationSession = {
 
 export type AppTab = "check" | "items" | "settings";
 
-export type CustomItemCategory = "持ち物" | "今日だけ追加" | "ざっくり管理";
+export type CustomItemCategory = "持ち物" | "スポット追加" | "ざっくり管理";
 
 export type CustomizableItem = {
   id: string;
@@ -33,6 +35,7 @@ export type CustomizableItem = {
   unit: string;
   count: number;
   category: CustomItemCategory;
+  weekdays?: number[];
 };
 
 export type TodayOnlyTemporaryItem = CustomizableItem & {

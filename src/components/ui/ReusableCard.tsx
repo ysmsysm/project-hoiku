@@ -42,6 +42,12 @@ const toneClasses: Record<
   },
 };
 
+const reusableCardShellClassName =
+  "overflow-hidden rounded-panel border bg-surface shadow-none";
+const reusableCardHeaderClassName =
+  "flex h-14 items-center justify-between gap-4 px-4";
+const reusableCardContentClassName = "px-4 py-2";
+
 export function ReusableCard({
   title,
   icon,
@@ -49,17 +55,17 @@ export function ReusableCard({
   action,
   children,
   className = "",
-  contentClassName = "px-4 py-2",
+  contentClassName = reusableCardContentClassName,
   titleClassName = "",
 }: ReusableCardProps) {
   const classes = toneClasses[tone];
 
   return (
     <section
-      className={`overflow-hidden rounded-panel border bg-surface shadow-none ${classes.border} ${className}`}
+      className={`${reusableCardShellClassName} ${classes.border} ${className}`}
     >
       <div
-        className={`flex h-14 items-center justify-between gap-4 px-4 ${classes.header}`}
+        className={`${reusableCardHeaderClassName} ${classes.header}`}
       >
         <div className="flex min-w-[6em] flex-1 items-center gap-2">
           <span

@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Baby,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -14,9 +13,12 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { BabyHeader } from "../src/components/BabyHeader";
+import { BabyAvatar } from "../src/components/BabyAvatar";
 import { BottomNav } from "../src/components/BottomNav";
 import { PreparationChecklist } from "../src/components/PreparationChecklist";
 import { ShortageInputList } from "../src/components/ShortageInputList";
+import { SpotDeadlineSelector } from "../src/components/SpotDeadlineSelector";
 import {
   CardListRow,
   getCardListRowIndicatorWidth,
@@ -26,15 +28,27 @@ import { SectionCard } from "../src/components/ui/SectionCard";
 import {
   createPreparationSession,
   createTodayOnlyTemporaryItem,
+  defaultChildProfile,
+  loadChildProfile,
   loadCheckCounts,
   loadCustomItems,
   loadPreparationSession,
+  loadSpotAdditions,
   loadTodayOnlyTemporaryItems,
   saveCheckCounts,
+  saveChildProfile,
   saveCustomItems,
   savePreparationSession,
+  saveSpotAdditions,
   saveTodayOnlyTemporaryItems,
 } from "../src/lib/storage";
+import {
+  getTodayDateKey,
+  getTomorrowDateKey,
+  isSpotDeadlineEnabled,
+} from "../src/lib/deadline";
+import type { ChildProfile } from "../src/types/child";
+import type { SpotAddition } from "../src/types/spot";
 import type {
   AppTab,
   CustomizableItem,
@@ -50,11 +64,29 @@ const defaultCustomItems: CustomizableItem[] = [
   { id: "underwear", name: "下着", unit: "枚", count: 3, category: "持ち物" },
   { id: "pants", name: "ズボン", unit: "枚", count: 3, category: "持ち物" },
   { id: "bib", name: "スタイ", unit: "枚", count: 2, category: "持ち物" },
-  { id: "apron", name: "お食事エプロン", unit: "枚", count: 1, category: "持ち物" },
+  {
+    id: "apron",
+    name: "お食事エプロン",
+    unit: "枚",
+    count: 1,
+    category: "持ち物",
+  },
   { id: "socks", name: "靴下", unit: "足", count: 2, category: "持ち物" },
-  { id: "today-letter", name: "おたより", unit: "枚", count: 1, category: "今日だけ追加" },
-  { id: "today-pool-card", name: "水遊びカード", unit: "枚", count: 1, category: "今日だけ追加" },
-  { id: "today-futon", name: "布団セット", unit: "セット", count: 1, category: "今日だけ追加" },
+  { id: "today-letter", name: "おたより", unit: "枚", count: 1, category: "スポット追加" },
+  {
+    id: "today-pool-card",
+    name: "水遊びカード",
+    unit: "枚",
+    count: 1,
+    category: "スポット追加",
+  },
+  {
+    id: "today-futon",
+    name: "布団セット",
+    unit: "セット",
+    count: 1,
+    category: "スポット追加",
+  },
   { id: "rough-diaper", name: "おむつ", unit: "パック", count: 1, category: "ざっくり管理" },
   { id: "rough-wipe", name: "おしりふき", unit: "パック", count: 1, category: "ざっくり管理" },
   { id: "rough-bag", name: "ビニール袋", unit: "セット", count: 1, category: "ざっくり管理" },
@@ -63,11 +95,28 @@ const defaultCustomItems: CustomizableItem[] = [
 
 const roughStateOrder = ["十分", "少ない", "補充"] as const;
 type RoughState = (typeof roughStateOrder)[number];
+
 const itemCategories: CustomItemCategory[] = [
   "持ち物",
-  "今日だけ追加",
+  "スポット追加",
   "ざっくり管理",
 ];
+
+const weekdayOptions = [
+  { value: 0, label: "日" },
+  { value: 1, label: "月" },
+  { value: 2, label: "火" },
+  { value: 3, label: "水" },
+  { value: 4, label: "木" },
+  { value: 5, label: "金" },
+  { value: 6, label: "土" },
+];
+
+const roughStateStyles: Record<RoughState, string> = {
+  十分: "bg-success text-surface",
+  少ない: "bg-warning text-text-primary",
+  補充: "bg-danger text-surface",
+};
 
 const defaultRoughStates: Record<string, RoughState> = {
   "rough-diaper": "十分",
@@ -76,14 +125,8 @@ const defaultRoughStates: Record<string, RoughState> = {
   "rough-tissue": "補充",
 };
 
-const roughStateStyles: Record<RoughState, string> = {
-  十分: "bg-success text-surface",
-  少ない: "bg-warning text-text-primary",
-  補充: "bg-danger text-surface",
-};
-
 const settingsItems = [
-  { id: "child", label: "子ども設定", status: "準備中", enabled: false },
+  { id: "child", label: "こども設定", status: "", enabled: true },
   { id: "items", label: "持ち物設定", status: "", enabled: true },
   { id: "family", label: "家族共有", status: "準備中", enabled: false },
   { id: "notification", label: "通知設定", status: "準備中", enabled: false },
@@ -114,6 +157,13 @@ const createDefaultRoughStates = (items: CustomizableItem[]) =>
 
     return states;
   }, {});
+
+const normalizeCustomItems = (items: CustomizableItem[]) => {
+  const categories = new Set<CustomItemCategory>(itemCategories);
+  const normalized = items.filter((item) => categories.has(item.category));
+
+  return normalized.length > 0 ? normalized : defaultCustomItems;
+};
 
 const formatHistoryDate = (value: string | null) => {
   if (!value) {
@@ -162,20 +212,35 @@ export default function Home() {
     items: [],
     thanksSent: false,
   });
+  const [childProfile, setChildProfile] =
+    useState<ChildProfile>(defaultChildProfile);
+  const [childNameInput, setChildNameInput] = useState(
+    defaultChildProfile.name,
+  );
   const [roughStates, setRoughStates] = useState<Record<string, RoughState>>(
     () => createDefaultRoughStates(defaultCustomItems),
   );
   const [selectedTodayOnlyIds, setSelectedTodayOnlyIds] = useState<string[]>([]);
+  const [spotAdditions, setSpotAdditions] = useState<SpotAddition[]>([]);
   const [temporaryTodayOnlyItems, setTemporaryTodayOnlyItems] = useState<
     TodayOnlyTemporaryItem[]
   >([]);
   const [isTodayOnlySheetOpen, setIsTodayOnlySheetOpen] = useState(false);
+  const [spotDeadlineTargetId, setSpotDeadlineTargetId] = useState<
+    string | null
+  >(null);
+  const [spotDeadlineDraft, setSpotDeadlineDraft] = useState(
+    getTomorrowDateKey(),
+  );
   const [isTodayOnlyInputOpen, setIsTodayOnlyInputOpen] = useState(false);
   const [todayOnlyInputValue, setTodayOnlyInputValue] = useState("");
   const [swipedTodayOnlyItemId, setSwipedTodayOnlyItemId] = useState<
     string | null
   >(null);
+  const [isChildSettingsOpen, setIsChildSettingsOpen] = useState(false);
   const [isItemSettingsOpen, setIsItemSettingsOpen] = useState(false);
+  const [selectedItemSettingsCategory, setSelectedItemSettingsCategory] =
+    useState<CustomItemCategory | null>(null);
   const [customItemQuantityInputs, setCustomItemQuantityInputs] = useState<
     Record<string, string>
   >({});
@@ -184,8 +249,18 @@ export default function Home() {
   );
   const [isZeroQuantityToastVisible, setIsZeroQuantityToastVisible] =
     useState(false);
+  const [isChildSavedToastVisible, setIsChildSavedToastVisible] =
+    useState(false);
   const [sortingCategory, setSortingCategory] =
     useState<CustomItemCategory | null>(null);
+  const [addingCategory, setAddingCategory] =
+    useState<CustomItemCategory | null>(null);
+  const [newCustomItemDraft, setNewCustomItemDraft] = useState({
+    name: "",
+    count: "1",
+    unit: "",
+    weekdays: [] as number[],
+  });
   const [draggingCustomItemId, setDraggingCustomItemId] = useState<
     string | null
   >(null);
@@ -194,11 +269,18 @@ export default function Home() {
   const customItemNameRefs = useRef<Record<string, HTMLInputElement | null>>(
     {},
   );
+  const newCustomItemNameRef = useRef<HTMLInputElement>(null);
   const zeroQuantityToastTimeoutRef = useRef<number | null>(null);
+  const childSavedToastTimeoutRef = useRef<number | null>(null);
   const customItemDragOverIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const savedCustomItems = loadCustomItems(defaultCustomItems);
+    const savedChildProfile = loadChildProfile();
+    const savedCustomItems = normalizeCustomItems(
+      loadCustomItems(defaultCustomItems),
+    );
+    setChildProfile(savedChildProfile);
+    setChildNameInput(savedChildProfile.name);
     setCustomItems(savedCustomItems);
     setShortageCounts(
       loadCheckCounts(createDefaultShortageCounts(savedCustomItems)),
@@ -206,6 +288,9 @@ export default function Home() {
     setRoughStates(createDefaultRoughStates(savedCustomItems));
     setSession(loadPreparationSession());
     setTemporaryTodayOnlyItems(loadTodayOnlyTemporaryItems());
+    const savedSpotAdditions = loadSpotAdditions();
+    setSpotAdditions(savedSpotAdditions);
+    setSelectedTodayOnlyIds(savedSpotAdditions.map((addition) => addition.itemId));
     setCustomItemQuantityInputs(
       Object.fromEntries(
         savedCustomItems.map((item) => [item.id, String(item.count)]),
@@ -214,10 +299,66 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const today = new Date();
+    const todayWeekday = today.getDay();
+    const todayKey = getTodayDateKey();
+    const wasPreparedToday = session.completedAt?.slice(0, 10) === todayKey;
+
+    if (wasPreparedToday) {
+      return;
+    }
+
+    setSpotAdditions((current) => {
+      const additionsById = new Map(
+        current.map((addition) => [addition.itemId, addition]),
+      );
+
+      customItems
+        .filter(
+          (item) =>
+            item.category === "スポット追加" &&
+            item.count > 0 &&
+            item.weekdays?.includes(todayWeekday),
+        )
+        .forEach((item) => {
+          if (!additionsById.has(item.id)) {
+            additionsById.set(item.id, {
+              itemId: item.id,
+              dueDate: null,
+            });
+          }
+        });
+
+      const nextAdditions = Array.from(additionsById.values());
+
+      if (
+        nextAdditions.length === current.length &&
+        nextAdditions.every(
+          (addition, index) =>
+            addition.itemId === current[index]?.itemId &&
+            addition.dueDate === current[index]?.dueDate,
+        )
+      ) {
+        return current;
+      }
+
+      saveSpotAdditions(nextAdditions);
+      setSelectedTodayOnlyIds(nextAdditions.map((addition) => addition.itemId));
+      return nextAdditions;
+    });
+  }, [customItems, session.completedAt]);
+
+  useEffect(() => {
     if (isTodayOnlyInputOpen) {
       todayOnlyInputRef.current?.focus();
     }
   }, [isTodayOnlyInputOpen]);
+
+  useEffect(() => {
+    if (addingCategory) {
+      newCustomItemNameRef.current?.focus();
+    }
+  }, [addingCategory]);
 
   useEffect(() => {
     if (!pendingFocusItemId) {
@@ -232,6 +373,10 @@ export default function Home() {
     () => () => {
       if (zeroQuantityToastTimeoutRef.current !== null) {
         window.clearTimeout(zeroQuantityToastTimeoutRef.current);
+      }
+
+      if (childSavedToastTimeoutRef.current !== null) {
+        window.clearTimeout(childSavedToastTimeoutRef.current);
       }
     },
     [],
@@ -267,7 +412,7 @@ export default function Home() {
   const todayOnlyOptions = useMemo(
     () =>
       customItems.filter(
-        (item) => item.category === "今日だけ追加" && item.count > 0,
+        (item) => item.category === "スポット追加" && item.count > 0,
       ),
     [customItems],
   );
@@ -283,7 +428,7 @@ export default function Home() {
     [customItems],
   );
 
-  const lockerItems = useMemo<LockerItem[]>(
+  const lockerItems: LockerItem[] = useMemo(
     () =>
       baseLockerItems.map((item) => {
         const savedCount = shortageCounts[item.id] ?? 0;
@@ -311,45 +456,23 @@ export default function Home() {
     session.items.every((item) => item.checked || item.later);
   const canShowPreparationStatus =
     session.items.length > 0 && isPreparationDone && Boolean(session.completedAt);
-  const completedTime = session.completedAt
-    ? new Intl.DateTimeFormat("ja-JP", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }).format(new Date(session.completedAt))
-    : "--:--";
   const lastConfirmedDate = formatHistoryDate(session.confirmedAt);
   const lastPreparedDate = formatHistoryDate(session.completedAt);
-
-  const updateShortageCount = (itemId: string, shortageCount: number) => {
-    const nextCounts = {
-      ...shortageCounts,
-      [itemId]: shortageCount,
-    };
-
-    setShortageCounts(nextCounts);
-    saveCheckCounts(nextCounts);
-  };
-
-  const completeCheck = () => {
-    const preparationItems = buildPreparationItems([
-      ...createLockerPreparationItems(),
-      ...createTodayOnlyPreparationItems(),
-      ...createRoughPreparationItems(),
-    ]);
-    const nextSession = createPreparationSession(preparationItems);
-
-    if (preparationItems.length > 0) {
-      nextSession.completedAt = null;
-    }
-
-    setSession(nextSession);
-    savePreparationSession(nextSession);
-    setActiveTab("items");
-  };
+  const spotDeadlineTargetItem = allTodayOnlyOptions.find(
+    (item) => item.id === spotDeadlineTargetId,
+  );
 
   const updateSession = (nextSession: PreparationSession) => {
     setSession(nextSession);
     savePreparationSession(nextSession);
+  };
+
+  const updateShortageCount = (itemId: string, nextCount: number) => {
+    setShortageCounts((current) => {
+      const nextCounts = { ...current, [itemId]: nextCount };
+      saveCheckCounts(nextCounts);
+      return nextCounts;
+    });
   };
 
   const toggleRoughState = (itemId: string) => {
@@ -366,23 +489,34 @@ export default function Home() {
     });
   };
 
-  const toggleTodayOnlyItem = (itemId: string) => {
-    setSelectedTodayOnlyIds((current) =>
-      current.includes(itemId)
-        ? current.filter((selectedId) => selectedId !== itemId)
-        : [...current, itemId],
+  const updateSpotAdditions = (nextAdditions: SpotAddition[]) => {
+    setSpotAdditions(nextAdditions);
+    setSelectedTodayOnlyIds(nextAdditions.map((addition) => addition.itemId));
+    saveSpotAdditions(nextAdditions);
+  };
+
+  const addSpotItem = (itemId: string, dueDate: string | null = null) => {
+    const nextAdditions = [
+      ...spotAdditions.filter((addition) => addition.itemId !== itemId),
+      { itemId, dueDate },
+    ];
+
+    updateSpotAdditions(nextAdditions);
+  };
+
+  const removeSpotItem = (itemId: string) => {
+    updateSpotAdditions(
+      spotAdditions.filter((addition) => addition.itemId !== itemId),
     );
   };
 
-  const cancelTodayOnlyInput = () => {
+  const closeTodayOnlySheet = () => {
+    setIsTodayOnlySheetOpen(false);
+    setSpotDeadlineTargetId(null);
+    setSpotDeadlineDraft(getTomorrowDateKey());
     setIsTodayOnlyInputOpen(false);
     setTodayOnlyInputValue("");
-  };
-
-  const closeTodayOnlySheet = () => {
-    cancelTodayOnlyInput();
     setSwipedTodayOnlyItemId(null);
-    setIsTodayOnlySheetOpen(false);
   };
 
   const startTemporaryItemSwipe = (clientX: number) => {
@@ -390,74 +524,81 @@ export default function Home() {
   };
 
   const endTemporaryItemSwipe = (itemId: string, clientX: number) => {
-    if (swipeStartXRef.current === null) {
-      return;
-    }
-
-    const deltaX = clientX - swipeStartXRef.current;
+    const startX = swipeStartXRef.current;
     swipeStartXRef.current = null;
 
-    if (deltaX < -36) {
-      setSwipedTodayOnlyItemId(itemId);
+    if (startX === null) {
       return;
     }
 
-    if (deltaX > 24) {
-      setSwipedTodayOnlyItemId(null);
-    }
+    setSwipedTodayOnlyItemId(startX - clientX > 48 ? itemId : null);
   };
 
   const addTemporaryTodayOnlyItem = () => {
-    const itemName = todayOnlyInputValue.trim();
+    const trimmedName = todayOnlyInputValue.trim();
 
-    if (!itemName) {
-      cancelTodayOnlyInput();
+    if (!trimmedName) {
+      setIsTodayOnlyInputOpen(false);
+      setTodayOnlyInputValue("");
       return;
     }
 
-    const newItem = createTodayOnlyTemporaryItem(itemName);
+    const newItem = createTodayOnlyTemporaryItem(trimmedName);
     const nextItems = [...temporaryTodayOnlyItems, newItem];
 
     setTemporaryTodayOnlyItems(nextItems);
     saveTodayOnlyTemporaryItems(nextItems);
-    setSelectedTodayOnlyIds((current) => [...current, newItem.id]);
-    cancelTodayOnlyInput();
+    addSpotItem(newItem.id);
+    setIsTodayOnlyInputOpen(false);
+    setTodayOnlyInputValue("");
   };
 
-  const deleteTemporaryTodayOnlyItem = (itemId: string) => {
-    const nextItems = temporaryTodayOnlyItems.filter(
-      (item) => item.id !== itemId,
-    );
-
+  const removeTemporaryTodayOnlyItem = (itemId: string) => {
+    const nextItems = temporaryTodayOnlyItems.filter((item) => item.id !== itemId);
     setTemporaryTodayOnlyItems(nextItems);
     saveTodayOnlyTemporaryItems(nextItems);
-    setSelectedTodayOnlyIds((current) =>
-      current.filter((selectedId) => selectedId !== itemId),
-    );
+    removeSpotItem(itemId);
     setSwipedTodayOnlyItemId(null);
   };
 
   const createLockerPreparationItems = (): PreparationItem[] =>
-    lockerItems.map((item) => ({
-      id: item.id,
-      name: item.name,
-      unit: item.unit,
-      count: Math.max(0, item.requiredCount - item.shortageCount),
-      checked: false,
-      later: false,
-    }));
-
-  const createTodayOnlyPreparationItems = (): PreparationItem[] =>
-    allTodayOnlyOptions
-      .filter((item) => selectedTodayOnlyIds.includes(item.id))
+    lockerItems
+      .filter((item) => item.shortageCount < item.requiredCount)
       .map((item) => ({
         id: item.id,
         name: item.name,
         unit: item.unit,
-        count: item.count,
+        count: item.requiredCount - item.shortageCount,
         checked: false,
         later: false,
+        source: "locker",
       }));
+
+  const createTodayOnlyPreparationItems = (): PreparationItem[] =>
+    allTodayOnlyOptions
+      .map((item) => {
+        const spotAddition = spotAdditions.find(
+          (addition) => addition.itemId === item.id,
+        );
+
+        if (!spotAddition) {
+          return null;
+        }
+
+        const preparationItem: PreparationItem = {
+          id: item.id,
+          name: item.name,
+          unit: item.unit,
+          count: item.count,
+          checked: false,
+          later: false,
+          source: "spot" as const,
+          dueDate: spotAddition.dueDate ?? null,
+        };
+
+        return preparationItem;
+      })
+      .filter((item): item is PreparationItem => item !== null);
 
   const createRoughPreparationItems = (): PreparationItem[] =>
     roughItems
@@ -469,7 +610,22 @@ export default function Home() {
         count: item.count,
         checked: false,
         later: false,
+        source: "stock",
       }));
+
+  const completeCheck = () => {
+    const nextSession = createPreparationSession(
+      buildPreparationItems([
+        ...createLockerPreparationItems(),
+        ...createTodayOnlyPreparationItems(),
+        ...createRoughPreparationItems(),
+      ]),
+    );
+
+    nextSession.completedAt = null;
+    updateSession(nextSession);
+    setActiveTab("items");
+  };
 
   const togglePreparationItem = (itemId: string) => {
     const nextItems = session.items.map((item) =>
@@ -542,6 +698,9 @@ export default function Home() {
       items: nextItems,
       completedAt: new Date().toISOString(),
     });
+    updateSpotAdditions([]);
+    setTemporaryTodayOnlyItems([]);
+    saveTodayOnlyTemporaryItems([]);
   };
 
   const sendThanks = () => {
@@ -569,18 +728,61 @@ export default function Home() {
     }, 3_000);
   };
 
-  const addCustomItem = (category: CustomItemCategory) => {
+  const showChildSavedToast = () => {
+    setIsChildSavedToastVisible(true);
+
+    if (childSavedToastTimeoutRef.current !== null) {
+      window.clearTimeout(childSavedToastTimeoutRef.current);
+    }
+
+    childSavedToastTimeoutRef.current = window.setTimeout(() => {
+      setIsChildSavedToastVisible(false);
+      childSavedToastTimeoutRef.current = null;
+    }, 3_000);
+  };
+
+  const saveChildName = () => {
+    const trimmedName = childNameInput.trim().slice(0, 20);
+
+    if (!trimmedName) {
+      return;
+    }
+
+    const nextProfile: ChildProfile = {
+      ...childProfile,
+      name: trimmedName,
+      iconId: "default-baby",
+    };
+
+    setChildProfile(nextProfile);
+    setChildNameInput(trimmedName);
+    saveChildProfile(nextProfile);
+    showChildSavedToast();
+  };
+
+  const addCustomItem = (
+    category: CustomItemCategory,
+    draft: { name: string; count: string; unit: string; weekdays: number[] },
+  ) => {
+    const trimmedName = draft.name.trim();
+
+    if (!trimmedName) {
+      return;
+    }
+
+    const parsedCount = draft.count === "" ? 0 : Number(draft.count);
     const newItem: CustomizableItem = {
       id: `custom-${Date.now()}`,
-      name: "新しい持ち物",
+      name: trimmedName,
       unit:
         category === "ざっくり管理"
-          ? ""
-          : category === "今日だけ追加"
+          ? draft.unit
+          : category === "スポット追加"
             ? "個"
             : "枚",
-      count: 1,
+      count: Number.isNaN(parsedCount) ? 0 : parsedCount,
       category,
+      weekdays: category === "スポット追加" ? draft.weekdays : [],
     };
     const categoryStartIndex = customItems.findIndex(
       (item) => item.category === category,
@@ -635,25 +837,6 @@ export default function Home() {
     }
 
     updateCustomItems(nextItems);
-
-    if (changes.category === "持ち物") {
-      setShortageCounts((current) => {
-        if (current[itemId] !== undefined) {
-          return current;
-        }
-
-        const nextCounts = { ...current, [itemId]: 0 };
-        saveCheckCounts(nextCounts);
-        return nextCounts;
-      });
-    }
-
-    if (changes.category === "ざっくり管理") {
-      setRoughStates((current) => ({
-        ...current,
-        [itemId]: current[itemId] ?? "十分",
-      }));
-    }
   };
 
   const deleteCustomItem = (itemId: string) => {
@@ -715,6 +898,30 @@ export default function Home() {
     });
   };
 
+  const toggleCustomItemWeekday = (item: CustomizableItem, weekday: number) => {
+    const currentWeekdays = item.weekdays ?? [];
+    const nextWeekdays = currentWeekdays.includes(weekday)
+      ? currentWeekdays.filter((day) => day !== weekday)
+      : [...currentWeekdays, weekday].sort((a, b) => a - b);
+
+    updateCustomItem(item.id, {
+      weekdays: nextWeekdays,
+    });
+  };
+
+  const toggleNewCustomItemWeekday = (weekday: number) => {
+    setNewCustomItemDraft((current) => {
+      const nextWeekdays = current.weekdays.includes(weekday)
+        ? current.weekdays.filter((day) => day !== weekday)
+        : [...current.weekdays, weekday].sort((a, b) => a - b);
+
+      return {
+        ...current,
+        weekdays: nextWeekdays,
+      };
+    });
+  };
+
   const reorderCustomItemsInCategory = (
     category: CustomItemCategory,
     activeItemId: string,
@@ -750,7 +957,31 @@ export default function Home() {
     updateCustomItems(nextItems);
   };
 
+  const moveCustomItemByPointer = (
+    category: CustomItemCategory,
+    activeItemId: string,
+    clientX: number,
+    clientY: number,
+  ) => {
+    const target = document
+      .elementFromPoint(clientX, clientY)
+      ?.closest("[data-custom-item-id]");
+    const overItemId = target?.getAttribute("data-custom-item-id");
+
+    if (!overItemId || overItemId === activeItemId) {
+      return;
+    }
+
+    if (customItemDragOverIdRef.current === overItemId) {
+      return;
+    }
+
+    customItemDragOverIdRef.current = overItemId;
+    reorderCustomItemsInCategory(category, activeItemId, overItemId);
+  };
+
   const startCustomItemSorting = (category: CustomItemCategory) => {
+    setAddingCategory(null);
     setSortingCategory(category);
     setDraggingCustomItemId(null);
   };
@@ -760,16 +991,57 @@ export default function Home() {
     setDraggingCustomItemId(null);
   };
 
+  const startCustomItemAdding = (category: CustomItemCategory) => {
+    setSortingCategory(null);
+    setAddingCategory(category);
+    setNewCustomItemDraft({
+      name: "",
+      count: "1",
+      unit: "",
+      weekdays: [],
+    });
+  };
+
+  const finishCustomItemAdding = (category: CustomItemCategory) => {
+    addCustomItem(category, newCustomItemDraft);
+    setAddingCategory(null);
+    setNewCustomItemDraft({
+      name: "",
+      count: "1",
+      unit: "",
+      weekdays: [],
+    });
+  };
+
+  const closeItemSettings = () => {
+    setIsItemSettingsOpen((current) => !current);
+    setIsChildSettingsOpen(false);
+    setSelectedItemSettingsCategory(null);
+    setSortingCategory(null);
+    setAddingCategory(null);
+  };
+
+  const toggleChildSettings = () => {
+    setIsChildSettingsOpen((current) => !current);
+    setIsItemSettingsOpen(false);
+    setSelectedItemSettingsCategory(null);
+    setSortingCategory(null);
+    setAddingCategory(null);
+    setChildNameInput(childProfile.name);
+  };
+
   const renderCustomItemCard = (
     customItem: CustomizableItem,
     isSorting: boolean,
   ) => {
     const isRoughItem = customItem.category === "ざっくり管理";
+    const isSpotItem = customItem.category === "スポット追加";
     const isDragging = draggingCustomItemId === customItem.id;
 
     return (
       <div
         key={customItem.id}
+        data-custom-item-id={customItem.id}
         draggable={isSorting}
         onDragStart={() => {
           if (isSorting) {
@@ -802,6 +1074,34 @@ export default function Home() {
           customItemDragOverIdRef.current = null;
           setDraggingCustomItemId(null);
         }}
+        onPointerEnter={() => {
+          if (!isSorting || draggingCustomItemId === null) {
+            return;
+          }
+
+          if (draggingCustomItemId === customItem.id) {
+            return;
+          }
+
+          if (customItemDragOverIdRef.current === customItem.id) {
+            return;
+          }
+
+          customItemDragOverIdRef.current = customItem.id;
+          reorderCustomItemsInCategory(
+            customItem.category,
+            draggingCustomItemId,
+            customItem.id,
+          );
+        }}
+        onPointerUp={() => {
+          customItemDragOverIdRef.current = null;
+          setDraggingCustomItemId(null);
+        }}
+        onPointerCancel={() => {
+          customItemDragOverIdRef.current = null;
+          setDraggingCustomItemId(null);
+        }}
         className={`rounded-2xl bg-[#f8fbf9] p-2.5 ring-1 ring-[#edf3ef] transition ${
           isSorting ? "cursor-grab active:cursor-grabbing" : ""
         } ${isDragging ? "relative z-10 scale-[1.02] shadow-card" : ""}`}
@@ -812,15 +1112,50 @@ export default function Home() {
               ? isSorting
                 ? "grid-cols-[1.75rem_minmax(0,1fr)_4.5rem_4.5rem]"
                 : "grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_auto]"
+              : isSpotItem
+                ? isSorting
+                  ? "grid-cols-[1.75rem_minmax(0,1fr)_4.5rem]"
+                  : "grid-cols-[minmax(0,1fr)_4.5rem_minmax(8.5rem,1fr)_auto]"
               : isSorting
                 ? "grid-cols-[1.75rem_minmax(0,1fr)_4.5rem]"
                 : "grid-cols-[minmax(0,1fr)_4.5rem_auto]"
           }`}
         >
           {isSorting ? (
-            <span className="grid h-9 w-7 place-items-center text-text-tertiary">
+            <button
+              type="button"
+              aria-label={`${customItem.name}を並び替え`}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                customItemDragOverIdRef.current = null;
+                setDraggingCustomItemId(customItem.id);
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerMove={(event) => {
+                if (draggingCustomItemId !== customItem.id) {
+                  return;
+                }
+
+                moveCustomItemByPointer(
+                  customItem.category,
+                  customItem.id,
+                  event.clientX,
+                  event.clientY,
+                );
+              }}
+              onPointerUp={(event) => {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+                customItemDragOverIdRef.current = null;
+                setDraggingCustomItemId(null);
+              }}
+              onPointerCancel={() => {
+                customItemDragOverIdRef.current = null;
+                setDraggingCustomItemId(null);
+              }}
+              className="grid h-9 w-7 touch-none place-items-center text-text-tertiary"
+            >
               <GripVertical size={18} strokeWidth={2} />
-            </span>
+            </button>
           ) : null}
           <input
             ref={(element) => {
@@ -865,6 +1200,32 @@ export default function Home() {
               className="h-9 w-full rounded-xl bg-surface px-2.5 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
             />
           ) : null}
+          {isSpotItem && !isSorting ? (
+            <div className="flex min-w-0 flex-wrap gap-1">
+              {weekdayOptions.map((weekday) => {
+                const isSelected = customItem.weekdays?.includes(
+                  weekday.value,
+                );
+
+                return (
+                  <button
+                    key={weekday.value}
+                    type="button"
+                    onClick={() =>
+                      toggleCustomItemWeekday(customItem, weekday.value)
+                    }
+                    className={`grid h-7 w-7 place-items-center rounded-full text-caption font-normal ring-1 transition active:scale-95 ${
+                      isSelected
+                        ? "bg-card-today text-danger ring-danger/30"
+                        : "bg-surface text-text-tertiary ring-border-soft"
+                    }`}
+                  >
+                    {weekday.label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
           {!isSorting ? (
             <button
               type="button"
@@ -882,18 +1243,38 @@ export default function Home() {
 
   const renderCustomItemCategory = (category: CustomItemCategory) => {
     const isSorting = sortingCategory === category;
+    const isAdding = addingCategory === category;
+    const isRoughCategory = category === "ざっくり管理";
+    const isSpotCategory = category === "スポット追加";
 
     return (
       <section key={category} className="space-y-2.5">
         <div className="flex items-center justify-between gap-3">
-          <h4 className="text-list-item font-medium text-hoiku-ink">
-            {category}
-          </h4>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedItemSettingsCategory(null);
+              setSortingCategory(null);
+              setAddingCategory(null);
+            }}
+            className="flex min-w-0 items-center gap-1 text-list-item font-medium text-hoiku-ink"
+          >
+            <ChevronRight
+              size={18}
+              strokeWidth={2.2}
+              className="rotate-180 text-text-tertiary"
+            />
+            <span className="min-w-0 truncate">{category}</span>
+          </button>
           <div className="flex shrink-0 items-center gap-3 text-number font-normal">
-            {isSorting ? (
+            {isSorting || isAdding ? (
               <button
                 type="button"
-                onClick={finishCustomItemSorting}
+                onClick={() =>
+                  isAdding
+                    ? finishCustomItemAdding(category)
+                    : finishCustomItemSorting()
+                }
                 className="text-[#7a867e]"
               >
                 完了
@@ -909,7 +1290,7 @@ export default function Home() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => addCustomItem(category)}
+                  onClick={() => startCustomItemAdding(category)}
                   className="text-hoiku-deep"
                 >
                   ＋追加
@@ -919,6 +1300,91 @@ export default function Home() {
           </div>
         </div>
         <div className="space-y-2">
+          {isAdding ? (
+            <div className="rounded-2xl bg-[#f8fbf9] p-2.5 ring-1 ring-[#edf3ef]">
+              <div
+                className={`grid items-center gap-2 ${
+                  isRoughCategory
+                    ? "grid-cols-[minmax(0,1fr)_4.5rem_4.5rem]"
+                    : isSpotCategory
+                      ? "grid-cols-[minmax(0,1fr)_4.5rem]"
+                    : "grid-cols-[minmax(0,1fr)_4.5rem]"
+                }`}
+              >
+                <input
+                  ref={newCustomItemNameRef}
+                  type="text"
+                  value={newCustomItemDraft.name}
+                  placeholder="持ち物名"
+                  onChange={(event) =>
+                    setNewCustomItemDraft((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  className="h-9 min-w-0 rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={newCustomItemDraft.count}
+                  placeholder="数量"
+                  onChange={(event) => {
+                    if (!/^\d*$/.test(event.target.value)) {
+                      return;
+                    }
+
+                    setNewCustomItemDraft((current) => ({
+                      ...current,
+                      count: event.target.value,
+                    }));
+                  }}
+                  className="h-9 w-full rounded-xl bg-surface px-2.5 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                />
+                {isRoughCategory ? (
+                  <input
+                    type="text"
+                    value={newCustomItemDraft.unit}
+                    placeholder="単位"
+                    onChange={(event) =>
+                      setNewCustomItemDraft((current) => ({
+                        ...current,
+                        unit: event.target.value,
+                      }))
+                    }
+                    className="h-9 w-full rounded-xl bg-surface px-2.5 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                  />
+                ) : null}
+              </div>
+              {isSpotCategory ? (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {weekdayOptions.map((weekday) => {
+                    const isSelected = newCustomItemDraft.weekdays.includes(
+                      weekday.value,
+                    );
+
+                    return (
+                      <button
+                        key={weekday.value}
+                        type="button"
+                        onClick={() => toggleNewCustomItemWeekday(weekday.value)}
+                        className={`grid h-7 w-7 place-items-center rounded-full text-caption font-normal ring-1 transition active:scale-95 ${
+                          isSelected
+                            ? "bg-card-today text-danger ring-danger/30"
+                            : "bg-surface text-text-tertiary ring-border-soft"
+                        }`}
+                      >
+                        {weekday.label}
+                      </button>
+                    );
+                  })}
+                  <span className="ml-1 self-center text-caption font-normal text-text-secondary">
+                    未設定は手動追加候補
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {customItems
             .filter((customItem) => customItem.category === category)
             .map((customItem) => renderCustomItemCard(customItem, isSorting))}
@@ -934,57 +1400,62 @@ export default function Home() {
       }`}
     >
       <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col px-4 pb-[calc(98px_+_env(safe-area-inset-bottom))] pt-5">
-        <header className="mb-4 rounded-card bg-surface p-4 shadow-card ring-1 ring-border-soft">
-          <p className="sr-only">
-            Project Hoiku
-          </p>
-          <div className="flex items-center gap-4">
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-avatar bg-[#f8ead8] text-[#c78b4f] shadow-card">
-              <Baby size={30} strokeWidth={2.1} />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-[24px] font-bold leading-none tracking-normal text-text-primary">
-                そうた
-              </h1>
-            </div>
-            <div className="h-16 w-px shrink-0 bg-divider" />
-            <div className="ml-auto flex min-w-0 flex-1 flex-col justify-center gap-2 text-status font-normal text-text-primary">
-              {activeTab === "check" || activeTab === "items" ? (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-status font-normal">
-                    <CheckCircle2 size={16} className="text-[#3b9de9]" strokeWidth={2.2} />
-                    <span className="whitespace-nowrap">確認</span>
-                    <span className="rounded-button bg-card-items px-2 py-0.5 text-center text-status font-normal text-icon-items">
-                      {lastConfirmedDate ? session.checkedBy : "未確認"}
-                    </span>
-                    <span className="whitespace-nowrap text-right text-status font-normal">
-                      {lastConfirmedDate ?? "--"}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-status font-normal">
-                    <span className="h-4 w-4 rounded-button border-2 border-dashed border-text-tertiary" />
-                    <span className="whitespace-nowrap">準備</span>
-                    <span className="rounded-button bg-[#eeeeee] px-2 py-0.5 text-center text-status font-normal text-text-secondary">
-                      {lastPreparedDate ? session.checkedBy : "まだ"}
-                    </span>
-                    <span className="whitespace-nowrap text-right text-status font-normal">
-                      {lastPreparedDate ?? "--"}
-                    </span>
-                  </div>
-                  {activeTab === "items" && canShowPreparationStatus ? (
-                    <button
-                      type="button"
-                      onClick={sendThanks}
-                      className="mx-auto block rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc]"
-                    >
-                      {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
-                    </button>
-                  ) : null}
+        <BabyHeader
+          childName={childProfile.name}
+          rightContent={
+            activeTab === "check" || activeTab === "items" ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-status font-normal">
+                  <CheckCircle2
+                    size={16}
+                    className="text-[#3b9de9]"
+                    strokeWidth={2.2}
+                  />
+                  <span className="whitespace-nowrap">確認</span>
+                  <span className="rounded-button bg-card-items px-2 py-0.5 text-center text-status font-normal text-icon-items">
+                    {lastConfirmedDate ? session.checkedBy : "未確認"}
+                  </span>
+                  <span className="whitespace-nowrap text-right text-status font-normal">
+                    {lastConfirmedDate ?? "--"}
+                  </span>
                 </div>
-              ) : null}
-            </div>
-          </div>
-        </header>
+                <div className="grid grid-cols-[16px_1.8rem_max-content_max-content] items-center justify-start gap-1 text-status font-normal">
+                  {lastPreparedDate ? (
+                    <CheckCircle2
+                      size={16}
+                      className="text-[#3b9de9]"
+                      strokeWidth={2.2}
+                    />
+                  ) : (
+                    <span className="h-4 w-4 rounded-button border-2 border-dashed border-text-tertiary" />
+                  )}
+                  <span className="whitespace-nowrap">準備</span>
+                  <span
+                    className={`rounded-button px-2 py-0.5 text-center text-status font-normal ${
+                      lastPreparedDate
+                        ? "bg-card-items text-icon-items"
+                        : "bg-[#eeeeee] text-text-secondary"
+                    }`}
+                  >
+                    {lastPreparedDate ? session.checkedBy : "まだ"}
+                  </span>
+                  <span className="whitespace-nowrap text-right text-status font-normal">
+                    {lastPreparedDate ?? "--"}
+                  </span>
+                </div>
+                {activeTab === "items" && canShowPreparationStatus ? (
+                  <button
+                    type="button"
+                    onClick={sendThanks}
+                    className="mx-auto block rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc]"
+                  >
+                    {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
+                  </button>
+                ) : null}
+              </div>
+            ) : null
+          }
+        />
 
         {activeTab === "check" ? (
           <div className="space-y-4 pb-24">
@@ -994,7 +1465,7 @@ export default function Home() {
             />
 
             <ReusableCard
-              title="今日だけ追加"
+              title="スポット追加"
               icon={<CalendarDays size={22} strokeWidth={2.1} />}
               tone="pink"
               action={
@@ -1004,7 +1475,7 @@ export default function Home() {
                   className="inline-flex h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded-button bg-surface/80 px-4 text-status font-normal text-danger ring-1 ring-danger/20 transition active:scale-95"
                 >
                   <Plus size={16} strokeWidth={2.4} className="text-icon-today" />
-                  持ち物を追加
+                  追加
                 </button>
               }
               contentClassName="grid min-h-20 place-items-center px-4 py-4"
@@ -1019,6 +1490,7 @@ export default function Home() {
                         className="max-w-full truncate whitespace-nowrap rounded-button bg-surface px-4 py-2 text-number font-normal text-text-primary ring-1 ring-border-soft"
                       >
                         {item.name}
+                        {item.count > 1 ? ` ×${item.count}` : ""}
                       </span>
                     ))}
                 </div>
@@ -1053,14 +1525,14 @@ export default function Home() {
                         className="flex min-w-0 items-center gap-2"
                         style={{ gridColumn: "2 / -1" }}
                       >
-                      <span
-                        className={`h-5 w-5 shrink-0 rounded-full ${
-                          roughStateStyles[roughStates[item.id] ?? "十分"]
-                        }`}
-                      />
-                      <span className="truncate">
-                        {roughStates[item.id] ?? "十分"}
-                      </span>
+                        <span
+                          className={`h-5 w-5 shrink-0 rounded-full ${
+                            roughStateStyles[roughStates[item.id] ?? "十分"]
+                          }`}
+                        />
+                        <span className="truncate">
+                          {roughStates[item.id] ?? "十分"}
+                        </span>
                       </div>
                     </div>
                   }
@@ -1098,8 +1570,12 @@ export default function Home() {
                       type="button"
                       disabled={!item.enabled}
                       onClick={() => {
+                        if (item.id === "child") {
+                          toggleChildSettings();
+                        }
+
                         if (item.id === "items") {
-                          setIsItemSettingsOpen((current) => !current);
+                          closeItemSettings();
                         }
                       }}
                       className="flex min-h-[50px] w-full items-center justify-between gap-4 py-2 text-left disabled:cursor-default"
@@ -1107,12 +1583,15 @@ export default function Home() {
                       <span className="text-list-item font-medium text-hoiku-ink">
                         {item.label}
                       </span>
-                      {item.id === "items" ? (
+                      {item.id === "items" || item.id === "child" ? (
                         <ChevronRight
                           size={20}
                           strokeWidth={2}
                           className={`shrink-0 text-text-tertiary transition ${
-                            isItemSettingsOpen ? "rotate-90" : ""
+                            (item.id === "items" && isItemSettingsOpen) ||
+                            (item.id === "child" && isChildSettingsOpen)
+                              ? "rotate-90"
+                              : ""
                           }`}
                         />
                       ) : (
@@ -1122,19 +1601,83 @@ export default function Home() {
                       )}
                     </button>
 
+                    {item.id === "child" && isChildSettingsOpen ? (
+                      <div className="pb-4">
+                        <div className="mt-3 rounded-2xl bg-[#f8fbf9] p-4 ring-1 ring-[#edf3ef]">
+                          <div className="flex items-center gap-4">
+                            <BabyAvatar size="lg" />
+                            <div className="min-w-0 flex-1">
+                              <label
+                                htmlFor="child-name"
+                                className="mb-2 block text-status font-normal text-text-secondary"
+                              >
+                                名前
+                              </label>
+                              <input
+                                id="child-name"
+                                type="text"
+                                value={childNameInput}
+                                maxLength={20}
+                                onChange={(event) =>
+                                  setChildNameInput(
+                                    event.target.value.slice(0, 20),
+                                  )
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    saveChildName();
+                                  }
+                                }}
+                                className="h-11 w-full rounded-input bg-surface px-3 text-list-item font-medium text-text-primary outline-none ring-1 ring-border-soft focus:ring-primary"
+                              />
+                              <p className="mt-2 text-caption font-normal text-text-secondary">
+                                {Array.from(childNameInput).length}/20
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={saveChildName}
+                            disabled={!childNameInput.trim()}
+                            className="mt-4 h-11 w-full rounded-button bg-primary text-button font-bold text-surface shadow-button transition hover:bg-primary-hover active:scale-[0.99] disabled:bg-[#f3d2c9] disabled:shadow-none"
+                          >
+                            保存
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
                     {item.id === "items" && isItemSettingsOpen ? (
                       <div className="pb-4">
-                        <div className="rounded-2xl bg-[#f8fbf9] px-3 py-2 ring-1 ring-[#edf3ef]">
-                          <h3 className="text-card-title font-semibold text-hoiku-ink">
-                            持ち物カスタマイズ
-                          </h3>
-                        </div>
-
-                        <div className="mt-4 space-y-4">
-                          {itemCategories.map((category) =>
-                            renderCustomItemCategory(category),
-                          )}
-                        </div>
+                        {selectedItemSettingsCategory ? (
+                          <div className="mt-3">
+                            {renderCustomItemCategory(
+                              selectedItemSettingsCategory,
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mt-3 divide-y divide-[#edf3ef] rounded-2xl bg-[#f8fbf9] px-3 ring-1 ring-[#edf3ef]">
+                            {itemCategories.map((category) => (
+                              <button
+                                key={category}
+                                type="button"
+                                onClick={() =>
+                                  setSelectedItemSettingsCategory(category)
+                                }
+                                className="flex min-h-[50px] w-full items-center justify-between gap-4 py-2 text-left"
+                              >
+                                <span className="text-list-item font-medium text-hoiku-ink">
+                                  {category}
+                                </span>
+                                <ChevronRight
+                                  size={20}
+                                  strokeWidth={2}
+                                  className="shrink-0 text-text-tertiary"
+                                />
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ) : null}
                   </div>
@@ -1192,6 +1735,14 @@ export default function Home() {
         </div>
       ) : null}
 
+      {isChildSavedToastVisible ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(96px_+_env(safe-area-inset-bottom))] z-40 mx-auto w-full max-w-[430px] px-5">
+          <div className="rounded-button bg-text-primary px-4 py-3 text-center text-status font-normal text-surface shadow-floating">
+            保存しました
+          </div>
+        </div>
+      ) : null}
+
       <BottomNav activeTab={activeTab} onChange={setActiveTab} />
 
       {isTodayOnlySheetOpen ? (
@@ -1206,7 +1757,7 @@ export default function Home() {
             <div className="mx-auto h-1.5 w-11 rounded-button bg-divider" />
             <div className="mt-5 flex items-center justify-between">
               <h2 className="text-card-title font-semibold text-text-primary">
-                今日だけ追加
+                スポット追加
               </h2>
               <button
                 type="button"
@@ -1217,32 +1768,60 @@ export default function Home() {
                 <ChevronDown size={22} />
               </button>
             </div>
-              <div className="mt-4 max-h-[calc(54dvh-104px)] space-y-3 overflow-y-auto pb-2">
-                {allTodayOnlyOptions.map((item) => {
-                  const isTemporaryItem = temporaryTodayOnlyItems.some(
-                    (temporaryItem) => temporaryItem.id === item.id,
-                  );
-                  const isSelected = selectedTodayOnlyIds.includes(item.id);
-                  const isSwiped = swipedTodayOnlyItemId === item.id;
+            <div className="mt-4 max-h-[calc(54dvh-104px)] space-y-3 overflow-y-auto px-1 pb-2">
+              {spotDeadlineTargetItem ? (
+                <SpotDeadlineSelector
+                  itemName={spotDeadlineTargetItem.name}
+                  dueDate={spotDeadlineDraft}
+                  onChange={setSpotDeadlineDraft}
+                  onBack={() => {
+                    setSpotDeadlineTargetId(null);
+                    setSpotDeadlineDraft(getTomorrowDateKey());
+                  }}
+                  onAdd={() => {
+                    addSpotItem(spotDeadlineTargetItem.id, spotDeadlineDraft);
+                    setSpotDeadlineTargetId(null);
+                    setSpotDeadlineDraft(getTomorrowDateKey());
+                  }}
+                />
+              ) : (
+                <>
+              {allTodayOnlyOptions.map((item) => {
+                const isTemporaryItem = temporaryTodayOnlyItems.some(
+                  (temporaryItem) => temporaryItem.id === item.id,
+                );
+                const isSelected = selectedTodayOnlyIds.includes(item.id);
+                const isSwiped = swipedTodayOnlyItemId === item.id;
 
-                  const itemButton = (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (isSwiped) {
-                          setSwipedTodayOnlyItemId(null);
-                          return;
-                        }
-
-                        toggleTodayOnlyItem(item.id);
-                      }}
-                      className={`flex h-14 w-full items-center justify-between rounded-section bg-card-today px-4 text-left text-list-item font-medium text-text-primary ring-1 ring-border-soft transition active:scale-[0.99] ${
-                        isTemporaryItem && isSwiped ? "-translate-x-20" : ""
-                      }`}
-                    >
-                      <span className="min-w-0 truncate">{item.name}</span>
-                      <span
-                        className={`ml-3 grid h-8 w-8 shrink-0 place-items-center rounded-full ${
+                const itemButton = (
+                  <div
+                    className={`flex h-14 w-full items-center justify-between rounded-section bg-card-today px-4 text-left text-list-item font-medium text-text-primary ring-1 ring-border-soft transition active:scale-[0.99] ${
+                      isTemporaryItem && isSwiped ? "-translate-x-20" : ""
+                    }`}
+                  >
+                    <span className="min-w-0 truncate">
+                      {item.name}
+                      {item.count > 1 ? ` ×${item.count}` : ""}
+                    </span>
+                    <span className="ml-3 flex shrink-0 items-center gap-2">
+                      {isSpotDeadlineEnabled ? (
+                        <button
+                          type="button"
+                          aria-label={`${item.name}の期限を設定`}
+                          onClick={() => {
+                            setSpotDeadlineTargetId(item.id);
+                            setSpotDeadlineDraft(getTomorrowDateKey());
+                          }}
+                          className="grid h-8 w-8 place-items-center rounded-full bg-surface text-text-tertiary ring-1 ring-border-soft transition active:scale-95"
+                        >
+                          <ChevronRight size={17} strokeWidth={2.4} />
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-label={`${item.name}を追加`}
+                        onClick={() => addSpotItem(item.id)}
+                        className={`grid h-8 w-8 place-items-center rounded-full ${
                           isSelected
                             ? "bg-primary text-surface"
                             : "bg-surface text-icon-today"
@@ -1253,87 +1832,99 @@ export default function Home() {
                         ) : (
                           <Plus size={18} strokeWidth={2.6} />
                         )}
-                      </span>
-                    </button>
-                  );
-
-                  if (!isTemporaryItem) {
-                    return <div key={item.id}>{itemButton}</div>;
-                  }
-
-                  return (
-                    <div
-                      key={item.id}
-                      className="relative overflow-hidden rounded-section"
-                      onPointerDown={(event) =>
-                        startTemporaryItemSwipe(event.clientX)
-                      }
-                      onPointerUp={(event) =>
-                        endTemporaryItemSwipe(item.id, event.clientX)
-                      }
-                      onPointerCancel={() => {
-                        swipeStartXRef.current = null;
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => deleteTemporaryTodayOnlyItem(item.id)}
-                        className="absolute inset-y-0 right-0 grid w-20 place-items-center rounded-section bg-danger text-number font-normal text-surface"
-                      >
-                        削除
                       </button>
+                    </span>
+                  </div>
+                );
+
+                if (!isTemporaryItem) {
+                  return (
+                    <div key={item.id} className="px-px">
                       {itemButton}
                     </div>
                   );
-                })}
-                {isTodayOnlyInputOpen ? (
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      addTemporaryTodayOnlyItem();
+                }
+
+                return (
+                  <div
+                    key={item.id}
+                    className="relative mx-px overflow-hidden rounded-section"
+                    onPointerDown={(event) =>
+                      startTemporaryItemSwipe(event.clientX)
+                    }
+                    onPointerUp={(event) =>
+                      endTemporaryItemSwipe(item.id, event.clientX)
+                    }
+                    onPointerCancel={() => {
+                      swipeStartXRef.current = null;
                     }}
-                    onBlur={(event) => {
-                      if (!event.currentTarget.contains(event.relatedTarget)) {
-                        cancelTodayOnlyInput();
-                      }
-                    }}
-                    className="flex h-14 w-full items-center gap-2 rounded-section bg-surface px-4 ring-1 ring-border-soft"
                   >
-                    <input
-                      ref={todayOnlyInputRef}
-                      type="text"
-                      value={todayOnlyInputValue}
-                      onChange={(event) => setTodayOnlyInputValue(event.target.value)}
-                      placeholder="持ち物名"
-                      className="min-w-0 flex-1 bg-transparent text-list-item font-medium text-text-primary outline-none placeholder:text-text-tertiary"
-                    />
                     <button
                       type="button"
-                      aria-label="入力をキャンセル"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={cancelTodayOnlyInput}
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-button bg-card-today text-icon-today transition active:scale-95"
+                      onClick={() => removeTemporaryTodayOnlyItem(item.id)}
+                      className="absolute inset-y-0 right-0 w-20 bg-danger text-status font-normal text-surface"
                     >
-                      <X size={16} strokeWidth={2.4} />
+                      削除
                     </button>
-                    <button
-                      type="submit"
-                      onMouseDown={(event) => event.preventDefault()}
-                      className="h-9 shrink-0 rounded-button bg-primary px-4 text-number font-normal text-surface transition active:scale-95"
-                    >
-                      追加
-                    </button>
-                  </form>
-                ) : (
+                    <div className="relative transition-transform">
+                      {itemButton}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {isTodayOnlyInputOpen ? (
+                <div className="mx-px flex h-14 items-center gap-2 rounded-section bg-card-today px-3 ring-1 ring-border-soft">
+                  <input
+                    ref={todayOnlyInputRef}
+                    type="text"
+                    value={todayOnlyInputValue}
+                    placeholder="持ち物名"
+                    onChange={(event) =>
+                      setTodayOnlyInputValue(event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        addTemporaryTodayOnlyItem();
+                      }
+
+                      if (event.key === "Escape") {
+                        setIsTodayOnlyInputOpen(false);
+                        setTodayOnlyInputValue("");
+                      }
+                    }}
+                    className="min-w-0 flex-1 bg-transparent text-list-item font-medium text-text-primary outline-none placeholder:text-text-tertiary"
+                  />
                   <button
                     type="button"
-                    onClick={() => setIsTodayOnlyInputOpen(true)}
-                    className="flex h-14 w-full items-center gap-2 rounded-section bg-surface px-4 text-left text-list-item font-medium text-icon-today ring-1 ring-border-soft transition active:scale-[0.99]"
+                    onClick={addTemporaryTodayOnlyItem}
+                    className="h-9 shrink-0 rounded-button bg-primary px-4 text-status font-normal text-surface"
                   >
-                    <Plus size={18} strokeWidth={2.5} />
-                    持ち物を入力...
+                    追加
                   </button>
-                )}
+                  <button
+                    type="button"
+                    aria-label="キャンセル"
+                    onClick={() => {
+                      setIsTodayOnlyInputOpen(false);
+                      setTodayOnlyInputValue("");
+                    }}
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-button bg-surface text-icon-today"
+                  >
+                    <X size={17} strokeWidth={2.4} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsTodayOnlyInputOpen(true)}
+                  className="mx-px flex h-14 w-[calc(100%-2px)] items-center rounded-section bg-card-today px-4 text-left text-list-item font-medium text-icon-today ring-1 ring-border-soft transition active:scale-[0.99]"
+                >
+                  ＋ 持ち物を入力...
+                </button>
+              )}
+                </>
+              )}
             </div>
           </div>
         </div>

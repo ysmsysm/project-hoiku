@@ -1,6 +1,7 @@
 import { Briefcase } from "lucide-react";
 import { useState } from "react";
 import type { PreparationItem } from "../types/preparation";
+import { getDeadlineDisplay } from "../lib/deadline";
 import { ItemRow } from "./ui/ItemRow";
 import { ReusableCard } from "./ui/ReusableCard";
 
@@ -84,18 +85,44 @@ export function PreparationChecklist({
 
       {items.map((item) => {
         const isLater = Boolean(item.later && !item.checked);
+        const deadline = getDeadlineDisplay(item.dueDate);
+        const quantityText =
+          item.source === "spot"
+            ? item.count > 1
+              ? `×${item.count}`
+              : ""
+            : `${item.count}${item.unit}`;
         const mutedTextClass = isLater
           ? "text-text-tertiary"
           : "text-text-primary";
+        const deadlineClassName =
+          deadline?.tone === "danger"
+            ? "text-danger"
+            : deadline?.tone === "coral"
+              ? "text-primary"
+              : "text-text-secondary";
 
         return (
           <ItemRow
             key={item.id}
             as="div"
             className="flex min-h-14 w-full items-center justify-between gap-2 border-b border-divider py-2 text-left last:border-b-0"
-            contentClassName="flex min-w-[7.75em] flex-1 items-center gap-3"
+            contentClassName="flex min-w-[6.5em] flex-1 items-center gap-3"
             textClassName="min-w-0"
-            name={item.name}
+            name={
+              <span className="block min-w-0">
+                <span className="block overflow-hidden text-ellipsis">
+                  {item.name}
+                </span>
+                {deadline ? (
+                  <span
+                    className={`mt-0.5 block text-[12px] font-normal leading-tight ${deadlineClassName}`}
+                  >
+                    {deadline.label}
+                  </span>
+                ) : null}
+              </span>
+            }
             nameClassName={`block overflow-hidden text-list-item font-medium leading-snug ${mutedTextClass} [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]`}
             icon={
               <button
@@ -119,18 +146,17 @@ export function PreparationChecklist({
               </button>
             }
           >
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-3">
               <p
-                className={`w-14 shrink-0 whitespace-nowrap text-right text-number font-normal ${mutedTextClass}`}
+                className={`w-[4.75rem] shrink-0 whitespace-nowrap text-left text-number font-normal ${mutedTextClass}`}
               >
-                {item.count}
-                {item.unit}
+                {quantityText}
               </p>
               <button
                 type="button"
                 onClick={() => onToggleLater(item.id)}
                 disabled={item.checked}
-                className={`h-8 w-14 shrink-0 rounded-button px-2 text-status font-normal transition active:scale-95 disabled:pointer-events-none ${
+                className={`h-8 w-16 shrink-0 whitespace-nowrap rounded-button px-2 text-[13px] font-normal leading-none transition active:scale-95 disabled:pointer-events-none ${
                   isLater
                     ? "bg-warning/45 text-text-primary ring-1 ring-warning/50"
                     : "bg-warning/15 text-text-secondary ring-1 ring-warning/20"

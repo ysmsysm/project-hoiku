@@ -4,11 +4,22 @@ import type {
   PreparationSession,
   TodayOnlyTemporaryItem,
 } from "../types/preparation";
+import type { ChildProfile } from "../types/child";
+import type { SpotAddition } from "../types/spot";
 
 const sessionKey = "project-hoiku:preparation-session";
 const checkCountsKey = "project-hoiku:locker-counts";
 const customItemsKey = "project-hoiku:custom-items";
 const todayOnlyTemporaryItemsKey = "project-hoiku:today-only-temporary-items";
+const spotAdditionsKey = "project-hoiku:spot-additions";
+const childProfileKey = "project-hoiku:child-profile";
+
+export const defaultChildProfile: ChildProfile = {
+  name: "そうた",
+  iconId: "default-baby",
+  birthday: null,
+  photoUrl: null,
+};
 
 const defaultSession: PreparationSession = {
   checkedBy: "ママ",
@@ -92,7 +103,14 @@ export function loadCustomItems(
 
   try {
     const saved = window.localStorage.getItem(customItemsKey);
-    return saved ? JSON.parse(saved) : defaultItems;
+    const items = saved ? JSON.parse(saved) : defaultItems;
+
+    return items.map((item: Omit<CustomizableItem, "category"> & { category: string }) => ({
+      ...item,
+      category:
+        item.category === "今日だけ追加" ? "スポット追加" : item.category,
+      weekdays: item.weekdays ?? [],
+    }));
   } catch {
     return defaultItems;
   }
@@ -122,11 +140,6 @@ export function loadTodayOnlyTemporaryItems(): TodayOnlyTemporaryItem[] {
       items?: TodayOnlyTemporaryItem[];
     };
 
-    if (parsed.date !== getTodayKey()) {
-      window.localStorage.removeItem(todayOnlyTemporaryItemsKey);
-      return [];
-    }
-
     return parsed.items ?? [];
   } catch {
     return [];
@@ -149,6 +162,60 @@ export function saveTodayOnlyTemporaryItems(
   );
 }
 
+export function loadSpotAdditions(): SpotAddition[] {
+  if (!canUseStorage()) {
+    return [];
+  }
+
+  try {
+    const saved = window.localStorage.getItem(spotAdditionsKey);
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveSpotAdditions(additions: SpotAddition[]) {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  window.localStorage.setItem(spotAdditionsKey, JSON.stringify(additions));
+}
+
+export function loadChildProfile(): ChildProfile {
+  if (!canUseStorage()) {
+    return defaultChildProfile;
+  }
+
+  try {
+    const saved = window.localStorage.getItem(childProfileKey);
+    if (!saved) {
+      return defaultChildProfile;
+    }
+
+    const parsed = JSON.parse(saved) as Partial<ChildProfile>;
+    const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+
+    return {
+      ...defaultChildProfile,
+      ...parsed,
+      name: name || defaultChildProfile.name,
+      iconId: parsed.iconId === "default-baby" ? parsed.iconId : "default-baby",
+    };
+  } catch {
+    return defaultChildProfile;
+  }
+}
+
+export function saveChildProfile(profile: ChildProfile) {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  window.localStorage.setItem(childProfileKey, JSON.stringify(profile));
+}
+
 export function createTodayOnlyTemporaryItem(
   name: string,
 ): TodayOnlyTemporaryItem {
@@ -157,7 +224,7 @@ export function createTodayOnlyTemporaryItem(
     name,
     unit: "個",
     count: 1,
-    category: "今日だけ追加",
+    category: "スポット追加",
     date: getTodayKey(),
   };
 }
