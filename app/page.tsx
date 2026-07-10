@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AssigneeBadge } from "../src/components/AssigneeBadge";
 import { BabyHeader } from "../src/components/BabyHeader";
 import { BabyAvatar } from "../src/components/BabyAvatar";
 import { BottomNav } from "../src/components/BottomNav";
@@ -1655,9 +1656,9 @@ export default function Home() {
                     strokeWidth={2.2}
                   />
                   <span className="whitespace-nowrap">確認</span>
-                  <span className="rounded-button bg-card-items px-2 py-0.5 text-center text-status font-normal text-icon-items">
-                    {lastConfirmedDate ? session.checkedBy : "未確認"}
-                  </span>
+                  <AssigneeBadge
+                    label={lastConfirmedDate ? session.checkedBy : "未確認"}
+                  />
                   <span className="min-w-0 whitespace-nowrap text-right text-[13px] font-normal leading-tight">
                     {lastConfirmedDate ?? "--"}
                   </span>
@@ -1673,29 +1674,26 @@ export default function Home() {
                     <span className="h-4 w-4 rounded-button border-2 border-dashed border-text-tertiary" />
                   )}
                   <span className="whitespace-nowrap">準備</span>
-                  <span
-                    className={`rounded-button px-2 py-0.5 text-center text-status font-normal ${
-                      lastPreparedDate
-                        ? "bg-card-items text-icon-items"
-                        : "bg-[#eeeeee] text-text-secondary"
-                    }`}
-                  >
-                    {lastPreparedDate ? session.checkedBy : "まだ"}
-                  </span>
+                  <AssigneeBadge
+                    label={lastPreparedDate ? session.checkedBy : "まだ"}
+                    tone={lastPreparedDate ? "active" : "muted"}
+                  />
                   <span className="min-w-0 whitespace-nowrap text-right text-[13px] font-normal leading-tight">
                     {lastPreparedDate ?? "--"}
                   </span>
                 </div>
-                {activeTab === "items" && canShowPreparationStatus ? (
-                  <button
-                    type="button"
-                    onClick={sendThanks}
-                    className="mx-auto block rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc]"
-                  >
-                    {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
-                  </button>
-                ) : null}
               </div>
+            ) : null
+          }
+          rightFooterContent={
+            activeTab === "items" && canShowPreparationStatus ? (
+              <button
+                type="button"
+                onClick={sendThanks}
+                className="rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc]"
+              >
+                {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
+              </button>
             ) : null
           }
         />
