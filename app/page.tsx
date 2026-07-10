@@ -18,6 +18,7 @@ import { BabyAvatar } from "../src/components/BabyAvatar";
 import { BottomNav } from "../src/components/BottomNav";
 import { PreparationChecklist } from "../src/components/PreparationChecklist";
 import { ShortageInputList } from "../src/components/ShortageInputList";
+import { SpotDeadlineSelector } from "../src/components/SpotDeadlineSelector";
 import { SpotQuantityControl } from "../src/components/SpotQuantityControl";
 import {
   CardListRow,
@@ -283,6 +284,9 @@ export default function Home() {
   const [spotDeadlineDrafts, setSpotDeadlineDrafts] = useState<
     Record<string, string>
   >({});
+  const [editingSpotDeadlineItemId, setEditingSpotDeadlineItemId] = useState<
+    string | null
+  >(null);
   const [swipedTodayOnlyItemId, setSwipedTodayOnlyItemId] = useState<
     string | null
   >(null);
@@ -324,9 +328,6 @@ export default function Home() {
     string | null
   >(null);
   const todayOnlyInputRef = useRef<HTMLInputElement>(null);
-  const spotDeadlineInputRefs = useRef<
-    Record<string, HTMLInputElement | null>
-  >({});
   const swipeStartXRef = useRef<number | null>(null);
   const customItemNameRefs = useRef<Record<string, HTMLInputElement | null>>(
     {},
@@ -357,10 +358,9 @@ export default function Home() {
     setSelectedTodayOnlyIds(savedSpotAdditions.map((addition) => addition.itemId));
     setSpotDeadlineDrafts(
       Object.fromEntries(
-        savedSpotAdditions.map((addition) => [
-          addition.itemId,
-          addition.dueDate ?? getTomorrowDateKey(),
-        ]),
+        savedSpotAdditions
+          .filter((addition) => addition.dueDate)
+          .map((addition) => [addition.itemId, addition.dueDate as string]),
       ),
     );
     setCustomItemQuantityInputs(
@@ -540,10 +540,16 @@ export default function Home() {
   const isPreparationDone =
     session.items.length === 0 ||
     session.items.every((item) => item.checked || item.later);
+  const hasCarryoverItems = session.items.some((item) => item.carryover);
+  const isCurrentPreparationDone = isPreparationDone && !hasCarryoverItems;
   const canShowPreparationStatus =
-    session.items.length > 0 && isPreparationDone && Boolean(session.completedAt);
+    session.items.length > 0 &&
+    isCurrentPreparationDone &&
+    Boolean(session.completedAt);
   const lastConfirmedDate = formatHistoryDate(session.confirmedAt);
-  const lastPreparedDate = formatHistoryDate(session.completedAt);
+  const lastPreparedDate = formatHistoryDate(
+    isCurrentPreparationDone ? session.completedAt : null,
+  );
   const updateSession = (nextSession: PreparationSession) => {
     setSession(nextSession);
     savePreparationSession(nextSession);
@@ -577,6 +583,11 @@ export default function Home() {
     saveSpotAdditions(nextAdditions);
   };
 
+  const updateTemporaryTodayOnlyItems = (nextItems: TodayOnlyTemporaryItem[]) => {
+    setTemporaryTodayOnlyItems(nextItems);
+    saveTodayOnlyTemporaryItems(nextItems);
+  };
+
   const addSpotItem = (itemId: string, dueDate: string | null = null) => {
     const nextAdditions = [
       ...spotAdditions.filter((addition) => addition.itemId !== itemId),
@@ -598,43 +609,25 @@ export default function Home() {
       return;
     }
 
-    addSpotItem(
-      itemId,
-      spotDeadlineDrafts[itemId] ?? getTomorrowDateKey(),
-    );
+    addSpotItem(itemId, spotDeadlineDrafts[itemId] ?? null);
   };
 
-  const openSpotDeadlinePicker = (itemId: string, currentDueDate?: string | null) => {
+  const openSpotDeadlineEditor = (
+    itemId: string,
+    currentDueDate?: string | null,
+  ) => {
     const nextDueDate =
       spotDeadlineDrafts[itemId] ?? currentDueDate ?? getTomorrowDateKey();
 
-    const input = spotDeadlineInputRefs.current[itemId];
-
-    if (!input) {
-      return;
-    }
-
-    input.value = nextDueDate;
-
-    if (typeof input.showPicker === "function") {
-      input.showPicker();
-      return;
-    }
-
-    input.click();
+    setSpotDeadlineDrafts((current) => ({
+      ...current,
+      [itemId]: nextDueDate,
+    }));
+    setEditingSpotDeadlineItemId(itemId);
   };
 
-  const saveSpotDeadlineDraft = (itemId: string, dueDate: string) => {
+  const updateSpotDeadlineDraft = (itemId: string, dueDate: string) => {
     if (!dueDate) {
-      return;
-    }
-
-    const currentDueDate =
-      spotDeadlineDrafts[itemId] ??
-      spotAdditions.find((addition) => addition.itemId === itemId)?.dueDate ??
-      getTomorrowDateKey();
-
-    if (dueDate === currentDueDate) {
       return;
     }
 
@@ -642,6 +635,10 @@ export default function Home() {
       ...current,
       [itemId]: dueDate,
     }));
+  };
+
+  const saveSpotDeadlineDraft = (itemId: string) => {
+    const dueDate = spotDeadlineDrafts[itemId] ?? getTomorrowDateKey();
 
     if (selectedTodayOnlyIds.includes(itemId)) {
       updateSpotAdditions(
@@ -649,7 +646,29 @@ export default function Home() {
           addition.itemId === itemId ? { ...addition, dueDate } : addition,
         ),
       );
+    } else {
+      addSpotItem(itemId, dueDate);
     }
+
+    setEditingSpotDeadlineItemId(null);
+  };
+
+  const clearSpotDeadline = (itemId: string) => {
+    setSpotDeadlineDrafts((current) => {
+      const nextDrafts = { ...current };
+      delete nextDrafts[itemId];
+      return nextDrafts;
+    });
+
+    if (selectedTodayOnlyIds.includes(itemId)) {
+      updateSpotAdditions(
+        spotAdditions.map((addition) =>
+          addition.itemId === itemId ? { ...addition, dueDate: null } : addition,
+        ),
+      );
+    }
+
+    setEditingSpotDeadlineItemId(null);
   };
 
   const closeTodayOnlySheet = () => {
@@ -660,6 +679,7 @@ export default function Home() {
     setSwipedTodayOnlyItemId(null);
     setSwipingTodayOnlyItemId(null);
     setTodayOnlySwipeOffset(0);
+    setEditingSpotDeadlineItemId(null);
   };
 
   const startTemporaryItemSwipe = (itemId: string, clientX: number) => {
@@ -704,9 +724,8 @@ export default function Home() {
     );
     const nextItems = [...temporaryTodayOnlyItems, newItem];
 
-    setTemporaryTodayOnlyItems(nextItems);
-    saveTodayOnlyTemporaryItems(nextItems);
-    addSpotItem(newItem.id, getTomorrowDateKey());
+    updateTemporaryTodayOnlyItems(nextItems);
+    addSpotItem(newItem.id, null);
     setIsTodayOnlyInputOpen(false);
     setTodayOnlyInputValue("");
     setTodayOnlyInputQuantity(1);
@@ -714,8 +733,7 @@ export default function Home() {
 
   const removeTemporaryTodayOnlyItem = (itemId: string) => {
     const nextItems = temporaryTodayOnlyItems.filter((item) => item.id !== itemId);
-    setTemporaryTodayOnlyItems(nextItems);
-    saveTodayOnlyTemporaryItems(nextItems);
+    updateTemporaryTodayOnlyItems(nextItems);
     removeSpotItem(itemId);
     setSwipedTodayOnlyItemId(null);
   };
@@ -752,7 +770,7 @@ export default function Home() {
           checked: false,
           later: false,
           source: "spot" as const,
-          dueDate: spotAddition.dueDate ?? getTomorrowDateKey(),
+          dueDate: spotAddition.dueDate ?? null,
         };
 
         return preparationItem;
@@ -789,21 +807,22 @@ export default function Home() {
   const togglePreparationItem = (itemId: string) => {
     const nextItems = session.items.map((item) =>
       item.id === itemId
-        ? item.later && !item.checked
-          ? item
-          : {
-              ...item,
-              checked: !item.checked,
-              later: !item.checked ? false : item.later,
-            }
+        ? {
+            ...item,
+            checked: !item.checked,
+            later: !item.checked ? false : item.later,
+          }
         : item,
     );
     const allChecked = nextItems.every((item) => item.checked || item.later);
     const nextSession = {
       ...session,
       items: nextItems,
-      completedAt: allChecked ? session.completedAt : null,
-      thanksSent: allChecked ? session.thanksSent : false,
+      completedAt:
+        hasCarryoverItems || (allChecked && isPreparationDone)
+          ? session.completedAt
+          : null,
+      thanksSent: allChecked && !hasCarryoverItems ? session.thanksSent : false,
     };
 
     updateSession(nextSession);
@@ -825,8 +844,11 @@ export default function Home() {
     const nextSession = {
       ...session,
       items: nextItems,
-      completedAt: allDone ? session.completedAt : null,
-      thanksSent: allDone ? session.thanksSent : false,
+      completedAt:
+        hasCarryoverItems || (allDone && isPreparationDone)
+          ? session.completedAt
+          : null,
+      thanksSent: allDone && !hasCarryoverItems ? session.thanksSent : false,
     };
 
     updateSession(nextSession);
@@ -835,34 +857,91 @@ export default function Home() {
   const togglePreparationItemLater = (itemId: string) => {
     const nextItems = session.items.map((item) =>
       item.id === itemId
-        ? { ...item, later: item.checked ? false : !item.later }
+        ? { ...item, checked: false, later: !item.later }
         : item,
     );
     const allDone = nextItems.every((item) => item.checked || item.later);
     const nextSession = {
       ...session,
       items: nextItems,
-      completedAt: allDone ? session.completedAt : null,
-      thanksSent: allDone ? session.thanksSent : false,
+      completedAt:
+        hasCarryoverItems || (allDone && isPreparationDone)
+          ? session.completedAt
+          : null,
+      thanksSent: allDone && !hasCarryoverItems ? session.thanksSent : false,
     };
 
     updateSession(nextSession);
   };
 
   const completePreparation = () => {
-    const nextItems = session.items.map((item) => ({
+    const completedAt = new Date().toISOString();
+    const deferredItems = session.items.filter(
+      (item) => item.later && !item.checked,
+    );
+    const preparedItems = session.items.filter(
+      (item) => !item.later || item.checked,
+    );
+    const deferredItemIds = new Set(deferredItems.map((item) => item.id));
+    const preparedLockerItemIds = new Set(
+      preparedItems
+        .filter((item) => item.source === "locker")
+        .map((item) => item.id),
+    );
+    const preparedStockItemIds = new Set(
+      preparedItems
+        .filter((item) => item.source === "stock")
+        .map((item) => item.id),
+    );
+    const carryoverItems = deferredItems.map((item) => ({
       ...item,
-      checked: item.later ? item.checked : true,
+      checked: false,
+      later: false,
+      carryover: true,
     }));
 
     updateSession({
       ...session,
-      items: nextItems,
-      completedAt: new Date().toISOString(),
+      items: carryoverItems,
+      completedAt,
+      thanksSent: false,
     });
-    updateSpotAdditions([]);
-    setTemporaryTodayOnlyItems([]);
-    saveTodayOnlyTemporaryItems([]);
+
+    if (preparedLockerItemIds.size > 0) {
+      setShortageCounts((current) => {
+        const nextCounts = { ...current };
+
+        preparedLockerItemIds.forEach((itemId) => {
+          const lockerItem = lockerItems.find((item) => item.id === itemId);
+
+          if (lockerItem) {
+            nextCounts[itemId] = lockerItem.requiredCount;
+          }
+        });
+
+        saveCheckCounts(nextCounts);
+        return nextCounts;
+      });
+    }
+
+    if (preparedStockItemIds.size > 0) {
+      setRoughStates((current) => {
+        const nextStates = { ...current };
+
+        preparedStockItemIds.forEach((itemId) => {
+          nextStates[itemId] = "十分";
+        });
+
+        return nextStates;
+      });
+    }
+
+    updateSpotAdditions(
+      spotAdditions.filter((addition) => deferredItemIds.has(addition.itemId)),
+    );
+    updateTemporaryTodayOnlyItems(
+      temporaryTodayOnlyItems.filter((item) => deferredItemIds.has(item.id)),
+    );
   };
 
   const sendThanks = () => {
@@ -1916,7 +1995,7 @@ export default function Home() {
           <div className={cardStackClassName}>
             <PreparationChecklist
               items={session.items}
-              completedAt={session.completedAt}
+              completedAt={isCurrentPreparationDone ? session.completedAt : null}
               onToggle={togglePreparationItem}
               onCheckAll={checkAllPreparationItems}
               onToggleLater={togglePreparationItemLater}
@@ -2194,7 +2273,7 @@ export default function Home() {
             <div className="mx-auto h-1.5 w-11 rounded-button bg-divider" />
             <div className="mt-5 flex items-center justify-between">
               <h2 className="text-card-title font-semibold text-text-primary">
-                スポット追加
+                {editingSpotDeadlineItemId ? "期限設定" : "スポット追加"}
               </h2>
               <button
                 type="button"
@@ -2206,7 +2285,50 @@ export default function Home() {
               </button>
             </div>
             <div className="mt-4 max-h-[calc(54dvh-104px)] space-y-3 overflow-y-auto px-1 pb-2 pt-px">
-              {allTodayOnlyOptions.map((item) => {
+              {editingSpotDeadlineItemId ? (
+                (() => {
+                  const editingItem = allTodayOnlyOptions.find(
+                    (item) => item.id === editingSpotDeadlineItemId,
+                  );
+                  const editingAddition = spotAdditions.find(
+                    (addition) => addition.itemId === editingSpotDeadlineItemId,
+                  );
+
+                  if (!editingItem) {
+                    return null;
+                  }
+
+                  return (
+                    <SpotDeadlineSelector
+                      itemName={formatSpotItemName(
+                        editingItem.name,
+                        editingItem.count,
+                      )}
+                      dueDate={
+                        spotDeadlineDrafts[editingItem.id] ??
+                        editingAddition?.dueDate ??
+                        getTomorrowDateKey()
+                      }
+                      onChange={(dueDate) =>
+                        updateSpotDeadlineDraft(editingItem.id, dueDate)
+                      }
+                      onBack={() => setEditingSpotDeadlineItemId(null)}
+                      onAdd={() => saveSpotDeadlineDraft(editingItem.id)}
+                      onClear={
+                        editingAddition?.dueDate
+                          ? () => clearSpotDeadline(editingItem.id)
+                          : undefined
+                      }
+                      actionLabel={
+                        selectedTodayOnlyIds.includes(editingItem.id)
+                          ? "保存"
+                          : "追加"
+                      }
+                    />
+                  );
+                })()
+              ) : (
+                allTodayOnlyOptions.map((item) => {
                 const isTemporaryItem = temporaryTodayOnlyItems.some(
                   (temporaryItem) => temporaryItem.id === item.id,
                 );
@@ -2214,6 +2336,7 @@ export default function Home() {
                 const spotAddition = spotAdditions.find(
                   (addition) => addition.itemId === item.id,
                 );
+                const hasSavedDeadline = Boolean(spotAddition?.dueDate);
                 const isSwiped = swipedTodayOnlyItemId === item.id;
                 const swipeOffset =
                   swipingTodayOnlyItemId === item.id
@@ -2244,34 +2367,19 @@ export default function Home() {
                             type="button"
                             aria-label={`${item.name}の期限を設定`}
                             onClick={() =>
-                              openSpotDeadlinePicker(
+                              openSpotDeadlineEditor(
                                 item.id,
                                 spotAddition?.dueDate,
                               )
                             }
-                            className="grid h-8 w-8 place-items-center rounded-full bg-surface text-icon-today ring-1 ring-danger/20 transition active:scale-95"
+                            className={`grid h-8 w-8 place-items-center rounded-full ring-1 transition active:scale-95 ${
+                              hasSavedDeadline
+                                ? "bg-primary text-surface ring-primary/30"
+                                : "bg-surface text-icon-today ring-danger/20"
+                            }`}
                           >
                             <CalendarDays size={16} strokeWidth={2.2} />
                           </button>
-                        ) : null}
-                        {isSpotDeadlineEnabled ? (
-                          <input
-                            ref={(element) => {
-                              spotDeadlineInputRefs.current[item.id] = element;
-                            }}
-                            type="date"
-                            tabIndex={-1}
-                            aria-hidden="true"
-                            value={
-                              spotDeadlineDrafts[item.id] ??
-                              spotAddition?.dueDate ??
-                              getTomorrowDateKey()
-                            }
-                            onChange={(event) =>
-                              saveSpotDeadlineDraft(item.id, event.target.value)
-                            }
-                            className="sr-only"
-                          />
                         ) : null}
                         <button
                           type="button"
@@ -2337,68 +2445,71 @@ export default function Home() {
                     </div>
                   </div>
                 );
-              })}
+                })
+              )}
 
-              {isTodayOnlyInputOpen ? (
-                <div className="mx-px flex h-14 items-center gap-2 rounded-section bg-card-today px-3 ring-1 ring-danger/20">
-                  <input
-                    ref={todayOnlyInputRef}
-                    type="text"
-                    value={todayOnlyInputValue}
-                    placeholder="持ち物名"
-                    onChange={(event) =>
-                      setTodayOnlyInputValue(event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        addTemporaryTodayOnlyItem();
+              {!editingSpotDeadlineItemId ? (
+                isTodayOnlyInputOpen ? (
+                  <div className="mx-px flex h-14 items-center gap-2 rounded-section bg-card-today px-3 ring-1 ring-danger/20">
+                    <input
+                      ref={todayOnlyInputRef}
+                      type="text"
+                      value={todayOnlyInputValue}
+                      placeholder="持ち物名"
+                      onChange={(event) =>
+                        setTodayOnlyInputValue(event.target.value)
                       }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          addTemporaryTodayOnlyItem();
+                        }
 
-                      if (event.key === "Escape") {
+                        if (event.key === "Escape") {
+                          setIsTodayOnlyInputOpen(false);
+                          setTodayOnlyInputValue("");
+                          setTodayOnlyInputQuantity(1);
+                        }
+                      }}
+                      className="min-w-0 flex-1 bg-transparent text-list-item font-medium text-text-primary outline-none placeholder:text-text-tertiary"
+                    />
+                    <SpotQuantityControl
+                      value={todayOnlyInputQuantity}
+                      onChange={setTodayOnlyInputQuantity}
+                    />
+                    <button
+                      type="button"
+                      aria-label="追加"
+                      onClick={addTemporaryTodayOnlyItem}
+                      className="grid h-11 min-w-11 shrink-0 place-items-center rounded-button bg-primary px-4 text-status font-normal text-surface"
+                    >
+                      ＋
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="キャンセル"
+                      onClick={() => {
                         setIsTodayOnlyInputOpen(false);
                         setTodayOnlyInputValue("");
                         setTodayOnlyInputQuantity(1);
-                      }
-                    }}
-                    className="min-w-0 flex-1 bg-transparent text-list-item font-medium text-text-primary outline-none placeholder:text-text-tertiary"
-                  />
-                  <SpotQuantityControl
-                    value={todayOnlyInputQuantity}
-                    onChange={setTodayOnlyInputQuantity}
-                  />
+                      }}
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-button bg-surface text-icon-today"
+                    >
+                      <X size={17} strokeWidth={2.4} />
+                    </button>
+                  </div>
+                ) : (
                   <button
                     type="button"
-                    aria-label="追加"
-                    onClick={addTemporaryTodayOnlyItem}
-                    className="grid h-11 min-w-11 shrink-0 place-items-center rounded-button bg-primary px-4 text-status font-normal text-surface"
-                  >
-                    ＋
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="キャンセル"
                     onClick={() => {
-                      setIsTodayOnlyInputOpen(false);
-                      setTodayOnlyInputValue("");
                       setTodayOnlyInputQuantity(1);
+                      setIsTodayOnlyInputOpen(true);
                     }}
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-button bg-surface text-icon-today"
+                    className="mx-px flex h-14 w-[calc(100%-2px)] items-center rounded-section bg-card-today px-4 text-left text-list-item font-medium text-icon-today ring-1 ring-border-soft transition active:scale-[0.99]"
                   >
-                    <X size={17} strokeWidth={2.4} />
+                    ＋ 持ち物を入力...
                   </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTodayOnlyInputQuantity(1);
-                    setIsTodayOnlyInputOpen(true);
-                  }}
-                  className="mx-px flex h-14 w-[calc(100%-2px)] items-center rounded-section bg-card-today px-4 text-left text-list-item font-medium text-icon-today ring-1 ring-border-soft transition active:scale-[0.99]"
-                >
-                  ＋ 持ち物を入力...
-                </button>
-              )}
+                )
+              ) : null}
             </div>
           </div>
         </div>

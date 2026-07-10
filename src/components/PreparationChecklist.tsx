@@ -124,13 +124,10 @@ export function PreparationChecklist({
               <button
                 type="button"
                 onClick={() => {
-                  if (!isLater) {
-                    onToggle(item.id);
-                  }
+                  onToggle(item.id);
                 }}
-                disabled={isLater}
                 aria-label={`${item.name}をチェック`}
-                className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 text-status font-normal disabled:pointer-events-none ${
+                className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 text-status font-normal ${
                   item.checked
                     ? "border-danger bg-danger text-surface"
                     : isLater

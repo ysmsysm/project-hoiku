@@ -13,6 +13,7 @@ export type PreparationItem = {
   count: number;
   checked: boolean;
   later?: boolean;
+  carryover?: boolean;
   source?: "locker" | "spot" | "stock";
   dueDate?: string | null;
 };

@@ -7,6 +7,8 @@ type SpotDeadlineSelectorProps = {
   onChange: (dueDate: string) => void;
   onBack: () => void;
   onAdd: () => void;
+  onClear?: () => void;
+  actionLabel?: string;
 };
 
 export function SpotDeadlineSelector({
@@ -15,6 +17,8 @@ export function SpotDeadlineSelector({
   onChange,
   onBack,
   onAdd,
+  onClear,
+  actionLabel = "追加",
 }: SpotDeadlineSelectorProps) {
   const tomorrow = getTomorrowDateKey();
   const isTomorrow = dueDate === tomorrow;
@@ -59,12 +63,22 @@ export function SpotDeadlineSelector({
         </label>
       </div>
 
+      {onClear ? (
+        <button
+          type="button"
+          onClick={onClear}
+          className="h-11 w-full rounded-button bg-card-today text-number font-normal text-text-secondary ring-1 ring-border-soft transition active:scale-95"
+        >
+          期限を解除
+        </button>
+      ) : null}
+
       <button
         type="button"
         onClick={onAdd}
         className="h-11 w-full rounded-button bg-primary text-button font-bold text-surface shadow-button transition active:scale-[0.99]"
       >
-        追加
+        {actionLabel}
       </button>
     </div>
   );

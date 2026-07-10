@@ -10,7 +10,7 @@
 
 ⬜ 準備完了
 
-⬜ localStorage
+✅ localStorage
 
 ---
 
