@@ -2,6 +2,7 @@ import { Briefcase } from "lucide-react";
 import { useState } from "react";
 import type { PreparationItem } from "../types/preparation";
 import { getDeadlineDisplay } from "../lib/deadline";
+import { getSpotQuantityLabel } from "../lib/spotQuantity";
 import { ItemRow } from "./ui/ItemRow";
 import { ReusableCard } from "./ui/ReusableCard";
 
@@ -24,14 +25,17 @@ export function PreparationChecklist({
 }: PreparationChecklistProps) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const isCompleted = Boolean(completedAt);
-  const laterCount = items.filter((item) => item.later && !item.checked).length;
+  const hasIncompleteItems = items.some((item) => !item.checked && !item.later);
+  const hasDeferredItems = items.some((item) => item.later && !item.checked);
+  const canCompletePreparation = !hasIncompleteItems;
+  const isCompleteButtonDisabled = isCompleted || !canCompletePreparation;
 
   const completePreparation = () => {
-    if (isCompleted) {
+    if (isCompleted || !canCompletePreparation) {
       return;
     }
 
-    if (laterCount > 0) {
+    if (hasDeferredItems) {
       setIsConfirmOpen(true);
       return;
     }
@@ -64,6 +68,9 @@ export function PreparationChecklist({
       title="準備するもの"
       icon={<Briefcase size={22} strokeWidth={2.1} />}
       tone="pink"
+      contentClassName={`px-4 py-2 transition-colors duration-300 ease-out ${
+        isCompleted ? "bg-[#F7F7F7]" : "bg-surface"
+      }`}
       action={
         <button
           type="button"
@@ -74,23 +81,12 @@ export function PreparationChecklist({
         </button>
       }
     >
-      {isCompleted ? (
-        <div className="mb-2 flex items-center gap-2 rounded-section bg-primary/10 px-4 py-2 text-number font-normal text-primary ring-1 ring-primary/20">
-          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-button bg-primary/20 text-status text-primary">
-            ✓
-          </span>
-          <span>準備完了しました！</span>
-        </div>
-      ) : null}
-
       {items.map((item) => {
         const isLater = Boolean(item.later && !item.checked);
         const deadline = getDeadlineDisplay(item.dueDate);
         const quantityText =
           item.source === "spot"
-            ? item.count > 1
-              ? `×${item.count}`
-              : ""
+            ? getSpotQuantityLabel(item.count).trim()
             : `${item.count}${item.unit}`;
         const mutedTextClass = isLater
           ? "text-text-tertiary"
@@ -173,14 +169,16 @@ export function PreparationChecklist({
         <button
           type="button"
           onClick={completePreparation}
-          disabled={isCompleted}
-          className={`h-[52px] w-full rounded-button text-button font-bold transition ${
+          disabled={isCompleteButtonDisabled}
+          className={`h-[52px] w-full rounded-button text-button font-bold transition disabled:pointer-events-none disabled:cursor-not-allowed ${
             isCompleted
               ? "bg-primary/35 text-primary shadow-none"
+              : !canCompletePreparation
+                ? "bg-primary/45 text-surface/80 shadow-none"
               : "bg-primary text-surface shadow-button hover:bg-primary-hover active:scale-[0.99]"
           }`}
         >
-          {isCompleted ? "✓ 準備済み" : "準備完了"}
+          {isCompleted ? "✓ 準備完了" : "準備完了"}
         </button>
       </div>
 
@@ -188,7 +186,7 @@ export function PreparationChecklist({
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-6">
           <div className="w-full max-w-[340px] rounded-card bg-surface p-5 shadow-floating ring-1 ring-border-soft">
             <p className="text-list-item font-medium leading-relaxed text-text-primary">
-              「あとで」の持ち物がありますが、準備完了にしますか？
+              あとでがありますが準備完了にしますか？
             </p>
             <div className="mt-5 grid grid-cols-2 gap-3">
               <button

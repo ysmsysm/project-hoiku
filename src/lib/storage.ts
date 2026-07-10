@@ -218,12 +218,13 @@ export function saveChildProfile(profile: ChildProfile) {
 
 export function createTodayOnlyTemporaryItem(
   name: string,
+  count = 1,
 ): TodayOnlyTemporaryItem {
   return {
     id: `today-only-${Date.now()}`,
     name,
     unit: "個",
-    count: 1,
+    count,
     category: "スポット追加",
     date: getTodayKey(),
   };
