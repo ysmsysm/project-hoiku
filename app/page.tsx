@@ -2,12 +2,12 @@
 
 import {
   CalendarDays,
-  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   GripVertical,
   Package,
+  Pencil,
   Trash2,
   X,
 } from "lucide-react";
@@ -18,12 +18,12 @@ import { BabyAvatar } from "../src/components/BabyAvatar";
 import { BottomNav } from "../src/components/BottomNav";
 import { PreparationChecklist } from "../src/components/PreparationChecklist";
 import { ShortageInputList } from "../src/components/ShortageInputList";
-import { SpotDeadlineSelector } from "../src/components/SpotDeadlineSelector";
 import { SpotQuantityControl } from "../src/components/SpotQuantityControl";
 import {
   CardListRow,
   getCardListRowIndicatorWidth,
 } from "../src/components/ui/CardListRow";
+import { IconButton } from "../src/components/ui/IconButton";
 import { ReusableCard } from "../src/components/ui/ReusableCard";
 import { SectionCard } from "../src/components/ui/SectionCard";
 import {
@@ -49,6 +49,7 @@ import {
   isSpotDeadlineEnabled,
 } from "../src/lib/deadline";
 import { clampSpotQuantity, formatSpotItemName } from "../src/lib/spotQuantity";
+import { useEditableSection } from "../src/hooks/useEditableSection";
 import type { ChildProfile } from "../src/types/child";
 import type { SpotAddition } from "../src/types/spot";
 import type {
@@ -142,6 +143,16 @@ const otherSettingsItems = [
   { id: "version", label: "バージョン", value: "v1.0.0" },
 ];
 
+const childSettingsSectionId = "child-settings";
+
+const validateChildName = (value: string) =>
+  value.trim() ? null : "名前を入力してください";
+
+const cardStackClassName = "space-y-5";
+const settingsSectionStackClassName = "space-y-4";
+const quantityInputClassName =
+  "h-11 w-14 rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent";
+
 const createDefaultShortageCounts = (items: CustomizableItem[]) =>
   items.reduce<Record<string, number>>((counts, item) => {
     if (item.category === "持ち物") {
@@ -180,6 +191,31 @@ const formatHistoryDate = (value: string | null) => {
   }).format(new Date(value));
 };
 
+const formatSpotDueDate = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return `${month}/${day}`;
+};
+
+const formatSpotChipLabel = (
+  item: Pick<CustomizableItem, "name" | "count">,
+  dueDate?: string | null,
+) => {
+  const quantity = item.count > 1 ? ` ×${item.count}` : "";
+  const deadline =
+    dueDate && dueDate !== getTomorrowDateKey() ? formatSpotDueDate(dueDate) : null;
+
+  return `${item.name}${quantity}${deadline ? `（〆${deadline}）` : ""}`;
+};
+
 const buildPreparationItems = (items: PreparationItem[]): PreparationItem[] =>
   Array.from(
     items.reduce<Map<string, PreparationItem>>((mergedItems, item) => {
@@ -216,9 +252,22 @@ export default function Home() {
   });
   const [childProfile, setChildProfile] =
     useState<ChildProfile>(defaultChildProfile);
-  const [childNameInput, setChildNameInput] = useState(
-    defaultChildProfile.name,
-  );
+  const childNameEditor = useEditableSection({
+    initialValue: defaultChildProfile.name,
+    validate: validateChildName,
+    onSave: (name) => {
+      const trimmedName = name.trim().slice(0, 8);
+      const nextProfile: ChildProfile = {
+        ...childProfile,
+        name: trimmedName,
+      };
+
+      setChildProfile(nextProfile);
+      saveChildProfile(nextProfile);
+    },
+  });
+  const setSavedChildName = childNameEditor.setSavedValue;
+  const setChildNameDraft = childNameEditor.setDraftValue;
   const [roughStates, setRoughStates] = useState<Record<string, RoughState>>(
     () => createDefaultRoughStates(defaultCustomItems),
   );
@@ -228,25 +277,28 @@ export default function Home() {
     TodayOnlyTemporaryItem[]
   >([]);
   const [isTodayOnlySheetOpen, setIsTodayOnlySheetOpen] = useState(false);
-  const [spotDeadlineTargetId, setSpotDeadlineTargetId] = useState<
-    string | null
-  >(null);
-  const [spotDeadlineDraft, setSpotDeadlineDraft] = useState(
-    getTomorrowDateKey(),
-  );
   const [isTodayOnlyInputOpen, setIsTodayOnlyInputOpen] = useState(false);
   const [todayOnlyInputValue, setTodayOnlyInputValue] = useState("");
   const [todayOnlyInputQuantity, setTodayOnlyInputQuantity] = useState(1);
+  const [spotDeadlineDrafts, setSpotDeadlineDrafts] = useState<
+    Record<string, string>
+  >({});
   const [swipedTodayOnlyItemId, setSwipedTodayOnlyItemId] = useState<
     string | null
   >(null);
+  const [swipingTodayOnlyItemId, setSwipingTodayOnlyItemId] = useState<
+    string | null
+  >(null);
+  const [todayOnlySwipeOffset, setTodayOnlySwipeOffset] = useState(0);
   const [isChildSettingsOpen, setIsChildSettingsOpen] = useState(false);
+  const [activeEditingSectionId, setActiveEditingSectionId] = useState<
+    string | null
+  >(null);
+  const [isDiscardChildDialogOpen, setIsDiscardChildDialogOpen] =
+    useState(false);
   const [isItemSettingsOpen, setIsItemSettingsOpen] = useState(false);
   const [selectedItemSettingsCategory, setSelectedItemSettingsCategory] =
     useState<CustomItemCategory | null>(null);
-  const [itemSettingsMode, setItemSettingsMode] = useState<"list" | "edit">(
-    "list",
-  );
   const [customItemQuantityInputs, setCustomItemQuantityInputs] = useState<
     Record<string, string>
   >({});
@@ -254,8 +306,6 @@ export default function Home() {
     null,
   );
   const [isZeroQuantityToastVisible, setIsZeroQuantityToastVisible] =
-    useState(false);
-  const [isChildSavedToastVisible, setIsChildSavedToastVisible] =
     useState(false);
   const [sortingCategory, setSortingCategory] =
     useState<CustomItemCategory | null>(null);
@@ -274,15 +324,18 @@ export default function Home() {
     string | null
   >(null);
   const todayOnlyInputRef = useRef<HTMLInputElement>(null);
+  const spotDeadlineInputRefs = useRef<
+    Record<string, HTMLInputElement | null>
+  >({});
   const swipeStartXRef = useRef<number | null>(null);
   const customItemNameRefs = useRef<Record<string, HTMLInputElement | null>>(
     {},
   );
   const newCustomItemNameRef = useRef<HTMLInputElement>(null);
   const zeroQuantityToastTimeoutRef = useRef<number | null>(null);
-  const childSavedToastTimeoutRef = useRef<number | null>(null);
   const customItemDragOverIdRef = useRef<string | null>(null);
   const customItemReorderAnimationFrameRef = useRef<number | null>(null);
+  const previousActiveTabRef = useRef<AppTab>(activeTab);
 
   useEffect(() => {
     const savedChildProfile = loadChildProfile();
@@ -290,7 +343,8 @@ export default function Home() {
       loadCustomItems(defaultCustomItems),
     );
     setChildProfile(savedChildProfile);
-    setChildNameInput(savedChildProfile.name);
+    setSavedChildName(savedChildProfile.name);
+    setChildNameDraft(savedChildProfile.name);
     setCustomItems(savedCustomItems);
     setShortageCounts(
       loadCheckCounts(createDefaultShortageCounts(savedCustomItems)),
@@ -301,12 +355,34 @@ export default function Home() {
     const savedSpotAdditions = loadSpotAdditions();
     setSpotAdditions(savedSpotAdditions);
     setSelectedTodayOnlyIds(savedSpotAdditions.map((addition) => addition.itemId));
+    setSpotDeadlineDrafts(
+      Object.fromEntries(
+        savedSpotAdditions.map((addition) => [
+          addition.itemId,
+          addition.dueDate ?? getTomorrowDateKey(),
+        ]),
+      ),
+    );
     setCustomItemQuantityInputs(
       Object.fromEntries(
         savedCustomItems.map((item) => [item.id, String(item.count)]),
       ),
     );
-  }, []);
+  }, [setChildNameDraft, setSavedChildName]);
+
+  useEffect(() => {
+    if (
+      activeTab === "settings" &&
+      previousActiveTabRef.current !== "settings"
+    ) {
+      setIsChildSettingsOpen(false);
+      setIsDiscardChildDialogOpen(false);
+      childNameEditor.discardChanges();
+      setActiveEditingSectionId(null);
+    }
+
+    previousActiveTabRef.current = activeTab;
+  }, [activeTab, childNameEditor]);
 
   useEffect(() => {
     const today = new Date();
@@ -383,10 +459,6 @@ export default function Home() {
     () => () => {
       if (zeroQuantityToastTimeoutRef.current !== null) {
         window.clearTimeout(zeroQuantityToastTimeoutRef.current);
-      }
-
-      if (childSavedToastTimeoutRef.current !== null) {
-        window.clearTimeout(childSavedToastTimeoutRef.current);
       }
 
       if (customItemReorderAnimationFrameRef.current !== null) {
@@ -472,10 +544,6 @@ export default function Home() {
     session.items.length > 0 && isPreparationDone && Boolean(session.completedAt);
   const lastConfirmedDate = formatHistoryDate(session.confirmedAt);
   const lastPreparedDate = formatHistoryDate(session.completedAt);
-  const spotDeadlineTargetItem = allTodayOnlyOptions.find(
-    (item) => item.id === spotDeadlineTargetId,
-  );
-
   const updateSession = (nextSession: PreparationSession) => {
     setSession(nextSession);
     savePreparationSession(nextSession);
@@ -530,32 +598,95 @@ export default function Home() {
       return;
     }
 
-    addSpotItem(itemId);
+    addSpotItem(
+      itemId,
+      spotDeadlineDrafts[itemId] ?? getTomorrowDateKey(),
+    );
+  };
+
+  const openSpotDeadlinePicker = (itemId: string, currentDueDate?: string | null) => {
+    const nextDueDate =
+      spotDeadlineDrafts[itemId] ?? currentDueDate ?? getTomorrowDateKey();
+
+    const input = spotDeadlineInputRefs.current[itemId];
+
+    if (!input) {
+      return;
+    }
+
+    input.value = nextDueDate;
+
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+      return;
+    }
+
+    input.click();
+  };
+
+  const saveSpotDeadlineDraft = (itemId: string, dueDate: string) => {
+    if (!dueDate) {
+      return;
+    }
+
+    const currentDueDate =
+      spotDeadlineDrafts[itemId] ??
+      spotAdditions.find((addition) => addition.itemId === itemId)?.dueDate ??
+      getTomorrowDateKey();
+
+    if (dueDate === currentDueDate) {
+      return;
+    }
+
+    setSpotDeadlineDrafts((current) => ({
+      ...current,
+      [itemId]: dueDate,
+    }));
+
+    if (selectedTodayOnlyIds.includes(itemId)) {
+      updateSpotAdditions(
+        spotAdditions.map((addition) =>
+          addition.itemId === itemId ? { ...addition, dueDate } : addition,
+        ),
+      );
+    }
   };
 
   const closeTodayOnlySheet = () => {
     setIsTodayOnlySheetOpen(false);
-    setSpotDeadlineTargetId(null);
-    setSpotDeadlineDraft(getTomorrowDateKey());
     setIsTodayOnlyInputOpen(false);
     setTodayOnlyInputValue("");
     setTodayOnlyInputQuantity(1);
     setSwipedTodayOnlyItemId(null);
+    setSwipingTodayOnlyItemId(null);
+    setTodayOnlySwipeOffset(0);
   };
 
-  const startTemporaryItemSwipe = (clientX: number) => {
+  const startTemporaryItemSwipe = (itemId: string, clientX: number) => {
     swipeStartXRef.current = clientX;
+    setSwipingTodayOnlyItemId(itemId);
+    setTodayOnlySwipeOffset(swipedTodayOnlyItemId === itemId ? 88 : 0);
   };
 
-  const endTemporaryItemSwipe = (itemId: string, clientX: number) => {
+  const moveTemporaryItemSwipe = (itemId: string, clientX: number) => {
     const startX = swipeStartXRef.current;
-    swipeStartXRef.current = null;
 
-    if (startX === null) {
+    if (startX === null || swipingTodayOnlyItemId !== itemId) {
       return;
     }
 
-    setSwipedTodayOnlyItemId(startX - clientX > 48 ? itemId : null);
+    const baseOffset = swipedTodayOnlyItemId === itemId ? 88 : 0;
+    const nextOffset = Math.min(88, Math.max(0, baseOffset + startX - clientX));
+    setTodayOnlySwipeOffset(nextOffset);
+  };
+
+  const endTemporaryItemSwipe = (itemId: string) => {
+    const offset = todayOnlySwipeOffset;
+    swipeStartXRef.current = null;
+    setSwipingTodayOnlyItemId(null);
+    setTodayOnlySwipeOffset(0);
+
+    setSwipedTodayOnlyItemId(offset > 44 ? itemId : null);
   };
 
   const addTemporaryTodayOnlyItem = () => {
@@ -575,7 +706,7 @@ export default function Home() {
 
     setTemporaryTodayOnlyItems(nextItems);
     saveTodayOnlyTemporaryItems(nextItems);
-    addSpotItem(newItem.id);
+    addSpotItem(newItem.id, getTomorrowDateKey());
     setIsTodayOnlyInputOpen(false);
     setTodayOnlyInputValue("");
     setTodayOnlyInputQuantity(1);
@@ -621,7 +752,7 @@ export default function Home() {
           checked: false,
           later: false,
           source: "spot" as const,
-          dueDate: spotAddition.dueDate ?? null,
+          dueDate: spotAddition.dueDate ?? getTomorrowDateKey(),
         };
 
         return preparationItem;
@@ -759,36 +890,41 @@ export default function Home() {
     }, 3_000);
   };
 
-  const showChildSavedToast = () => {
-    setIsChildSavedToastVisible(true);
-
-    if (childSavedToastTimeoutRef.current !== null) {
-      window.clearTimeout(childSavedToastTimeoutRef.current);
-    }
-
-    childSavedToastTimeoutRef.current = window.setTimeout(() => {
-      setIsChildSavedToastVisible(false);
-      childSavedToastTimeoutRef.current = null;
-    }, 3_000);
+  const startChildNameEdit = () => {
+    setActiveEditingSectionId(childSettingsSectionId);
+    childNameEditor.startEdit();
   };
 
-  const saveChildName = () => {
-    const trimmedName = childNameInput.trim().slice(0, 20);
+  const completeChildNameEdit = async () => {
+    const saved = await childNameEditor.completeEdit();
 
-    if (!trimmedName) {
+    if (saved) {
+      setActiveEditingSectionId(null);
+    }
+  };
+
+  const discardChildNameEdit = () => {
+    childNameEditor.discardChanges();
+    setActiveEditingSectionId(null);
+    setIsDiscardChildDialogOpen(false);
+  };
+
+  const requestCloseChildSettings = () => {
+    if (
+      activeEditingSectionId === childSettingsSectionId &&
+      childNameEditor.state.mode === "edit" &&
+      childNameEditor.state.isDirty
+    ) {
+      setIsDiscardChildDialogOpen(true);
       return;
     }
 
-    const nextProfile: ChildProfile = {
-      ...childProfile,
-      name: trimmedName,
-      iconId: "default-baby",
-    };
+    if (childNameEditor.state.mode === "edit") {
+      childNameEditor.discardChanges();
+      setActiveEditingSectionId(null);
+    }
 
-    setChildProfile(nextProfile);
-    setChildNameInput(trimmedName);
-    saveChildProfile(nextProfile);
-    showChildSavedToast();
+    setIsChildSettingsOpen(false);
   };
 
   const addCustomItem = (
@@ -879,19 +1015,22 @@ export default function Home() {
   const deleteCustomItem = (itemId: string) => {
     updateCustomItems(customItems.filter((item) => item.id !== itemId));
     setCustomItemQuantityInputs((current) => {
-      const { [itemId]: _deletedQuantity, ...nextInputs } = current;
+      const nextInputs = { ...current };
+      delete nextInputs[itemId];
       return nextInputs;
     });
     setSelectedTodayOnlyIds((current) =>
       current.filter((selectedId) => selectedId !== itemId),
     );
     setShortageCounts((current) => {
-      const { [itemId]: _deletedCount, ...nextCounts } = current;
+      const nextCounts = { ...current };
+      delete nextCounts[itemId];
       saveCheckCounts(nextCounts);
       return nextCounts;
     });
     setRoughStates((current) => {
-      const { [itemId]: _deletedState, ...nextStates } = current;
+      const nextStates = { ...current };
+      delete nextStates[itemId];
       return nextStates;
     });
     updateSpotAdditions(
@@ -1125,24 +1264,39 @@ export default function Home() {
   };
 
   const closeItemSettings = () => {
+    if (
+      isChildSettingsOpen &&
+      childNameEditor.state.mode === "edit" &&
+      childNameEditor.state.isDirty
+    ) {
+      setIsDiscardChildDialogOpen(true);
+      return;
+    }
+
     setIsItemSettingsOpen((current) => !current);
     setIsChildSettingsOpen(false);
+    childNameEditor.discardChanges();
+    setActiveEditingSectionId(null);
     setSelectedItemSettingsCategory(null);
-    setItemSettingsMode("list");
     setSortingCategory(null);
     setAddingCategory(null);
     setExpandedWeekdayItemId(null);
   };
 
   const toggleChildSettings = () => {
-    setIsChildSettingsOpen((current) => !current);
+    if (isChildSettingsOpen) {
+      requestCloseChildSettings();
+      return;
+    }
+
+    setIsChildSettingsOpen(true);
     setIsItemSettingsOpen(false);
     setSelectedItemSettingsCategory(null);
-    setItemSettingsMode("list");
     setSortingCategory(null);
     setAddingCategory(null);
     setExpandedWeekdayItemId(null);
-    setChildNameInput(childProfile.name);
+    childNameEditor.discardChanges();
+    setActiveEditingSectionId(null);
   };
 
   const renderCustomItemCard = (
@@ -1230,21 +1384,21 @@ export default function Home() {
           className={`grid items-center gap-2 ${
             isRoughItem
               ? isSorting
-                ? "grid-cols-[1.75rem_minmax(0,1fr)_3rem_3rem]"
-                : "grid-cols-[minmax(0,1fr)_3rem_3rem_auto]"
+                ? "grid-cols-[1.75rem_minmax(0,1fr)_3.5rem_5.5rem]"
+                : "grid-cols-[minmax(0,1fr)_3.5rem_5.5rem_2.75rem]"
               : isSpotItem
                 ? isSorting
-                  ? "grid-cols-[1.75rem_minmax(0,1fr)_5.5rem]"
-                  : "grid-cols-[minmax(0,1fr)_5.5rem_3rem_auto]"
+                  ? "grid-cols-[1.75rem_minmax(0,1fr)_3.5rem]"
+                  : "grid-cols-[minmax(0,1fr)_3.5rem_4rem_2.75rem]"
               : isSorting
-                ? "grid-cols-[1.75rem_minmax(0,1fr)_3rem]"
-                : "grid-cols-[minmax(0,1fr)_3rem_auto]"
+                ? "grid-cols-[1.75rem_minmax(0,1fr)_3.5rem]"
+                : "grid-cols-[minmax(0,1fr)_3.5rem_2.75rem]"
           }`}
         >
           {isSorting ? (
-            <button
+            <IconButton
               type="button"
-              aria-label={`${customItem.name}を並び替え`}
+              label={`${customItem.name}を並び替え`}
               onPointerDown={(event) => {
                 event.preventDefault();
                 customItemDragOverIdRef.current = null;
@@ -1272,10 +1426,10 @@ export default function Home() {
                 customItemDragOverIdRef.current = null;
                 setDraggingCustomItemId(null);
               }}
-              className="grid h-9 w-7 touch-none place-items-center text-text-tertiary"
+              className="touch-none cursor-grab active:cursor-grabbing"
             >
-              <GripVertical size={18} strokeWidth={2} />
-            </button>
+              <GripVertical size={20} strokeWidth={2} />
+            </IconButton>
           ) : null}
           <input
             ref={(element) => {
@@ -1290,7 +1444,7 @@ export default function Home() {
                 name: event.target.value,
               })
             }
-            className="h-9 min-w-0 rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
+            className="h-11 min-w-0 rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
           />
           {isSpotItem ? (
             <SpotQuantityControl
@@ -1318,7 +1472,7 @@ export default function Home() {
                 updateCustomItemQuantityInput(customItem.id, event.target.value)
               }
               onBlur={() => saveCustomItemQuantityInput(customItem.id)}
-              className="h-9 w-full rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
+              className={quantityInputClassName}
             />
           )}
           {isRoughItem ? (
@@ -1332,7 +1486,7 @@ export default function Home() {
                   unit: event.target.value,
                 })
               }
-              className="h-9 w-full rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
+              className="h-11 w-full rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
             />
           ) : null}
           {isSpotItem && !isSorting ? (
@@ -1344,7 +1498,7 @@ export default function Home() {
                   current === customItem.id ? null : customItem.id,
                 )
               }
-              className={`h-9 rounded-xl px-2 text-caption font-normal ring-1 transition active:scale-95 ${
+              className={`h-11 w-16 rounded-xl px-2 text-caption font-normal ring-1 transition active:scale-95 ${
                 expandedWeekdayItemId === customItem.id ||
                 (customItem.weekdays?.length ?? 0) > 0
                   ? "bg-card-today text-danger ring-danger/30"
@@ -1355,14 +1509,14 @@ export default function Home() {
             </button>
           ) : null}
           {!isSorting ? (
-            <button
+            <IconButton
               type="button"
+              label="削除"
+              tone="danger"
               onClick={() => deleteCustomItem(customItem.id)}
-              className="inline-flex h-9 shrink-0 items-center gap-1 rounded-full bg-surface px-2.5 text-status font-normal text-[#b45a53] ring-1 ring-[#f0d8d5] transition active:scale-95"
             >
-              <Trash2 size={13} strokeWidth={2.4} />
-              削除
-            </button>
+              <Trash2 size={20} strokeWidth={2.2} />
+            </IconButton>
           ) : null}
         </div>
         {isSpotItem && expandedWeekdayItemId === customItem.id
@@ -1376,9 +1530,10 @@ export default function Home() {
   };
 
   const closeCustomItemEdit = () => {
-    setItemSettingsMode("list");
+    setSelectedItemSettingsCategory(null);
     setSortingCategory(null);
     setAddingCategory(null);
+    setExpandedWeekdayItemId(null);
   };
 
   const renderItemSettingsHeader = ({
@@ -1404,50 +1559,20 @@ export default function Home() {
       <h3 className="min-w-0 flex-1 truncate text-center text-list-item font-semibold text-hoiku-ink">
         {title}
       </h3>
-      <button
-        type="button"
-        onClick={onAction}
-        className="h-10 w-14 shrink-0 text-right text-number font-normal text-danger"
-      >
-        {actionLabel}
-      </button>
+      {actionLabel === "編集" ? (
+        <IconButton label="編集" onClick={onAction}>
+          <Pencil size={20} strokeWidth={2.1} />
+        </IconButton>
+      ) : (
+        <button
+          type="button"
+          onClick={onAction}
+          className="h-10 w-14 shrink-0 text-right text-number font-normal text-danger"
+        >
+          {actionLabel}
+        </button>
+      )}
     </div>
-  );
-
-  const renderCustomItemList = (category: CustomItemCategory) => (
-    <section className="space-y-3">
-      {renderItemSettingsHeader({
-        title: category,
-        actionLabel: "編集",
-        onBack: () => {
-          setSelectedItemSettingsCategory(null);
-          setItemSettingsMode("list");
-        },
-        onAction: () => {
-          setItemSettingsMode("edit");
-          setSortingCategory(null);
-          setAddingCategory(null);
-        },
-      })}
-      <div className="divide-y divide-[#edf3ef]">
-        {customItems
-          .filter((customItem) => customItem.category === category)
-          .map((customItem) => (
-            <div
-              key={customItem.id}
-              className="flex min-h-[44px] items-center justify-between gap-4 py-2"
-            >
-              <span className="min-w-0 truncate text-number font-normal text-hoiku-ink">
-                {customItem.name}
-              </span>
-              <span className="shrink-0 whitespace-nowrap text-number font-normal text-text-secondary">
-                {customItem.count}
-                {customItem.unit}
-              </span>
-            </div>
-          ))}
-      </div>
-    </section>
   );
 
   const renderWeekdayPicker = ({
@@ -1488,7 +1613,7 @@ export default function Home() {
     const isSpotCategory = category === "スポット追加";
 
     return (
-      <section key={category} className="space-y-2.5">
+      <section key={category} className="space-y-3">
         {renderItemSettingsHeader({
           title: `${category}を編集`,
           actionLabel: "完了",
@@ -1496,42 +1621,37 @@ export default function Home() {
           onAction: closeCustomItemEdit,
         })}
 
-        <div className="flex items-center justify-between gap-3 pt-1">
-          <h4 className="min-w-0 truncate text-list-item font-medium text-hoiku-ink">
-            {category}
-          </h4>
-          <div className="flex shrink-0 items-center gap-3 text-number font-normal">
-            {isSorting || isAdding ? (
+        <div className="flex min-h-11 items-center justify-end gap-2 text-number font-normal">
+          {isSorting || isAdding ? (
+            <button
+              type="button"
+              onClick={() =>
+                isAdding
+                  ? finishCustomItemAdding(category)
+                  : finishCustomItemSorting()
+              }
+              className="h-11 px-2 text-[#7a867e]"
+            >
+              完了
+            </button>
+          ) : (
+            <>
+              <IconButton
+                label="並び替え"
+                onClick={() => startCustomItemSorting(category)}
+              >
+                <GripVertical size={20} strokeWidth={2} />
+              </IconButton>
               <button
                 type="button"
-                onClick={() =>
-                  isAdding
-                    ? finishCustomItemAdding(category)
-                    : finishCustomItemSorting()
-                }
-                className="text-[#7a867e]"
+                aria-label="追加"
+                onClick={() => startCustomItemAdding(category)}
+                className="grid h-11 min-w-11 place-items-center rounded-button bg-surface px-4 text-number font-normal text-hoiku-deep ring-1 ring-border-soft transition active:scale-95"
               >
-                完了
+                ＋
               </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={() => startCustomItemSorting(category)}
-                  className="text-[#7a867e]"
-                >
-                  並び替え
-                </button>
-                <button
-                  type="button"
-                  onClick={() => startCustomItemAdding(category)}
-                  className="text-hoiku-deep"
-                >
-                  ＋追加
-                </button>
-              </>
-            )}
-          </div>
+            </>
+          )}
         </div>
         <div className="space-y-2">
           {isAdding ? (
@@ -1539,10 +1659,10 @@ export default function Home() {
               <div
                 className={`grid items-center gap-2 ${
                   isRoughCategory
-                    ? "grid-cols-[minmax(0,1fr)_3rem_3rem]"
+                    ? "grid-cols-[minmax(0,1fr)_3.5rem_5.5rem]"
                     : isSpotCategory
-                      ? "grid-cols-[minmax(0,1fr)_5.5rem_3rem]"
-                    : "grid-cols-[minmax(0,1fr)_3rem]"
+                      ? "grid-cols-[minmax(0,1fr)_3.5rem_4rem]"
+                    : "grid-cols-[minmax(0,1fr)_3.5rem]"
                 }`}
               >
                 <input
@@ -1556,7 +1676,7 @@ export default function Home() {
                       name: event.target.value,
                     }))
                   }
-                  className="h-9 min-w-0 rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                  className="h-11 min-w-0 rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
                 />
                 {isSpotCategory ? (
                   <SpotQuantityControl
@@ -1584,7 +1704,7 @@ export default function Home() {
                         count: event.target.value,
                       }));
                     }}
-                    className="h-9 w-full rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                    className={quantityInputClassName}
                   />
                 )}
                 {isSpotCategory ? (
@@ -1596,7 +1716,7 @@ export default function Home() {
                         current === "__new__" ? null : "__new__",
                       )
                     }
-                    className={`h-9 rounded-xl px-2 text-caption font-normal ring-1 transition active:scale-95 ${
+                    className={`h-11 w-16 rounded-xl px-2 text-caption font-normal ring-1 transition active:scale-95 ${
                       expandedWeekdayItemId === "__new__" ||
                       newCustomItemDraft.weekdays.length > 0
                         ? "bg-card-today text-danger ring-danger/30"
@@ -1617,7 +1737,7 @@ export default function Home() {
                         unit: event.target.value,
                       }))
                     }
-                    className="h-9 w-full rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
+                    className="h-11 w-full rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
                   />
                 ) : null}
               </div>
@@ -1699,7 +1819,7 @@ export default function Home() {
         />
 
         {activeTab === "check" ? (
-          <div className="space-y-4 pb-24">
+          <div className={`${cardStackClassName} pb-24`}>
             <ShortageInputList
               items={lockerItems}
               onChange={updateShortageCount}
@@ -1715,7 +1835,7 @@ export default function Home() {
                   onClick={() => setIsTodayOnlySheetOpen(true)}
                   className="inline-flex h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded-button bg-surface/80 px-4 text-status font-normal text-danger ring-1 ring-danger/20 transition active:scale-95"
                 >
-                  ＋追加
+                  ＋
                 </button>
               }
               contentClassName="grid min-h-20 place-items-center px-4 py-4"
@@ -1724,14 +1844,23 @@ export default function Home() {
                 <div className="flex flex-wrap gap-2">
                   {allTodayOnlyOptions
                     .filter((item) => selectedTodayOnlyIds.includes(item.id))
-                    .map((item) => (
-                      <span
-                        key={item.id}
-                        className="max-w-full truncate whitespace-nowrap rounded-button bg-surface px-4 py-2 text-number font-normal text-text-primary ring-1 ring-border-soft"
-                      >
-                        {formatSpotItemName(item.name, item.count)}
-                      </span>
-                    ))}
+                    .map((item) => {
+                      const spotAddition = spotAdditions.find(
+                        (addition) => addition.itemId === item.id,
+                      );
+
+                      return (
+                        <span
+                          key={item.id}
+                          className="max-w-full whitespace-nowrap rounded-button bg-surface px-4 py-2 text-number font-normal text-text-primary ring-1 ring-danger/25"
+                        >
+                          {formatSpotChipLabel(
+                            item,
+                            spotAddition?.dueDate ?? getTomorrowDateKey(),
+                          )}
+                        </span>
+                      );
+                    })}
                 </div>
               ) : (
                 <p className="whitespace-nowrap text-number font-normal text-text-secondary">
@@ -1784,7 +1913,7 @@ export default function Home() {
         ) : null}
 
         {activeTab === "items" ? (
-          <div className="space-y-4">
+          <div className={cardStackClassName}>
             <PreparationChecklist
               items={session.items}
               completedAt={session.completedAt}
@@ -1797,7 +1926,7 @@ export default function Home() {
         ) : null}
 
         {activeTab === "settings" ? (
-          <div className="space-y-4">
+          <div className={settingsSectionStackClassName}>
             <SectionCard appearance="current">
               <h2 className="text-card-title font-semibold tracking-normal text-hoiku-ink">
                 設定
@@ -1842,46 +1971,89 @@ export default function Home() {
 
                     {item.id === "child" && isChildSettingsOpen ? (
                       <div className="pb-4">
-                        <div className="mt-3 rounded-2xl bg-[#f8fbf9] p-4 ring-1 ring-[#edf3ef]">
-                          <div className="flex items-center gap-4">
-                            <BabyAvatar size="lg" />
-                            <div className="min-w-0 flex-1">
-                              <label
-                                htmlFor="child-name"
-                                className="mb-2 block text-status font-normal text-text-secondary"
-                              >
-                                名前
-                              </label>
-                              <input
-                                id="child-name"
-                                type="text"
-                                value={childNameInput}
-                                maxLength={20}
-                                onChange={(event) =>
-                                  setChildNameInput(
-                                    event.target.value.slice(0, 20),
-                                  )
+                        <div className="mt-3 rounded-section bg-surface p-4 ring-1 ring-border-soft">
+                          <div className="mb-4 flex min-h-10 items-center justify-between gap-3">
+                            <h3 className="text-list-item font-medium text-hoiku-ink">
+                              こども設定
+                            </h3>
+                            {childNameEditor.state.mode === "edit" ? (
+                              <button
+                                type="button"
+                                onClick={completeChildNameEdit}
+                                disabled={
+                                  childNameEditor.state.isSaving ||
+                                  !childNameEditor.state.isValid
                                 }
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") {
-                                    saveChildName();
-                                  }
-                                }}
-                                className="h-11 w-full rounded-input bg-surface px-3 text-list-item font-medium text-text-primary outline-none ring-1 ring-border-soft focus:ring-primary"
+                                className="h-10 w-14 shrink-0 text-right text-number font-normal text-danger disabled:text-text-tertiary"
+                              >
+                                完了
+                              </button>
+                            ) : (
+                              <IconButton label="編集" onClick={startChildNameEdit}>
+                                <Pencil size={20} strokeWidth={2.1} />
+                              </IconButton>
+                            )}
+                          </div>
+
+                          {childNameEditor.state.mode === "edit" ? (
+                            <div className="flex items-start gap-4">
+                              <BabyAvatar
+                                size="lg"
+                                imageUrl={
+                                  childProfile.iconType === "image"
+                                    ? childProfile.iconUrl
+                                    : null
+                                }
                               />
-                              <p className="mt-2 text-caption font-normal text-text-secondary">
-                                {Array.from(childNameInput).length}/20
+                              <div className="min-w-0 flex-1">
+                                <label
+                                  htmlFor="child-name"
+                                  className="mb-2 block text-status font-normal text-text-secondary"
+                                >
+                                  名前
+                                </label>
+                                <input
+                                  id="child-name"
+                                  type="text"
+                                  value={childNameEditor.state.draftValue}
+                                  maxLength={8}
+                                  onChange={(event) =>
+                                    childNameEditor.setDraftValue(
+                                      event.target.value.slice(0, 8),
+                                    )
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      completeChildNameEdit();
+                                    }
+                                  }}
+                                  className="h-11 w-full rounded-input bg-surface px-3 text-list-item font-medium text-text-primary outline-none ring-1 ring-border-soft focus:ring-primary"
+                                />
+                                <p className="mt-2 text-caption font-normal text-text-secondary">
+                                  最大8文字
+                                </p>
+                                {childNameEditor.state.error ? (
+                                  <p className="mt-2 text-status font-normal text-danger">
+                                    {childNameEditor.state.error}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-4">
+                              <BabyAvatar
+                                size="lg"
+                                imageUrl={
+                                  childProfile.iconType === "image"
+                                    ? childProfile.iconUrl
+                                    : null
+                                }
+                              />
+                              <p className="min-w-0 truncate text-list-item font-medium text-text-primary">
+                                {childNameEditor.state.savedValue}
                               </p>
                             </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={saveChildName}
-                            disabled={!childNameInput.trim()}
-                            className="mt-4 h-11 w-full rounded-button bg-primary text-button font-bold text-surface shadow-button transition hover:bg-primary-hover active:scale-[0.99] disabled:bg-[#f3d2c9] disabled:shadow-none"
-                          >
-                            保存
-                          </button>
+                          )}
                         </div>
                       </div>
                     ) : null}
@@ -1890,34 +2062,31 @@ export default function Home() {
                       <div className="pb-4">
                         {selectedItemSettingsCategory ? (
                           <div className="mt-3">
-                            {itemSettingsMode === "edit"
-                              ? renderCustomItemCategory(
-                                  selectedItemSettingsCategory,
-                                )
-                              : renderCustomItemList(
-                                  selectedItemSettingsCategory,
-                                )}
+                            {renderCustomItemCategory(
+                              selectedItemSettingsCategory,
+                            )}
                           </div>
                         ) : (
-                          <div className="mt-3 divide-y divide-[#edf3ef] rounded-2xl bg-surface px-3 ring-1 ring-border-soft">
+                          <div className="mt-3 divide-y divide-[#edf3ef]">
                             {itemCategories.map((category) => (
                               <button
                                 key={category}
                                 type="button"
+                                aria-label={`${category}を編集`}
                                 onClick={() => {
                                   setSelectedItemSettingsCategory(category);
-                                  setItemSettingsMode("list");
+                                  setSortingCategory(null);
+                                  setAddingCategory(null);
+                                  setExpandedWeekdayItemId(null);
                                 }}
                                 className="flex min-h-[50px] w-full items-center justify-between gap-4 py-2 text-left transition active:bg-[#f7f7f7]"
                               >
                                 <span className="text-list-item font-medium text-hoiku-ink">
                                   {category}
                                 </span>
-                                <ChevronRight
-                                  size={20}
-                                  strokeWidth={2}
-                                  className="shrink-0 text-text-tertiary"
-                                />
+                                <span className="grid h-11 w-11 shrink-0 place-items-center text-text-tertiary">
+                                  <Pencil size={20} strokeWidth={2.1} />
+                                </span>
                               </button>
                             ))}
                           </div>
@@ -1979,10 +2148,34 @@ export default function Home() {
         </div>
       ) : null}
 
-      {isChildSavedToastVisible ? (
-        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(96px_+_env(safe-area-inset-bottom))] z-40 mx-auto w-full max-w-[430px] px-5">
-          <div className="rounded-button bg-text-primary px-4 py-3 text-center text-status font-normal text-surface shadow-floating">
-            保存しました
+      {isDiscardChildDialogOpen ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-6">
+          <div className="w-full max-w-[340px] rounded-card bg-surface p-5 shadow-floating ring-1 ring-border-soft">
+            <h3 className="text-list-item font-medium text-text-primary">
+              変更内容を破棄しますか？
+            </h3>
+            <p className="mt-2 text-number font-normal leading-relaxed text-text-secondary">
+              編集中の内容は保存されません。
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setIsDiscardChildDialogOpen(false)}
+                className="h-11 rounded-button bg-card-today text-number font-normal text-text-secondary ring-1 ring-border-soft transition active:scale-95"
+              >
+                編集を続ける
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  discardChildNameEdit();
+                  setIsChildSettingsOpen(false);
+                }}
+                className="h-11 rounded-button bg-primary text-number font-normal text-surface shadow-button transition active:scale-95"
+              >
+                破棄する
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -2012,76 +2205,88 @@ export default function Home() {
                 <ChevronDown size={22} />
               </button>
             </div>
-            <div className="mt-4 max-h-[calc(54dvh-104px)] space-y-3 overflow-y-auto px-1 pb-2">
-              {spotDeadlineTargetItem ? (
-                <SpotDeadlineSelector
-                  itemName={spotDeadlineTargetItem.name}
-                  dueDate={spotDeadlineDraft}
-                  onChange={setSpotDeadlineDraft}
-                  onBack={() => {
-                    setSpotDeadlineTargetId(null);
-                    setSpotDeadlineDraft(getTomorrowDateKey());
-                  }}
-                  onAdd={() => {
-                    addSpotItem(spotDeadlineTargetItem.id, spotDeadlineDraft);
-                    setSpotDeadlineTargetId(null);
-                    setSpotDeadlineDraft(getTomorrowDateKey());
-                  }}
-                />
-              ) : (
-                <>
+            <div className="mt-4 max-h-[calc(54dvh-104px)] space-y-3 overflow-y-auto px-1 pb-2 pt-px">
               {allTodayOnlyOptions.map((item) => {
                 const isTemporaryItem = temporaryTodayOnlyItems.some(
                   (temporaryItem) => temporaryItem.id === item.id,
                 );
                 const isSelected = selectedTodayOnlyIds.includes(item.id);
+                const spotAddition = spotAdditions.find(
+                  (addition) => addition.itemId === item.id,
+                );
                 const isSwiped = swipedTodayOnlyItemId === item.id;
+                const swipeOffset =
+                  swipingTodayOnlyItemId === item.id
+                    ? todayOnlySwipeOffset
+                    : isSwiped
+                      ? 88
+                      : 0;
+                const rowToneClass = isTemporaryItem
+                  ? "bg-card-today ring-danger/20"
+                  : "bg-surface ring-danger/25";
 
                 const itemButton = (
                   <div
-                    className={`flex h-14 w-full items-center justify-between rounded-section bg-card-today px-4 text-left text-list-item font-medium text-text-primary ring-1 ring-border-soft transition active:scale-[0.99] ${
-                      isTemporaryItem && isSwiped ? "-translate-x-20" : ""
-                    }`}
+                    className={`rounded-section ring-1 transition active:scale-[0.99] ${rowToneClass}`}
+                    style={
+                      isTemporaryItem
+                        ? { transform: `translate3d(-${swipeOffset}px, 0, 0)` }
+                        : undefined
+                    }
                   >
-                    <span className="min-w-0 truncate">
-                      {formatSpotItemName(item.name, item.count)}
-                    </span>
-                    <span className="ml-3 flex shrink-0 items-center gap-2">
-                      {isSpotDeadlineEnabled ? (
+                    <div className="flex h-14 w-full items-center justify-between px-4 text-left text-list-item font-medium text-text-primary">
+                      <span className="min-w-0 truncate">
+                        {formatSpotItemName(item.name, item.count)}
+                      </span>
+                      <span className="ml-3 flex shrink-0 items-center gap-2">
+                        {isSpotDeadlineEnabled ? (
+                          <button
+                            type="button"
+                            aria-label={`${item.name}の期限を設定`}
+                            onClick={() =>
+                              openSpotDeadlinePicker(
+                                item.id,
+                                spotAddition?.dueDate,
+                              )
+                            }
+                            className="grid h-8 w-8 place-items-center rounded-full bg-surface text-icon-today ring-1 ring-danger/20 transition active:scale-95"
+                          >
+                            <CalendarDays size={16} strokeWidth={2.2} />
+                          </button>
+                        ) : null}
+                        {isSpotDeadlineEnabled ? (
+                          <input
+                            ref={(element) => {
+                              spotDeadlineInputRefs.current[item.id] = element;
+                            }}
+                            type="date"
+                            tabIndex={-1}
+                            aria-hidden="true"
+                            value={
+                              spotDeadlineDrafts[item.id] ??
+                              spotAddition?.dueDate ??
+                              getTomorrowDateKey()
+                            }
+                            onChange={(event) =>
+                              saveSpotDeadlineDraft(item.id, event.target.value)
+                            }
+                            className="sr-only"
+                          />
+                        ) : null}
                         <button
                           type="button"
-                          aria-label={`${item.name}の期限を設定`}
-                          onClick={() => {
-                            setSpotDeadlineTargetId(item.id);
-                            setSpotDeadlineDraft(getTomorrowDateKey());
-                          }}
-                          className="grid h-8 w-8 place-items-center rounded-full bg-surface text-text-tertiary ring-1 ring-border-soft transition active:scale-95"
+                          aria-label={`${item.name}を追加`}
+                          onClick={() => toggleSpotItem(item.id)}
+                          className={`inline-flex h-8 w-12 shrink-0 items-center justify-center rounded-full px-3 text-number font-normal ${
+                            isSelected
+                              ? "bg-primary text-surface"
+                              : "bg-surface text-icon-today"
+                          }`}
                         >
-                          <ChevronRight size={17} strokeWidth={2.4} />
+                          ＋
                         </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        aria-label={`${item.name}を追加`}
-                        onClick={() => toggleSpotItem(item.id)}
-                        className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-full px-3 text-status font-normal ${
-                          isSelected
-                            ? "bg-primary text-surface"
-                            : "bg-surface text-icon-today"
-                        }`}
-                      >
-                        {isSelected ? (
-                          <>
-                            <Check size={16} strokeWidth={2.6} />
-                            <span>追加済み</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>＋追加</span>
-                          </>
-                        )}
-                      </button>
-                    </span>
+                      </span>
+                    </div>
                   </div>
                 );
 
@@ -2098,23 +2303,36 @@ export default function Home() {
                     key={item.id}
                     className="relative mx-px overflow-hidden rounded-section"
                     onPointerDown={(event) =>
-                      startTemporaryItemSwipe(event.clientX)
+                      startTemporaryItemSwipe(item.id, event.clientX)
                     }
-                    onPointerUp={(event) =>
-                      endTemporaryItemSwipe(item.id, event.clientX)
+                    onPointerMove={(event) =>
+                      moveTemporaryItemSwipe(item.id, event.clientX)
                     }
+                    onPointerUp={() => endTemporaryItemSwipe(item.id)}
                     onPointerCancel={() => {
                       swipeStartXRef.current = null;
+                      setSwipingTodayOnlyItemId(null);
+                      setTodayOnlySwipeOffset(0);
                     }}
                   >
                     <button
                       type="button"
+                      aria-label="削除"
                       onClick={() => removeTemporaryTodayOnlyItem(item.id)}
-                      className="absolute inset-y-0 right-0 w-20 bg-danger text-status font-normal text-surface"
+                      className="absolute inset-y-0 right-0 z-10 grid w-[88px] place-items-center bg-danger text-surface transition-transform duration-200 ease-out"
+                      style={{
+                        transform: `translate3d(${88 - swipeOffset}px, 0, 0)`,
+                      }}
                     >
-                      削除
+                      <Trash2 size={20} strokeWidth={2.2} />
                     </button>
-                    <div className="relative transition-transform">
+                    <div
+                      className={`relative ${
+                        swipingTodayOnlyItemId === item.id
+                          ? ""
+                          : "transition-transform duration-200 ease-out"
+                      }`}
+                    >
                       {itemButton}
                     </div>
                   </div>
@@ -2122,7 +2340,7 @@ export default function Home() {
               })}
 
               {isTodayOnlyInputOpen ? (
-                <div className="mx-px flex h-14 items-center gap-2 rounded-section bg-card-today px-3 ring-1 ring-border-soft">
+                <div className="mx-px flex h-14 items-center gap-2 rounded-section bg-card-today px-3 ring-1 ring-danger/20">
                   <input
                     ref={todayOnlyInputRef}
                     type="text"
@@ -2147,14 +2365,14 @@ export default function Home() {
                   <SpotQuantityControl
                     value={todayOnlyInputQuantity}
                     onChange={setTodayOnlyInputQuantity}
-                    className="w-[7.25rem] shrink-0"
                   />
                   <button
                     type="button"
+                    aria-label="追加"
                     onClick={addTemporaryTodayOnlyItem}
-                    className="h-9 shrink-0 rounded-button bg-primary px-4 text-status font-normal text-surface"
+                    className="grid h-11 min-w-11 shrink-0 place-items-center rounded-button bg-primary px-4 text-status font-normal text-surface"
                   >
-                    追加
+                    ＋
                   </button>
                   <button
                     type="button"
@@ -2180,8 +2398,6 @@ export default function Home() {
                 >
                   ＋ 持ち物を入力...
                 </button>
-              )}
-                </>
               )}
             </div>
           </div>

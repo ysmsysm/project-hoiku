@@ -75,9 +75,9 @@ export function PreparationChecklist({
         <button
           type="button"
           onClick={onCheckAll}
-          className="h-9 shrink-0 rounded-button bg-surface/80 px-4 text-status font-normal text-danger ring-1 ring-danger/20 transition active:scale-95"
+          className="h-9 shrink-0 rounded-button bg-transparent px-3 text-status font-normal text-danger ring-1 ring-danger/15 transition hover:bg-surface/60 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
         >
-          一括チェック
+          ✓全て
         </button>
       }
     >

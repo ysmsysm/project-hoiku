@@ -1,10 +1,7 @@
-import { Minus, Plus } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   clampSpotQuantity,
   parseSpotQuantityInput,
-  spotQuantityMax,
-  spotQuantityMin,
 } from "../lib/spotQuantity";
 
 type SpotQuantityControlProps = {
@@ -20,95 +17,51 @@ export function SpotQuantityControl({
   disabled = false,
   className = "",
 }: SpotQuantityControlProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState(String(value));
-  const inputRef = useRef<HTMLInputElement>(null);
   const quantity = clampSpotQuantity(value);
+  const [draft, setDraft] = useState(String(quantity));
 
-  const updateQuantity = (nextValue: number) => {
-    const nextQuantity = clampSpotQuantity(nextValue);
+  useEffect(() => {
+    setDraft(String(quantity));
+  }, [quantity]);
+
+  const saveDraft = () => {
+    const parsed = parseSpotQuantityInput(draft);
+    const nextQuantity = parsed ?? quantity;
+
     onChange(nextQuantity);
     setDraft(String(nextQuantity));
   };
 
-  const startEditing = () => {
-    if (disabled) {
-      return;
-    }
-
-    setDraft(String(quantity));
-    setIsEditing(true);
-    window.setTimeout(() => inputRef.current?.select(), 0);
-  };
-
-  const finishEditing = () => {
-    const parsed = parseSpotQuantityInput(draft);
-    updateQuantity(parsed ?? quantity);
-    setIsEditing(false);
-  };
-
   return (
-    <div
-      className={`grid h-9 grid-cols-[1.75rem_minmax(1.75rem,1fr)_1.75rem] items-center rounded-xl bg-surface text-number font-normal text-hoiku-ink ring-1 ring-[#edf3ef] ${className}`}
-    >
-      <button
-        type="button"
-        aria-label="数量を減らす"
-        onClick={() => updateQuantity(quantity - 1)}
-        disabled={disabled || quantity <= spotQuantityMin}
-        className="grid h-9 place-items-center rounded-l-xl text-text-secondary transition active:scale-95 disabled:pointer-events-none disabled:text-text-tertiary"
-      >
-        <Minus size={15} strokeWidth={2.4} />
-      </button>
+    <input
+      type="number"
+      inputMode="numeric"
+      min={1}
+      step={1}
+      disabled={disabled}
+      value={draft}
+      aria-label="数量"
+      onChange={(event) => {
+        const nextValue = event.target.value;
 
-      {isEditing ? (
-        <input
-          ref={inputRef}
-          type="text"
-          inputMode="numeric"
-          value={draft}
-          onChange={(event) => {
-            const nextValue = event.target.value;
+        if (!/^\d{0,2}$/.test(nextValue)) {
+          return;
+        }
 
-            if (!/^\d*$/.test(nextValue)) {
-              return;
-            }
+        setDraft(nextValue);
 
-            setDraft(nextValue);
-          }}
-          onBlur={finishEditing}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              finishEditing();
-            }
-
-            if (event.key === "Escape") {
-              setDraft(String(quantity));
-              setIsEditing(false);
-            }
-          }}
-          className="h-9 min-w-0 bg-transparent text-center outline-none"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={startEditing}
-          disabled={disabled}
-          className="h-9 min-w-0 text-center transition active:scale-95 disabled:pointer-events-none"
-        >
-          {quantity}
-        </button>
-      )}
-
-      <button
-        type="button"
-        aria-label="数量を増やす"
-        onClick={() => updateQuantity(quantity + 1)}
-        disabled={disabled || quantity >= spotQuantityMax}
-        className="grid h-9 place-items-center rounded-r-xl text-text-secondary transition active:scale-95 disabled:pointer-events-none disabled:text-text-tertiary"
-      >
-        <Plus size={15} strokeWidth={2.4} />
-      </button>
-    </div>
+        if (nextValue !== "") {
+          onChange(clampSpotQuantity(Number(nextValue)));
+        }
+      }}
+      onBlur={saveDraft}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          saveDraft();
+          event.currentTarget.blur();
+        }
+      }}
+      className={`h-11 w-14 shrink-0 rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] [appearance:textfield] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${className}`}
+    />
   );
 }

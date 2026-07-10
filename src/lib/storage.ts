@@ -16,7 +16,9 @@ const childProfileKey = "project-hoiku:child-profile";
 
 export const defaultChildProfile: ChildProfile = {
   name: "そうた",
+  iconType: "default",
   iconId: "default-baby",
+  iconUrl: null,
   birthday: null,
   photoUrl: null,
 };
@@ -196,12 +198,22 @@ export function loadChildProfile(): ChildProfile {
 
     const parsed = JSON.parse(saved) as Partial<ChildProfile>;
     const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+    const iconUrl =
+      typeof parsed.iconUrl === "string" && parsed.iconUrl.trim()
+        ? parsed.iconUrl
+        : typeof parsed.photoUrl === "string" && parsed.photoUrl.trim()
+          ? parsed.photoUrl
+          : null;
+    const iconType = parsed.iconType === "image" && iconUrl ? "image" : "default";
 
     return {
       ...defaultChildProfile,
       ...parsed,
       name: name || defaultChildProfile.name,
+      iconType,
       iconId: parsed.iconId === "default-baby" ? parsed.iconId : "default-baby",
+      iconUrl,
+      photoUrl: iconUrl,
     };
   } catch {
     return defaultChildProfile;

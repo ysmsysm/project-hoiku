@@ -1,5 +1,8 @@
+import Image from "next/image";
+
 type BabyAvatarProps = {
   size?: "sm" | "lg";
+  imageUrl?: string | null;
   className?: string;
 };
 
@@ -8,15 +11,23 @@ const sizeClassNames = {
   lg: "h-20 w-20",
 };
 
-export function BabyAvatar({ size = "sm", className = "" }: BabyAvatarProps) {
+export function BabyAvatar({
+  size = "sm",
+  imageUrl = null,
+  className = "",
+}: BabyAvatarProps) {
+  const avatarSrc = imageUrl ?? "/images/baby-default.png";
+
   return (
     <div
       className={`grid shrink-0 place-items-center overflow-hidden rounded-avatar bg-[#fff0df] shadow-card ring-1 ring-[#f3dcc2] ${sizeClassNames[size]} ${className}`}
     >
-      <img
-        src="/images/baby-default.png"
+      <Image
+        src={avatarSrc}
         alt=""
         aria-hidden="true"
+        width={80}
+        height={80}
         className="h-full w-full object-cover"
       />
     </div>
