@@ -322,6 +322,7 @@ export default function Home() {
   >(null);
   const todayOnlyInputRef = useRef<HTMLInputElement>(null);
   const swipeStartXRef = useRef<number | null>(null);
+  const isSpotDatePickerActiveRef = useRef(false);
   const customItemNameRefs = useRef<Record<string, HTMLInputElement | null>>(
     {},
   );
@@ -456,6 +457,10 @@ export default function Home() {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
+      if (isSpotDatePickerActiveRef.current) {
+        return;
+      }
+
       const freshTemporaryItems = loadTodayOnlyTemporaryItems();
       const freshTemporaryIds = new Set(
         freshTemporaryItems.map((item) => item.id),
@@ -599,6 +604,8 @@ export default function Home() {
   };
 
   const saveSpotDeadline = (itemId: string, dueDate: string) => {
+    isSpotDatePickerActiveRef.current = false;
+
     if (!dueDate) {
       return;
     }
@@ -615,6 +622,8 @@ export default function Home() {
   };
 
   const clearSpotDeadline = (itemId: string) => {
+    isSpotDatePickerActiveRef.current = false;
+
     if (selectedTodayOnlyIds.includes(itemId)) {
       updateSpotAdditions(
         spotAdditions.map((addition) =>
@@ -625,6 +634,7 @@ export default function Home() {
   };
 
   const closeTodayOnlySheet = () => {
+    isSpotDatePickerActiveRef.current = false;
     setIsTodayOnlySheetOpen(false);
     setIsTodayOnlyInputOpen(false);
     setTodayOnlyInputValue("");
@@ -635,12 +645,20 @@ export default function Home() {
   };
 
   const startTemporaryItemSwipe = (itemId: string, clientX: number) => {
+    if (isSpotDatePickerActiveRef.current) {
+      return;
+    }
+
     swipeStartXRef.current = clientX;
     setSwipingTodayOnlyItemId(itemId);
     setTodayOnlySwipeOffset(swipedTodayOnlyItemId === itemId ? 88 : 0);
   };
 
   const moveTemporaryItemSwipe = (itemId: string, clientX: number) => {
+    if (isSpotDatePickerActiveRef.current) {
+      return;
+    }
+
     const startX = swipeStartXRef.current;
 
     if (startX === null || swipingTodayOnlyItemId !== itemId) {
@@ -653,6 +671,10 @@ export default function Home() {
   };
 
   const endTemporaryItemSwipe = (itemId: string) => {
+    if (isSpotDatePickerActiveRef.current) {
+      return;
+    }
+
     const offset = todayOnlySwipeOffset;
     swipeStartXRef.current = null;
     setSwipingTodayOnlyItemId(null);
@@ -2284,16 +2306,34 @@ export default function Home() {
                           ) : (
                             <label
                               aria-label={`${item.name}の期限を設定`}
+                              onPointerDown={(event) => {
+                                isSpotDatePickerActiveRef.current = true;
+                                event.stopPropagation();
+                              }}
+                              onPointerMove={(event) => event.stopPropagation()}
+                              onPointerUp={(event) => event.stopPropagation()}
+                              onClick={(event) => event.stopPropagation()}
                               className="relative grid h-8 w-8 cursor-pointer place-items-center overflow-hidden rounded-full bg-surface text-icon-today ring-1 ring-danger/20 transition active:scale-95"
                             >
                               <CalendarDays size={16} strokeWidth={2.2} />
                               <input
                                 type="date"
                                 aria-label={`${item.name}の期限日`}
-                                value=""
-                                onChange={(event) =>
-                                  saveSpotDeadline(item.id, event.target.value)
-                                }
+                                defaultValue=""
+                                onFocus={() => {
+                                  isSpotDatePickerActiveRef.current = true;
+                                }}
+                                onPointerDown={(event) => {
+                                  isSpotDatePickerActiveRef.current = true;
+                                  event.stopPropagation();
+                                }}
+                                onPointerMove={(event) => event.stopPropagation()}
+                                onPointerUp={(event) => event.stopPropagation()}
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) => {
+                                  saveSpotDeadline(item.id, event.target.value);
+                                  event.currentTarget.value = "";
+                                }}
                                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                               />
                             </label>
