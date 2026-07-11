@@ -1,16 +1,22 @@
-const getRequiredEnv = (name: keyof NodeJS.ProcessEnv) => {
-  const value = process.env[name];
+export const getSupabaseEnv = () => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabasePublishableKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
-  if (!value) {
-    throw new Error(`${name} is required to create a Supabase client.`);
+  if (!supabaseUrl) {
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL is required to create a Supabase client.",
+    );
   }
 
-  return value;
-};
+  if (!supabasePublishableKey) {
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is required to create a Supabase client.",
+    );
+  }
 
-export const getSupabaseEnv = () => ({
-  supabaseUrl: getRequiredEnv("NEXT_PUBLIC_SUPABASE_URL"),
-  supabasePublishableKey: getRequiredEnv(
-    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-  ),
-});
+  return {
+    supabaseUrl,
+    supabasePublishableKey,
+  };
+};
