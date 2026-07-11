@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { SectionCard } from "../../src/components/ui/SectionCard";
 import { getCurrentUser } from "../../src/lib/auth/session";
+import { getCurrentFamilyMembership } from "../../src/lib/family-sharing/membership";
+import { CreateFamilyButton } from "./CreateFamilyButton";
 import { LogoutButton } from "./LogoutButton";
 
 export default async function FamilyPage() {
@@ -9,6 +11,8 @@ export default async function FamilyPage() {
   if (!user) {
     redirect("/family/auth?next=/family");
   }
+
+  const membership = await getCurrentFamilyMembership(user);
 
   const displayName =
     typeof user.user_metadata?.full_name === "string"
@@ -45,14 +49,35 @@ export default async function FamilyPage() {
               ) : null}
             </div>
 
-            <div className="rounded-section bg-card-stock px-4 py-3 ring-1 ring-border-soft">
-              <p className="text-status font-semibold text-hoiku-deep">
-                まだ家族には参加していません
-              </p>
-              <p className="mt-1 text-status font-normal leading-relaxed text-text-secondary">
-                現在確認できるのはGoogle認証のみです。家族作成や招待参加はまだ行いません。
-              </p>
-            </div>
+            {membership ? (
+              <div className="rounded-section bg-card-stock px-4 py-3 ring-1 ring-border-soft">
+                <p className="text-status font-semibold text-hoiku-deep">
+                  家族共有中
+                </p>
+                <dl className="mt-2 space-y-2 text-status font-normal text-text-secondary">
+                  <div>
+                    <dt className="font-semibold text-text-primary">家族ID</dt>
+                    <dd className="mt-1 break-all">{membership.familyId}</dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="font-semibold text-text-primary">役割</dt>
+                    <dd>{membership.role}</dd>
+                  </div>
+                </dl>
+              </div>
+            ) : (
+              <div className="space-y-3 rounded-section bg-card-stock px-4 py-3 ring-1 ring-border-soft">
+                <div>
+                  <p className="text-status font-semibold text-hoiku-deep">
+                    まだ家族には参加していません
+                  </p>
+                  <p className="mt-1 text-status font-normal leading-relaxed text-text-secondary">
+                    現在確認できるのはGoogle認証のみです。家族を作成しても、持ち物データはまだこれまで通りこの端末に保存されます。
+                  </p>
+                </div>
+                <CreateFamilyButton />
+              </div>
+            )}
           </div>
         </SectionCard>
 
