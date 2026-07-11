@@ -15,6 +15,12 @@ export interface AppRepository {
     defaultCounts: Record<string, number>,
   ) => Record<string, number>;
   saveCheckCounts: (counts: Record<string, number>) => void;
+  loadRoughStates: <RoughState extends string>(
+    defaultStates: Record<string, RoughState>,
+  ) => Record<string, RoughState>;
+  saveRoughStates: <RoughState extends string>(
+    states: Record<string, RoughState>,
+  ) => void;
   loadCustomItems: (defaultItems: CustomizableItem[]) => CustomizableItem[];
   saveCustomItems: (items: CustomizableItem[]) => void;
   loadTodayOnlyTemporaryItems: () => TodayOnlyTemporaryItem[];

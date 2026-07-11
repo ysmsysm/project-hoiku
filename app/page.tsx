@@ -534,7 +534,9 @@ export default function Home() {
     setShortageCounts(
       appRepository.loadCheckCounts(createDefaultShortageCounts(savedCustomItems)),
     );
-    setRoughStates(createDefaultRoughStates(savedCustomItems));
+    setRoughStates(
+      appRepository.loadRoughStates(createDefaultRoughStates(savedCustomItems)),
+    );
     setSession(appRepository.loadPreparationSession());
     setTemporaryTodayOnlyItems(appRepository.loadTodayOnlyTemporaryItems());
     const savedSpotAdditions = appRepository.loadSpotAdditions();
@@ -729,10 +731,13 @@ export default function Home() {
       const nextState =
         roughStateOrder[(currentIndex + 1) % roughStateOrder.length];
 
-      return {
+      const nextStates = {
         ...current,
         [itemId]: nextState,
       };
+
+      appRepository.saveRoughStates(nextStates);
+      return nextStates;
     });
   };
 
@@ -1123,6 +1128,7 @@ export default function Home() {
           nextStates[itemId] = "十分";
         });
 
+        appRepository.saveRoughStates(nextStates);
         return nextStates;
       });
     }
@@ -1255,10 +1261,15 @@ export default function Home() {
     }
 
     if (category === "ざっくり管理") {
-      setRoughStates((current) => ({
-        ...current,
-        [newItem.id]: current[newItem.id] ?? "十分",
-      }));
+      setRoughStates((current) => {
+        const nextStates = {
+          ...current,
+          [newItem.id]: current[newItem.id] ?? "十分",
+        };
+
+        appRepository.saveRoughStates(nextStates);
+        return nextStates;
+      });
     }
 
     return true;
@@ -1304,6 +1315,7 @@ export default function Home() {
     setRoughStates((current) => {
       const nextStates = { ...current };
       delete nextStates[itemId];
+      appRepository.saveRoughStates(nextStates);
       return nextStates;
     });
     updateSpotAdditions(

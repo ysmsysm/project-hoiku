@@ -9,6 +9,7 @@ import type { SpotAddition } from "../types/spot";
 
 const sessionKey = "project-hoiku:preparation-session";
 const checkCountsKey = "project-hoiku:locker-counts";
+const roughStatesKey = "project-hoiku:rough-states";
 const customItemsKey = "project-hoiku:custom-items";
 const todayOnlyTemporaryItemsKey = "project-hoiku:today-only-temporary-items";
 const spotAdditionsKey = "project-hoiku:spot-additions";
@@ -95,6 +96,38 @@ export function saveCheckCounts(counts: Record<string, number>) {
   }
 
   window.localStorage.setItem(checkCountsKey, JSON.stringify(counts));
+}
+
+export function loadRoughStates<T extends string>(
+  defaultStates: Record<string, T>,
+): Record<string, T> {
+  if (!canUseStorage()) {
+    return defaultStates;
+  }
+
+  try {
+    const saved = window.localStorage.getItem(roughStatesKey);
+    if (!saved) {
+      return defaultStates;
+    }
+
+    const parsed = JSON.parse(saved);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return defaultStates;
+    }
+
+    return { ...defaultStates, ...parsed };
+  } catch {
+    return defaultStates;
+  }
+}
+
+export function saveRoughStates<T extends string>(states: Record<string, T>) {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  window.localStorage.setItem(roughStatesKey, JSON.stringify(states));
 }
 
 export function loadCustomItems(
