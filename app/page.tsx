@@ -8,6 +8,7 @@ import {
   GripVertical,
   Package,
   Pencil,
+  Plus,
   Trash2,
   X,
 } from "lucide-react";
@@ -33,25 +34,7 @@ import {
 import { IconButton } from "../src/components/ui/IconButton";
 import { ReusableCard } from "../src/components/ui/ReusableCard";
 import { SectionCard } from "../src/components/ui/SectionCard";
-import {
-  createPreparationSession,
-  createTodayOnlyTemporaryItem,
-  defaultChildProfile,
-  loadChildProfile,
-  loadCheckCounts,
-  loadCustomItems,
-  loadPreparationSession,
-  loadSpotAdditions,
-  loadSpotDeadlines,
-  loadTodayOnlyTemporaryItems,
-  saveCheckCounts,
-  saveChildProfile,
-  saveCustomItems,
-  savePreparationSession,
-  saveSpotAdditions,
-  saveSpotDeadlines,
-  saveTodayOnlyTemporaryItems,
-} from "../src/lib/storage";
+import { appRepository } from "../src/lib/repositories/app-repository";
 import {
   getTodayDateKey,
   getTomorrowDateKey,
@@ -445,9 +428,9 @@ export default function Home() {
     thanksSent: false,
   });
   const [childProfile, setChildProfile] =
-    useState<ChildProfile>(defaultChildProfile);
+    useState<ChildProfile>(appRepository.defaultChildProfile);
   const childNameEditor = useEditableSection({
-    initialValue: defaultChildProfile.name,
+    initialValue: appRepository.defaultChildProfile.name,
     validate: validateChildName,
     onSave: (name) => {
       const trimmedName = name.trim().slice(0, 8);
@@ -457,7 +440,7 @@ export default function Home() {
       };
 
       setChildProfile(nextProfile);
-      saveChildProfile(nextProfile);
+      appRepository.saveChildProfile(nextProfile);
     },
   });
   const setSavedChildName = childNameEditor.setSavedValue;
@@ -540,24 +523,24 @@ export default function Home() {
   const previousActiveTabRef = useRef<AppTab>(activeTab);
 
   useEffect(() => {
-    const savedChildProfile = loadChildProfile();
+    const savedChildProfile = appRepository.loadChildProfile();
     const savedCustomItems = normalizeCustomItems(
-      loadCustomItems(defaultCustomItems),
+      appRepository.loadCustomItems(defaultCustomItems),
     );
     setChildProfile(savedChildProfile);
     setSavedChildName(savedChildProfile.name);
     setChildNameDraft(savedChildProfile.name);
     setCustomItems(savedCustomItems);
     setShortageCounts(
-      loadCheckCounts(createDefaultShortageCounts(savedCustomItems)),
+      appRepository.loadCheckCounts(createDefaultShortageCounts(savedCustomItems)),
     );
     setRoughStates(createDefaultRoughStates(savedCustomItems));
-    setSession(loadPreparationSession());
-    setTemporaryTodayOnlyItems(loadTodayOnlyTemporaryItems());
-    const savedSpotAdditions = loadSpotAdditions();
+    setSession(appRepository.loadPreparationSession());
+    setTemporaryTodayOnlyItems(appRepository.loadTodayOnlyTemporaryItems());
+    const savedSpotAdditions = appRepository.loadSpotAdditions();
     setSpotAdditions(savedSpotAdditions);
     setSelectedTodayOnlyIds(savedSpotAdditions.map((addition) => addition.itemId));
-    setSpotDeadlines(loadSpotDeadlines());
+    setSpotDeadlines(appRepository.loadSpotDeadlines());
   }, [setChildNameDraft, setSavedChildName]);
 
   useEffect(() => {
@@ -618,7 +601,7 @@ export default function Home() {
         return current;
       }
 
-      saveSpotAdditions(nextAdditions);
+      appRepository.saveSpotAdditions(nextAdditions);
       setSelectedTodayOnlyIds(nextAdditions.map((addition) => addition.itemId));
       return nextAdditions;
     });
@@ -646,7 +629,7 @@ export default function Home() {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      const freshTemporaryItems = loadTodayOnlyTemporaryItems();
+      const freshTemporaryItems = appRepository.loadTodayOnlyTemporaryItems();
       const freshTemporaryIds = new Set(
         freshTemporaryItems.map((item) => item.id),
       );
@@ -728,13 +711,13 @@ export default function Home() {
   );
   const updateSession = (nextSession: PreparationSession) => {
     setSession(nextSession);
-    savePreparationSession(nextSession);
+    appRepository.savePreparationSession(nextSession);
   };
 
   const updateShortageCount = (itemId: string, nextCount: number) => {
     setShortageCounts((current) => {
       const nextCounts = { ...current, [itemId]: nextCount };
-      saveCheckCounts(nextCounts);
+      appRepository.saveCheckCounts(nextCounts);
       return nextCounts;
     });
   };
@@ -756,17 +739,17 @@ export default function Home() {
   const updateSpotAdditions = (nextAdditions: SpotAddition[]) => {
     setSpotAdditions(nextAdditions);
     setSelectedTodayOnlyIds(nextAdditions.map((addition) => addition.itemId));
-    saveSpotAdditions(nextAdditions);
+    appRepository.saveSpotAdditions(nextAdditions);
   };
 
   const updateSpotDeadlines = (nextDeadlines: Record<string, string>) => {
     setSpotDeadlines(nextDeadlines);
-    saveSpotDeadlines(nextDeadlines);
+    appRepository.saveSpotDeadlines(nextDeadlines);
   };
 
   const updateTemporaryTodayOnlyItems = (nextItems: TodayOnlyTemporaryItem[]) => {
     setTemporaryTodayOnlyItems(nextItems);
-    saveTodayOnlyTemporaryItems(nextItems);
+    appRepository.saveTodayOnlyTemporaryItems(nextItems);
   };
 
   const addSpotItem = (itemId: string, dueDate: string | null = null) => {
@@ -918,7 +901,7 @@ export default function Home() {
       return;
     }
 
-    const newItem = createTodayOnlyTemporaryItem(
+    const newItem = appRepository.createTodayOnlyTemporaryItem(
       trimmedName,
       clampSpotQuantity(todayOnlyInputQuantity),
     );
@@ -994,7 +977,7 @@ export default function Home() {
       }));
 
   const completeCheck = () => {
-    const nextSession = createPreparationSession(
+    const nextSession = appRepository.createPreparationSession(
       buildPreparationItems([
         ...createLockerPreparationItems(),
         ...createTodayOnlyPreparationItems(),
@@ -1127,7 +1110,7 @@ export default function Home() {
           }
         });
 
-        saveCheckCounts(nextCounts);
+        appRepository.saveCheckCounts(nextCounts);
         return nextCounts;
       });
     }
@@ -1170,7 +1153,7 @@ export default function Home() {
 
   const updateCustomItems = (nextItems: CustomizableItem[]) => {
     setCustomItems(nextItems);
-    saveCustomItems(nextItems);
+    appRepository.saveCustomItems(nextItems);
   };
 
   const showZeroQuantityToast = () => {
@@ -1266,7 +1249,7 @@ export default function Home() {
     if (category === "持ち物") {
       setShortageCounts((current) => {
         const nextCounts = { ...current, [newItem.id]: 0 };
-        saveCheckCounts(nextCounts);
+        appRepository.saveCheckCounts(nextCounts);
         return nextCounts;
       });
     }
@@ -1315,7 +1298,7 @@ export default function Home() {
     setShortageCounts((current) => {
       const nextCounts = { ...current };
       delete nextCounts[itemId];
-      saveCheckCounts(nextCounts);
+      appRepository.saveCheckCounts(nextCounts);
       return nextCounts;
     });
     setRoughStates((current) => {
@@ -1701,7 +1684,7 @@ export default function Home() {
       }
 
       if (mode === "sort") {
-        return "grid-cols-[36px_minmax(80px,1fr)_40px_64px]";
+        return "grid-cols-[minmax(80px,1fr)_40px_64px_36px]";
       }
 
       return "grid-cols-[minmax(80px,1fr)_40px_64px_36px]";
@@ -1713,7 +1696,7 @@ export default function Home() {
       }
 
       if (mode === "sort") {
-        return "grid-cols-[36px_minmax(80px,1fr)_40px_56px]";
+        return "grid-cols-[minmax(80px,1fr)_40px_56px_36px]";
       }
 
       return "grid-cols-[minmax(80px,1fr)_40px_56px_36px]";
@@ -1724,7 +1707,7 @@ export default function Home() {
     }
 
     if (mode === "sort") {
-      return "grid-cols-[36px_minmax(80px,1fr)_44px]";
+      return "grid-cols-[minmax(80px,1fr)_44px_36px]";
     }
 
     return "grid-cols-[minmax(80px,1fr)_44px_36px]";
@@ -2036,14 +2019,6 @@ export default function Home() {
             : "bg-transparent"
         }`}
       >
-        {isSorting ? (
-          <span
-            aria-hidden="true"
-            className="grid h-9 w-9 touch-none place-items-center rounded-button bg-surface text-icon-today ring-1 ring-border-soft"
-          >
-            <GripVertical size={18} strokeWidth={2} />
-          </span>
-        ) : null}
         <span className="min-w-[80px] truncate text-hoiku-ink">
           {customItem.name}
         </span>
@@ -2060,14 +2035,21 @@ export default function Home() {
             {customItem.unit}
           </span>
         ) : null}
-        {!isSorting
-          ? renderFlatActionButton({
+        {isSorting ? (
+          <span
+            aria-hidden="true"
+            className="grid h-9 w-9 touch-none place-items-center text-icon-today"
+          >
+            <GripVertical size={18} strokeWidth={2} />
+          </span>
+        ) : (
+          renderFlatActionButton({
               label: "削除",
               tone: "danger",
               onClick: () => deleteCustomItem(customItem.id),
               children: <Trash2 size={18} strokeWidth={2.2} />,
             })
-          : null}
+        )}
       </div>
     );
   };
@@ -2115,9 +2097,6 @@ export default function Home() {
           width: customItemDragState.width,
         }}
       >
-        <span className="grid h-9 w-9 place-items-center rounded-button bg-card-today text-danger ring-1 ring-danger/20">
-          <GripVertical size={18} strokeWidth={2} />
-        </span>
         <span className="min-w-[80px] truncate text-hoiku-ink">
           {draggedItem.name}
         </span>
@@ -2134,6 +2113,9 @@ export default function Home() {
             {draggedItem.unit}
           </span>
         ) : null}
+        <span className="grid h-9 w-9 place-items-center text-danger">
+          <GripVertical size={18} strokeWidth={2} />
+        </span>
       </div>
     );
   };
@@ -2153,7 +2135,7 @@ export default function Home() {
             <button
               type="button"
               onClick={finishCustomItemSorting}
-              className="h-10 rounded-button bg-primary px-4 text-number font-normal text-surface shadow-button transition active:scale-95"
+              className="h-10 px-1 text-number font-normal text-danger transition active:scale-95"
             >
               完了
             </button>
@@ -2162,23 +2144,23 @@ export default function Home() {
               <IconButton
                 label="並び替え"
                 onClick={() => startCustomItemSorting(category)}
+                className="h-10 w-10 text-text-secondary"
               >
-                <GripVertical size={20} strokeWidth={2} />
+                <GripVertical size={18} strokeWidth={2} />
               </IconButton>
-              <button
-                type="button"
-                aria-label="追加"
+              <IconButton
+                label="追加"
                 onClick={() =>
                   isAdding ? cancelCustomItemAdding() : startCustomItemAdding(category)
                 }
-                className={`grid h-11 min-w-11 place-items-center rounded-button px-4 text-number font-normal transition active:scale-95 ${
+                className={`h-10 w-10 ${
                   isAdding
                     ? "bg-card-today text-danger ring-1 ring-danger/20"
-                    : "bg-surface text-hoiku-deep ring-1 ring-border-soft"
+                    : "text-text-secondary"
                 }`}
               >
-                ＋
-              </button>
+                <Plus size={19} strokeWidth={2.2} />
+              </IconButton>
             </>
           )}
         </div>
