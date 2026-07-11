@@ -12,6 +12,7 @@ const checkCountsKey = "project-hoiku:locker-counts";
 const customItemsKey = "project-hoiku:custom-items";
 const todayOnlyTemporaryItemsKey = "project-hoiku:today-only-temporary-items";
 const spotAdditionsKey = "project-hoiku:spot-additions";
+const spotDeadlinesKey = "project-hoiku:spot-deadlines";
 const childProfileKey = "project-hoiku:child-profile";
 
 export const defaultChildProfile: ChildProfile = {
@@ -183,6 +184,27 @@ export function saveSpotAdditions(additions: SpotAddition[]) {
   }
 
   window.localStorage.setItem(spotAdditionsKey, JSON.stringify(additions));
+}
+
+export function loadSpotDeadlines(): Record<string, string> {
+  if (!canUseStorage()) {
+    return {};
+  }
+
+  try {
+    const saved = window.localStorage.getItem(spotDeadlinesKey);
+    return saved ? JSON.parse(saved) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveSpotDeadlines(deadlines: Record<string, string>) {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  window.localStorage.setItem(spotDeadlinesKey, JSON.stringify(deadlines));
 }
 
 export function loadChildProfile(): ChildProfile {

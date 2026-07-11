@@ -35,12 +35,14 @@ import {
   loadCustomItems,
   loadPreparationSession,
   loadSpotAdditions,
+  loadSpotDeadlines,
   loadTodayOnlyTemporaryItems,
   saveCheckCounts,
   saveChildProfile,
   saveCustomItems,
   savePreparationSession,
   saveSpotAdditions,
+  saveSpotDeadlines,
   saveTodayOnlyTemporaryItems,
 } from "../src/lib/storage";
 import {
@@ -273,6 +275,7 @@ export default function Home() {
   );
   const [selectedTodayOnlyIds, setSelectedTodayOnlyIds] = useState<string[]>([]);
   const [spotAdditions, setSpotAdditions] = useState<SpotAddition[]>([]);
+  const [spotDeadlines, setSpotDeadlines] = useState<Record<string, string>>({});
   const [temporaryTodayOnlyItems, setTemporaryTodayOnlyItems] = useState<
     TodayOnlyTemporaryItem[]
   >([]);
@@ -350,6 +353,7 @@ export default function Home() {
     const savedSpotAdditions = loadSpotAdditions();
     setSpotAdditions(savedSpotAdditions);
     setSelectedTodayOnlyIds(savedSpotAdditions.map((addition) => addition.itemId));
+    setSpotDeadlines(loadSpotDeadlines());
     setCustomItemQuantityInputs(
       Object.fromEntries(
         savedCustomItems.map((item) => [item.id, String(item.count)]),
@@ -397,7 +401,7 @@ export default function Home() {
           if (!additionsById.has(item.id)) {
             additionsById.set(item.id, {
               itemId: item.id,
-              dueDate: null,
+              dueDate: spotDeadlines[item.id] ?? null,
             });
           }
         });
@@ -419,7 +423,7 @@ export default function Home() {
       setSelectedTodayOnlyIds(nextAdditions.map((addition) => addition.itemId));
       return nextAdditions;
     });
-  }, [customItems, session.completedAt]);
+  }, [customItems, session.completedAt, spotDeadlines]);
 
   useEffect(() => {
     if (isTodayOnlyInputOpen) {
@@ -574,6 +578,11 @@ export default function Home() {
     saveSpotAdditions(nextAdditions);
   };
 
+  const updateSpotDeadlines = (nextDeadlines: Record<string, string>) => {
+    setSpotDeadlines(nextDeadlines);
+    saveSpotDeadlines(nextDeadlines);
+  };
+
   const updateTemporaryTodayOnlyItems = (nextItems: TodayOnlyTemporaryItem[]) => {
     setTemporaryTodayOnlyItems(nextItems);
     saveTodayOnlyTemporaryItems(nextItems);
@@ -600,7 +609,7 @@ export default function Home() {
       return;
     }
 
-    addSpotItem(itemId, null);
+    addSpotItem(itemId, spotDeadlines[itemId] ?? null);
   };
 
   const saveSpotDeadline = (itemId: string, dueDate: string) => {
@@ -610,19 +619,24 @@ export default function Home() {
       return;
     }
 
+    const nextDeadlines = { ...spotDeadlines, [itemId]: dueDate };
+    updateSpotDeadlines(nextDeadlines);
+
     if (selectedTodayOnlyIds.includes(itemId)) {
       updateSpotAdditions(
         spotAdditions.map((addition) =>
           addition.itemId === itemId ? { ...addition, dueDate } : addition,
         ),
       );
-    } else {
-      addSpotItem(itemId, dueDate);
     }
   };
 
   const clearSpotDeadline = (itemId: string) => {
     isSpotDatePickerActiveRef.current = false;
+
+    const nextDeadlines = { ...spotDeadlines };
+    delete nextDeadlines[itemId];
+    updateSpotDeadlines(nextDeadlines);
 
     if (selectedTodayOnlyIds.includes(itemId)) {
       updateSpotAdditions(
@@ -744,7 +758,7 @@ export default function Home() {
           checked: false,
           later: false,
           source: "spot" as const,
-          dueDate: spotAddition.dueDate ?? null,
+          dueDate: spotAddition.dueDate ?? spotDeadlines[item.id] ?? null,
         };
 
         return preparationItem;
@@ -867,6 +881,11 @@ export default function Home() {
         .filter((item) => item.source === "stock")
         .map((item) => item.id),
     );
+    const preparedSpotItemIds = new Set(
+      preparedItems
+        .filter((item) => item.source === "spot")
+        .map((item) => item.id),
+    );
     const carryoverItems = deferredItems.map((item) => ({
       ...item,
       checked: false,
@@ -913,6 +932,15 @@ export default function Home() {
     updateSpotAdditions(
       spotAdditions.filter((addition) => deferredItemIds.has(addition.itemId)),
     );
+    if (preparedSpotItemIds.size > 0) {
+      const nextDeadlines = { ...spotDeadlines };
+
+      preparedSpotItemIds.forEach((itemId) => {
+        delete nextDeadlines[itemId];
+      });
+
+      updateSpotDeadlines(nextDeadlines);
+    }
     updateTemporaryTodayOnlyItems(
       temporaryTodayOnlyItems.filter((item) => deferredItemIds.has(item.id)),
     );
@@ -2267,7 +2295,9 @@ export default function Home() {
                 const spotAddition = spotAdditions.find(
                   (addition) => addition.itemId === item.id,
                 );
-                const hasSavedDeadline = Boolean(spotAddition?.dueDate);
+                const savedSpotDeadline =
+                  spotAddition?.dueDate ?? spotDeadlines[item.id] ?? null;
+                const hasSavedDeadline = Boolean(savedSpotDeadline);
                 const isSwiped = swipedTodayOnlyItemId === item.id;
                 const swipeOffset =
                   swipingTodayOnlyItemId === item.id
@@ -2330,11 +2360,14 @@ export default function Home() {
                                 onPointerMove={(event) => event.stopPropagation()}
                                 onPointerUp={(event) => event.stopPropagation()}
                                 onClick={(event) => event.stopPropagation()}
+                                onBlur={() => {
+                                  isSpotDatePickerActiveRef.current = false;
+                                }}
                                 onChange={(event) => {
                                   saveSpotDeadline(item.id, event.target.value);
                                   event.currentTarget.value = "";
                                 }}
-                                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                className="absolute inset-0 h-full w-full cursor-pointer opacity-[0.01]"
                               />
                             </label>
                           )
