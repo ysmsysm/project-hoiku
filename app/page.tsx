@@ -325,7 +325,6 @@ export default function Home() {
   >(null);
   const todayOnlyInputRef = useRef<HTMLInputElement>(null);
   const swipeStartXRef = useRef<number | null>(null);
-  const isSpotDatePickerActiveRef = useRef(false);
   const customItemNameRefs = useRef<Record<string, HTMLInputElement | null>>(
     {},
   );
@@ -461,10 +460,6 @@ export default function Home() {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      if (isSpotDatePickerActiveRef.current) {
-        return;
-      }
-
       const freshTemporaryItems = loadTodayOnlyTemporaryItems();
       const freshTemporaryIds = new Set(
         freshTemporaryItems.map((item) => item.id),
@@ -613,8 +608,6 @@ export default function Home() {
   };
 
   const saveSpotDeadline = (itemId: string, dueDate: string) => {
-    isSpotDatePickerActiveRef.current = false;
-
     if (!dueDate) {
       return;
     }
@@ -632,8 +625,6 @@ export default function Home() {
   };
 
   const clearSpotDeadline = (itemId: string) => {
-    isSpotDatePickerActiveRef.current = false;
-
     const nextDeadlines = { ...spotDeadlines };
     delete nextDeadlines[itemId];
     updateSpotDeadlines(nextDeadlines);
@@ -648,7 +639,6 @@ export default function Home() {
   };
 
   const closeTodayOnlySheet = () => {
-    isSpotDatePickerActiveRef.current = false;
     setIsTodayOnlySheetOpen(false);
     setIsTodayOnlyInputOpen(false);
     setTodayOnlyInputValue("");
@@ -659,20 +649,12 @@ export default function Home() {
   };
 
   const startTemporaryItemSwipe = (itemId: string, clientX: number) => {
-    if (isSpotDatePickerActiveRef.current) {
-      return;
-    }
-
     swipeStartXRef.current = clientX;
     setSwipingTodayOnlyItemId(itemId);
     setTodayOnlySwipeOffset(swipedTodayOnlyItemId === itemId ? 88 : 0);
   };
 
   const moveTemporaryItemSwipe = (itemId: string, clientX: number) => {
-    if (isSpotDatePickerActiveRef.current) {
-      return;
-    }
-
     const startX = swipeStartXRef.current;
 
     if (startX === null || swipingTodayOnlyItemId !== itemId) {
@@ -685,10 +667,6 @@ export default function Home() {
   };
 
   const endTemporaryItemSwipe = (itemId: string) => {
-    if (isSpotDatePickerActiveRef.current) {
-      return;
-    }
-
     const offset = todayOnlySwipeOffset;
     swipeStartXRef.current = null;
     setSwipingTodayOnlyItemId(null);
@@ -2336,10 +2314,7 @@ export default function Home() {
                           ) : (
                             <label
                               aria-label={`${item.name}の期限を設定`}
-                              onPointerDown={(event) => {
-                                isSpotDatePickerActiveRef.current = true;
-                                event.stopPropagation();
-                              }}
+                              onPointerDown={(event) => event.stopPropagation()}
                               onPointerMove={(event) => event.stopPropagation()}
                               onPointerUp={(event) => event.stopPropagation()}
                               onClick={(event) => event.stopPropagation()}
@@ -2350,19 +2325,10 @@ export default function Home() {
                                 type="date"
                                 aria-label={`${item.name}の期限日`}
                                 defaultValue=""
-                                onFocus={() => {
-                                  isSpotDatePickerActiveRef.current = true;
-                                }}
-                                onPointerDown={(event) => {
-                                  isSpotDatePickerActiveRef.current = true;
-                                  event.stopPropagation();
-                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
                                 onPointerMove={(event) => event.stopPropagation()}
                                 onPointerUp={(event) => event.stopPropagation()}
                                 onClick={(event) => event.stopPropagation()}
-                                onBlur={() => {
-                                  isSpotDatePickerActiveRef.current = false;
-                                }}
                                 onChange={(event) => {
                                   saveSpotDeadline(item.id, event.target.value);
                                   event.currentTarget.value = "";
