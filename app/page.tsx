@@ -2312,15 +2312,7 @@ export default function Home() {
                               <CalendarDays size={16} strokeWidth={2.2} />
                             </button>
                           ) : (
-                            <label
-                              aria-label={`${item.name}の期限を設定`}
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onPointerMove={(event) => event.stopPropagation()}
-                              onPointerUp={(event) => event.stopPropagation()}
-                              onClick={(event) => event.stopPropagation()}
-                              className="relative grid h-8 w-8 cursor-pointer place-items-center overflow-hidden rounded-full bg-surface text-icon-today ring-1 ring-danger/20 transition active:scale-95"
-                            >
-                              <CalendarDays size={16} strokeWidth={2.2} />
+                            <span className="relative grid h-8 w-8 place-items-center">
                               <input
                                 type="date"
                                 aria-label={`${item.name}の期限日`}
@@ -2333,9 +2325,14 @@ export default function Home() {
                                   saveSpotDeadline(item.id, event.target.value);
                                   event.currentTarget.value = "";
                                 }}
-                                className="absolute inset-0 h-full w-full cursor-pointer opacity-[0.01]"
+                                className="spot-date-input relative h-8 w-8 cursor-pointer rounded-full bg-surface text-transparent text-[0px] ring-1 ring-danger/20 transition active:scale-95"
                               />
-                            </label>
+                              <CalendarDays
+                                size={16}
+                                strokeWidth={2.2}
+                                className="pointer-events-none absolute text-icon-today"
+                              />
+                            </span>
                           )
                         ) : null}
                         <button
