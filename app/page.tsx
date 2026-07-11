@@ -207,6 +207,177 @@ const formatSpotDueDate = (value?: string | null) => {
   return `${month}/${day}`;
 };
 
+const toDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
+const parseDateKey = (dateKey: string) => {
+  const [year, month, day] = dateKey.split("-").map(Number);
+
+  return new Date(year, month - 1, day);
+};
+
+const getMonthKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+
+  return `${year}-${month}`;
+};
+
+const parseMonthKey = (monthKey: string) => {
+  const [year, month] = monthKey.split("-").map(Number);
+
+  return new Date(year, month - 1, 1);
+};
+
+const shiftMonthKey = (monthKey: string, offset: number) => {
+  const monthDate = parseMonthKey(monthKey);
+  monthDate.setMonth(monthDate.getMonth() + offset);
+
+  return getMonthKey(monthDate);
+};
+
+const formatCalendarMonth = (monthKey: string) =>
+  new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "long",
+  }).format(parseMonthKey(monthKey));
+
+const createCalendarDays = (monthKey: string) => {
+  const monthStart = parseMonthKey(monthKey);
+  const firstDay = new Date(monthStart);
+  firstDay.setDate(firstDay.getDate() - firstDay.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(firstDay);
+    date.setDate(firstDay.getDate() + index);
+
+    return {
+      key: toDateKey(date),
+      label: date.getDate(),
+      isCurrentMonth: date.getMonth() === monthStart.getMonth(),
+    };
+  });
+};
+
+type SpotDeadlinePickerState = {
+  itemId: string;
+  temporaryDate: string;
+  visibleMonth: string;
+};
+
+type SpotDeadlineCalendarProps = {
+  picker: SpotDeadlinePickerState;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onSelectDate: (dateKey: string) => void;
+  onShiftMonth: (offset: number) => void;
+};
+
+const weekdayLabels = ["日", "月", "火", "水", "木", "金", "土"];
+
+function SpotDeadlineCalendar({
+  picker,
+  onCancel,
+  onConfirm,
+  onSelectDate,
+  onShiftMonth,
+}: SpotDeadlineCalendarProps) {
+  const todayKey = getTodayDateKey();
+  const days = createCalendarDays(picker.visibleMonth);
+
+  return (
+    <div className="absolute inset-0 z-20">
+      <button
+        type="button"
+        aria-label="カレンダーを閉じる"
+        onClick={onCancel}
+        className="absolute inset-0 h-full w-full bg-surface/75"
+      />
+      <div
+        className="absolute inset-x-4 top-4 max-h-[calc(100%-2rem)] overflow-y-auto rounded-section bg-surface p-3 shadow-floating ring-1 ring-danger/20"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            aria-label="前の月"
+            onClick={() => onShiftMonth(-1)}
+            className="grid h-9 w-9 place-items-center rounded-button bg-card-today text-icon-today transition active:scale-95"
+          >
+            <ChevronRight className="rotate-180" size={20} strokeWidth={2.2} />
+          </button>
+          <div className="text-list-item font-semibold text-text-primary">
+            {formatCalendarMonth(picker.visibleMonth)}
+          </div>
+          <button
+            type="button"
+            aria-label="次の月"
+            onClick={() => onShiftMonth(1)}
+            className="grid h-9 w-9 place-items-center rounded-button bg-card-today text-icon-today transition active:scale-95"
+          >
+            <ChevronRight size={20} strokeWidth={2.2} />
+          </button>
+        </div>
+
+        <div className="mt-3 grid grid-cols-7 gap-1 text-center text-caption font-normal text-text-tertiary">
+          {weekdayLabels.map((weekday) => (
+            <div key={weekday}>{weekday}</div>
+          ))}
+        </div>
+        <div className="mt-2 grid grid-cols-7 gap-1">
+          {days.map((day) => {
+            const isSelected = day.key === picker.temporaryDate;
+            const isToday = day.key === todayKey;
+
+            return (
+              <button
+                key={day.key}
+                type="button"
+                onClick={() => onSelectDate(day.key)}
+                className={`grid h-8 place-items-center rounded-full text-status font-normal transition active:scale-95 ${
+                  isSelected
+                    ? "bg-primary text-surface"
+                    : isToday
+                      ? "bg-card-today text-danger ring-1 ring-danger/20"
+                      : day.isCurrentMonth
+                        ? "text-text-primary"
+                        : "text-text-tertiary"
+                }`}
+              >
+                {day.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 flex justify-end gap-2">
+          <button
+            type="button"
+            aria-label="キャンセル"
+            onClick={onCancel}
+            className="grid h-10 w-10 place-items-center rounded-button bg-card-today text-icon-today transition active:scale-95"
+          >
+            <X size={18} strokeWidth={2.4} />
+          </button>
+          <button
+            type="button"
+            aria-label="期限を確定"
+            onClick={onConfirm}
+            className="grid h-10 w-10 place-items-center rounded-button bg-primary text-surface shadow-button transition active:scale-95"
+          >
+            <CheckCircle2 size={20} strokeWidth={2.2} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const formatSpotChipLabel = (
   item: Pick<CustomizableItem, "name" | "count">,
   dueDate?: string | null,
@@ -276,6 +447,8 @@ export default function Home() {
   const [selectedTodayOnlyIds, setSelectedTodayOnlyIds] = useState<string[]>([]);
   const [spotAdditions, setSpotAdditions] = useState<SpotAddition[]>([]);
   const [spotDeadlines, setSpotDeadlines] = useState<Record<string, string>>({});
+  const [spotDeadlinePicker, setSpotDeadlinePicker] =
+    useState<SpotDeadlinePickerState | null>(null);
   const [temporaryTodayOnlyItems, setTemporaryTodayOnlyItems] = useState<
     TodayOnlyTemporaryItem[]
   >([]);
@@ -636,10 +809,58 @@ export default function Home() {
         ),
       );
     }
+
+    if (spotDeadlinePicker?.itemId === itemId) {
+      setSpotDeadlinePicker(null);
+    }
+  };
+
+  const openSpotDeadlinePicker = (itemId: string) => {
+    const initialDate = spotDeadlines[itemId] ?? getTomorrowDateKey();
+
+    setSpotDeadlinePicker({
+      itemId,
+      temporaryDate: initialDate,
+      visibleMonth: getMonthKey(parseDateKey(initialDate)),
+    });
+  };
+
+  const selectSpotDeadlineDate = (dateKey: string) => {
+    setSpotDeadlinePicker((current) =>
+      current
+        ? {
+            ...current,
+            temporaryDate: dateKey,
+            visibleMonth: getMonthKey(parseDateKey(dateKey)),
+          }
+        : current,
+    );
+  };
+
+  const shiftSpotDeadlineMonth = (offset: number) => {
+    setSpotDeadlinePicker((current) =>
+      current
+        ? { ...current, visibleMonth: shiftMonthKey(current.visibleMonth, offset) }
+        : current,
+    );
+  };
+
+  const cancelSpotDeadlinePicker = () => {
+    setSpotDeadlinePicker(null);
+  };
+
+  const confirmSpotDeadlinePicker = () => {
+    if (!spotDeadlinePicker) {
+      return;
+    }
+
+    saveSpotDeadline(spotDeadlinePicker.itemId, spotDeadlinePicker.temporaryDate);
+    setSpotDeadlinePicker(null);
   };
 
   const closeTodayOnlySheet = () => {
     setIsTodayOnlySheetOpen(false);
+    setSpotDeadlinePicker(null);
     setIsTodayOnlyInputOpen(false);
     setTodayOnlyInputValue("");
     setTodayOnlyInputQuantity(1);
@@ -701,6 +922,9 @@ export default function Home() {
     const nextItems = temporaryTodayOnlyItems.filter((item) => item.id !== itemId);
     updateTemporaryTodayOnlyItems(nextItems);
     removeSpotItem(itemId);
+    if (spotDeadlinePicker?.itemId === itemId) {
+      setSpotDeadlinePicker(null);
+    }
     setSwipedTodayOnlyItemId(null);
   };
 
@@ -2312,27 +2536,17 @@ export default function Home() {
                               <CalendarDays size={16} strokeWidth={2.2} />
                             </button>
                           ) : (
-                            <span className="relative grid h-8 w-8 place-items-center">
-                              <input
-                                type="date"
-                                aria-label={`${item.name}の期限日`}
-                                defaultValue=""
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onPointerMove={(event) => event.stopPropagation()}
-                                onPointerUp={(event) => event.stopPropagation()}
-                                onClick={(event) => event.stopPropagation()}
-                                onChange={(event) => {
-                                  saveSpotDeadline(item.id, event.target.value);
-                                  event.currentTarget.value = "";
-                                }}
-                                className="spot-date-input relative h-8 w-8 cursor-pointer rounded-full bg-surface text-transparent text-[0px] ring-1 ring-danger/20 transition active:scale-95"
-                              />
-                              <CalendarDays
-                                size={16}
-                                strokeWidth={2.2}
-                                className="pointer-events-none absolute text-icon-today"
-                              />
-                            </span>
+                            <button
+                              type="button"
+                              aria-label={`${item.name}の期限を設定`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openSpotDeadlinePicker(item.id);
+                              }}
+                              className="grid h-8 w-8 place-items-center rounded-full bg-surface text-icon-today ring-1 ring-danger/20 transition active:scale-95"
+                            >
+                              <CalendarDays size={16} strokeWidth={2.2} />
+                            </button>
                           )
                         ) : null}
                         <button
@@ -2462,6 +2676,15 @@ export default function Home() {
                 </button>
               )}
             </div>
+            {spotDeadlinePicker ? (
+              <SpotDeadlineCalendar
+                picker={spotDeadlinePicker}
+                onCancel={cancelSpotDeadlinePicker}
+                onConfirm={confirmSpotDeadlinePicker}
+                onSelectDate={selectSpotDeadlineDate}
+                onShiftMonth={shiftSpotDeadlineMonth}
+              />
+            ) : null}
           </div>
         </div>
       ) : null}
