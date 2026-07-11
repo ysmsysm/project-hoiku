@@ -11,7 +11,14 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import { AssigneeBadge } from "../src/components/AssigneeBadge";
 import { BabyHeader } from "../src/components/BabyHeader";
 import { BabyAvatar } from "../src/components/BabyAvatar";
@@ -107,15 +114,31 @@ const itemCategories: CustomItemCategory[] = [
   "ざっくり管理",
 ];
 
-const weekdayOptions = [
-  { value: 0, label: "日" },
+const itemSettingsWeekdayOptions = [
   { value: 1, label: "月" },
   { value: 2, label: "火" },
   { value: 3, label: "水" },
   { value: 4, label: "木" },
   { value: 5, label: "金" },
   { value: 6, label: "土" },
+  { value: 0, label: "日" },
 ];
+
+type CustomItemDraft = {
+  name: string;
+  count: string;
+  unit: string;
+  weekdays: number[];
+};
+
+type CustomItemDragState = {
+  itemId: string;
+  pointerId: number;
+  offsetY: number;
+  currentY: number;
+  left: number;
+  width: number;
+};
 
 const roughStateStyles: Record<RoughState, string> = {
   十分: "bg-success text-surface",
@@ -152,8 +175,6 @@ const validateChildName = (value: string) =>
 
 const cardStackClassName = "space-y-5";
 const settingsSectionStackClassName = "space-y-4";
-const quantityInputClassName =
-  "h-11 w-14 rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent";
 
 const createDefaultShortageCounts = (items: CustomizableItem[]) =>
   items.reduce<Record<string, number>>((counts, item) => {
@@ -472,39 +493,50 @@ export default function Home() {
   const [isItemSettingsOpen, setIsItemSettingsOpen] = useState(false);
   const [selectedItemSettingsCategory, setSelectedItemSettingsCategory] =
     useState<CustomItemCategory | null>(null);
-  const [customItemQuantityInputs, setCustomItemQuantityInputs] = useState<
-    Record<string, string>
-  >({});
-  const [pendingFocusItemId, setPendingFocusItemId] = useState<string | null>(
-    null,
-  );
   const [isZeroQuantityToastVisible, setIsZeroQuantityToastVisible] =
     useState(false);
   const [sortingCategory, setSortingCategory] =
     useState<CustomItemCategory | null>(null);
+  const [sortingDraftItems, setSortingDraftItems] = useState<
+    CustomizableItem[] | null
+  >(null);
   const [addingCategory, setAddingCategory] =
     useState<CustomItemCategory | null>(null);
-  const [newCustomItemDraft, setNewCustomItemDraft] = useState({
+  const [newCustomItemDraft, setNewCustomItemDraft] = useState<CustomItemDraft>({
     name: "",
     count: "1",
     unit: "",
-    weekdays: [] as number[],
+    weekdays: [],
   });
+  const [editingCustomItemId, setEditingCustomItemId] = useState<string | null>(
+    null,
+  );
+  const [customItemEditDraft, setCustomItemEditDraft] =
+    useState<CustomItemDraft>({
+      name: "",
+      count: "1",
+      unit: "",
+      weekdays: [],
+    });
   const [expandedWeekdayItemId, setExpandedWeekdayItemId] = useState<
     string | null
   >(null);
   const [draggingCustomItemId, setDraggingCustomItemId] = useState<
     string | null
   >(null);
+  const [customItemDragState, setCustomItemDragState] =
+    useState<CustomItemDragState | null>(null);
   const todayOnlyInputRef = useRef<HTMLInputElement>(null);
   const swipeStartXRef = useRef<number | null>(null);
-  const customItemNameRefs = useRef<Record<string, HTMLInputElement | null>>(
-    {},
-  );
-  const newCustomItemNameRef = useRef<HTMLInputElement>(null);
   const zeroQuantityToastTimeoutRef = useRef<number | null>(null);
-  const customItemDragOverIdRef = useRef<string | null>(null);
-  const customItemReorderAnimationFrameRef = useRef<number | null>(null);
+  const pendingCustomItemDragRef = useRef<{
+    itemId: string;
+    category: CustomItemCategory;
+    pointerId: number;
+    clientY: number;
+    element: HTMLElement;
+  } | null>(null);
+  const customItemDragStartTimeoutRef = useRef<number | null>(null);
   const previousActiveTabRef = useRef<AppTab>(activeTab);
 
   useEffect(() => {
@@ -526,11 +558,6 @@ export default function Home() {
     setSpotAdditions(savedSpotAdditions);
     setSelectedTodayOnlyIds(savedSpotAdditions.map((addition) => addition.itemId));
     setSpotDeadlines(loadSpotDeadlines());
-    setCustomItemQuantityInputs(
-      Object.fromEntries(
-        savedCustomItems.map((item) => [item.id, String(item.count)]),
-      ),
-    );
   }, [setChildNameDraft, setSavedChildName]);
 
   useEffect(() => {
@@ -603,30 +630,16 @@ export default function Home() {
     }
   }, [isTodayOnlyInputOpen]);
 
-  useEffect(() => {
-    if (addingCategory) {
-      newCustomItemNameRef.current?.focus();
-    }
-  }, [addingCategory]);
-
-  useEffect(() => {
-    if (!pendingFocusItemId) {
-      return;
-    }
-
-    customItemNameRefs.current[pendingFocusItemId]?.focus();
-    setPendingFocusItemId(null);
-  }, [customItems, pendingFocusItemId]);
-
   useEffect(
     () => () => {
       if (zeroQuantityToastTimeoutRef.current !== null) {
         window.clearTimeout(zeroQuantityToastTimeoutRef.current);
       }
 
-      if (customItemReorderAnimationFrameRef.current !== null) {
-        window.cancelAnimationFrame(customItemReorderAnimationFrameRef.current);
+      if (customItemDragStartTimeoutRef.current !== null) {
+        window.clearTimeout(customItemDragStartTimeoutRef.current);
       }
+
     },
     [],
   );
@@ -1210,14 +1223,11 @@ export default function Home() {
     setIsChildSettingsOpen(false);
   };
 
-  const addCustomItem = (
-    category: CustomItemCategory,
-    draft: { name: string; count: string; unit: string; weekdays: number[] },
-  ) => {
+  const addCustomItem = (category: CustomItemCategory, draft: CustomItemDraft) => {
     const trimmedName = draft.name.trim();
 
     if (!trimmedName) {
-      return;
+      return false;
     }
 
     const parsedCount = draft.count === "" ? 0 : Number(draft.count);
@@ -1253,12 +1263,6 @@ export default function Home() {
           ];
 
     updateCustomItems(nextItems);
-    setCustomItemQuantityInputs((current) => ({
-      ...current,
-      [newItem.id]: String(newItem.count),
-    }));
-    setPendingFocusItemId(newItem.id);
-
     if (category === "持ち物") {
       setShortageCounts((current) => {
         const nextCounts = { ...current, [newItem.id]: 0 };
@@ -1273,6 +1277,8 @@ export default function Home() {
         [newItem.id]: current[newItem.id] ?? "十分",
       }));
     }
+
+    return true;
   };
 
   const updateCustomItem = (
@@ -1296,12 +1302,13 @@ export default function Home() {
   };
 
   const deleteCustomItem = (itemId: string) => {
+    if (editingCustomItemId === itemId) {
+      cancelCustomItemEditing();
+    }
+    if (expandedWeekdayItemId === itemId) {
+      setExpandedWeekdayItemId(null);
+    }
     updateCustomItems(customItems.filter((item) => item.id !== itemId));
-    setCustomItemQuantityInputs((current) => {
-      const nextInputs = { ...current };
-      delete nextInputs[itemId];
-      return nextInputs;
-    });
     setSelectedTodayOnlyIds((current) =>
       current.filter((selectedId) => selectedId !== itemId),
     );
@@ -1325,56 +1332,12 @@ export default function Home() {
     });
   };
 
-  const updateCustomItemQuantityInput = (itemId: string, value: string) => {
-    if (!/^\d*$/.test(value)) {
-      return;
-    }
-
-    setCustomItemQuantityInputs((current) => ({
-      ...current,
-      [itemId]: value,
-    }));
-
-    if (value === "") {
-      return;
-    }
-
-    updateCustomItem(itemId, {
-      count: Number(value),
-    });
-  };
-
-  const saveCustomItemQuantityInput = (itemId: string) => {
-    const value = customItemQuantityInputs[itemId];
-
-    if (value !== "") {
-      return;
-    }
-
-    setCustomItemQuantityInputs((current) => ({
-      ...current,
-      [itemId]: "0",
-    }));
-    updateCustomItem(itemId, {
-      count: 0,
-    });
-  };
-
-  const toggleCustomItemWeekday = (item: CustomizableItem, weekday: number) => {
-    const currentWeekdays = item.weekdays ?? [];
-    const nextWeekdays = currentWeekdays.includes(weekday)
-      ? currentWeekdays.filter((day) => day !== weekday)
-      : [...currentWeekdays, weekday].sort((a, b) => a - b);
-
-    updateCustomItem(item.id, {
-      weekdays: nextWeekdays,
-    });
-  };
-
   const toggleNewCustomItemWeekday = (weekday: number) => {
     setNewCustomItemDraft((current) => {
       const nextWeekdays = current.weekdays.includes(weekday)
         ? current.weekdays.filter((day) => day !== weekday)
+        : current.weekdays.length >= 2
+          ? current.weekdays
         : [...current.weekdays, weekday].sort((a, b) => a - b);
 
       return {
@@ -1384,148 +1347,262 @@ export default function Home() {
     });
   };
 
-  const getCustomItemRects = (category: CustomItemCategory) => {
-    const rects = new Map<string, DOMRect>();
+  const toggleDraftWeekday = (
+    draft: CustomItemDraft,
+    weekday: number,
+  ): CustomItemDraft => {
+    const nextWeekdays = draft.weekdays.includes(weekday)
+      ? draft.weekdays.filter((day) => day !== weekday)
+      : draft.weekdays.length >= 2
+        ? draft.weekdays
+        : [...draft.weekdays, weekday].sort((a, b) => a - b);
 
-    document
-      .querySelectorAll<HTMLElement>(
-        `[data-custom-item-category="${category}"][data-custom-item-id]`,
-      )
-      .forEach((element) => {
-        const itemId = element.dataset.customItemId;
-
-        if (itemId) {
-          rects.set(itemId, element.getBoundingClientRect());
-        }
-      });
-
-    return rects;
+    return {
+      ...draft,
+      weekdays: nextWeekdays,
+    };
   };
 
-  const animateCustomItemReorder = (
-    category: CustomItemCategory,
-    previousRects: Map<string, DOMRect>,
-    activeItemId: string,
-  ) => {
-    if (customItemReorderAnimationFrameRef.current !== null) {
-      window.cancelAnimationFrame(customItemReorderAnimationFrameRef.current);
-    }
+  const formatItemSettingsWeekdays = (weekdays: number[] = []) =>
+    itemSettingsWeekdayOptions
+      .filter((weekday) => weekdays.includes(weekday.value))
+      .map((weekday) => weekday.label)
+      .join("・");
 
-    customItemReorderAnimationFrameRef.current = window.requestAnimationFrame(
-      () => {
-        document
-          .querySelectorAll<HTMLElement>(
-            `[data-custom-item-category="${category}"][data-custom-item-id]`,
-          )
-          .forEach((element) => {
-            const itemId = element.dataset.customItemId;
-            const previousRect = itemId ? previousRects.get(itemId) : undefined;
+  const getCustomItemDraft = (item: CustomizableItem): CustomItemDraft => ({
+    name: item.name,
+    count: String(item.count),
+    unit: item.unit,
+    weekdays: item.weekdays ?? [],
+  });
 
-            if (!itemId || !previousRect || itemId === activeItemId) {
-              return;
-            }
-
-            const nextRect = element.getBoundingClientRect();
-            const deltaY = previousRect.top - nextRect.top;
-
-            if (Math.abs(deltaY) < 1) {
-              return;
-            }
-
-            element.style.transition = "none";
-            element.style.transform = `translate3d(0, ${deltaY}px, 0)`;
-
-            window.requestAnimationFrame(() => {
-              element.style.transition =
-                "transform 180ms cubic-bezier(0.2, 0, 0, 1)";
-              element.style.transform = "";
-
-              window.setTimeout(() => {
-                element.style.transition = "";
-              }, 200);
-            });
-          });
-
-        customItemReorderAnimationFrameRef.current = null;
-      },
-    );
+  const startCustomItemEditing = (item: CustomizableItem) => {
+    setAddingCategory(null);
+    setSortingCategory(null);
+    setExpandedWeekdayItemId(null);
+    setEditingCustomItemId(item.id);
+    setCustomItemEditDraft(getCustomItemDraft(item));
   };
 
-  const reorderCustomItemsInCategory = (
-    category: CustomItemCategory,
-    activeItemId: string,
-    overItemId: string,
-  ) => {
-    if (activeItemId === overItemId) {
+  const cancelCustomItemEditing = () => {
+    setEditingCustomItemId(null);
+    setExpandedWeekdayItemId(null);
+    setCustomItemEditDraft({
+      name: "",
+      count: "1",
+      unit: "",
+      weekdays: [],
+    });
+  };
+
+  const saveCustomItemEditing = (item: CustomizableItem) => {
+    const trimmedName = customItemEditDraft.name.trim();
+
+    if (!trimmedName) {
       return;
     }
 
-    const categoryItems = customItems.filter(
-      (item) => item.category === category,
-    );
-    const activeIndex = categoryItems.findIndex(
-      (item) => item.id === activeItemId,
-    );
-    const overIndex = categoryItems.findIndex((item) => item.id === overItemId);
+    const parsedCount =
+      customItemEditDraft.count === "" ? 0 : Number(customItemEditDraft.count);
+    const nextCount =
+      item.category === "スポット追加"
+        ? clampSpotQuantity(parsedCount)
+        : Number.isNaN(parsedCount)
+          ? 0
+          : parsedCount;
 
-    if (activeIndex === -1 || overIndex === -1) {
-      return;
-    }
+    updateCustomItem(item.id, {
+      name: trimmedName,
+      count: nextCount,
+      unit:
+        item.category === "ざっくり管理"
+          ? customItemEditDraft.unit
+          : item.unit,
+      weekdays:
+        item.category === "スポット追加" ? customItemEditDraft.weekdays : [],
+    });
+    cancelCustomItemEditing();
+  };
 
-    const previousRects = getCustomItemRects(category);
-    const nextCategoryItems = [...categoryItems];
-    const [movedItem] = nextCategoryItems.splice(activeIndex, 1);
-    nextCategoryItems.splice(overIndex, 0, movedItem);
+  const reorderDraftCustomItemsInCategory = (
+    category: CustomItemCategory,
+    activeItemId: string,
+    targetIndex: number,
+  ) => {
+    setSortingDraftItems((currentItems) => {
+      const sourceItems = currentItems ?? customItems;
+      const categoryItems = sourceItems.filter(
+        (item) => item.category === category,
+      );
+      const activeIndex = categoryItems.findIndex(
+        (item) => item.id === activeItemId,
+      );
 
-    let replacementIndex = 0;
-    const nextItems = customItems.map((item) =>
-      item.category === category
-        ? nextCategoryItems[replacementIndex++]
-        : item,
-    );
+      if (activeIndex === -1) {
+        return currentItems;
+      }
 
-    updateCustomItems(nextItems);
-    animateCustomItemReorder(category, previousRects, activeItemId);
+      const nextCategoryItems = [...categoryItems];
+      const [movedItem] = nextCategoryItems.splice(activeIndex, 1);
+      const nextIndex = Math.min(
+        Math.max(targetIndex, 0),
+        nextCategoryItems.length,
+      );
+
+      if (nextIndex === activeIndex) {
+        return currentItems;
+      }
+
+      nextCategoryItems.splice(nextIndex, 0, movedItem);
+      let replacementIndex = 0;
+
+      return sourceItems.map((item) =>
+        item.category === category
+          ? nextCategoryItems[replacementIndex++]
+          : item,
+      );
+    });
   };
 
   const moveCustomItemByPointer = (
     category: CustomItemCategory,
     activeItemId: string,
-    clientX: number,
     clientY: number,
   ) => {
-    const target = document
-      .elementFromPoint(clientX, clientY)
-      ?.closest("[data-custom-item-id]");
-    const overItemId = target?.getAttribute("data-custom-item-id");
+    const rowElements = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        `[data-custom-item-category="${category}"][data-custom-item-id]`,
+      ),
+    ).filter((element) => element.dataset.customItemId !== activeItemId);
+    const targetIndex = rowElements.reduce((index, element) => {
+      const rect = element.getBoundingClientRect();
 
-    if (!overItemId || overItemId === activeItemId) {
+      return clientY > rect.top + rect.height / 2 ? index + 1 : index;
+    }, 0);
+
+    reorderDraftCustomItemsInCategory(category, activeItemId, targetIndex);
+  };
+
+  const clearPendingCustomItemDrag = () => {
+    if (customItemDragStartTimeoutRef.current !== null) {
+      window.clearTimeout(customItemDragStartTimeoutRef.current);
+      customItemDragStartTimeoutRef.current = null;
+    }
+
+    pendingCustomItemDragRef.current = null;
+  };
+
+  const beginCustomItemDrag = () => {
+    const pendingDrag = pendingCustomItemDragRef.current;
+
+    if (!pendingDrag || sortingCategory !== pendingDrag.category) {
       return;
     }
 
-    if (customItemDragOverIdRef.current === overItemId) {
+    const rect = pendingDrag.element.getBoundingClientRect();
+    setDraggingCustomItemId(pendingDrag.itemId);
+    setCustomItemDragState({
+      itemId: pendingDrag.itemId,
+      pointerId: pendingDrag.pointerId,
+      offsetY: pendingDrag.clientY - rect.top,
+      currentY: pendingDrag.clientY,
+      left: rect.left,
+      width: rect.width,
+    });
+    customItemDragStartTimeoutRef.current = null;
+  };
+
+  const scheduleCustomItemDrag = (
+    event: PointerEvent<HTMLElement>,
+    item: CustomizableItem,
+    isSorting: boolean,
+  ) => {
+    if (!isSorting || sortingCategory !== item.category) {
       return;
     }
 
-    customItemDragOverIdRef.current = overItemId;
-    reorderCustomItemsInCategory(category, activeItemId, overItemId);
+    clearPendingCustomItemDrag();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pendingCustomItemDragRef.current = {
+      itemId: item.id,
+      category: item.category,
+      pointerId: event.pointerId,
+      clientY: event.clientY,
+      element: event.currentTarget,
+    };
+    customItemDragStartTimeoutRef.current = window.setTimeout(
+      beginCustomItemDrag,
+      event.pointerType === "mouse" ? 120 : 220,
+    );
+  };
+
+  const updateCustomItemDrag = (
+    event: PointerEvent<HTMLElement>,
+    item: CustomizableItem,
+  ) => {
+    const pendingDrag = pendingCustomItemDragRef.current;
+
+    if (pendingDrag?.itemId === item.id) {
+      const distance = Math.abs(event.clientY - pendingDrag.clientY);
+
+      if (distance > 8 && customItemDragStartTimeoutRef.current !== null) {
+        beginCustomItemDrag();
+      }
+    }
+
+    if (
+      !customItemDragState ||
+      customItemDragState.itemId !== item.id ||
+      customItemDragState.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    setCustomItemDragState((current) =>
+      current && current.itemId === item.id
+        ? { ...current, currentY: event.clientY }
+        : current,
+    );
+    moveCustomItemByPointer(item.category, item.id, event.clientY);
+  };
+
+  const finishCustomItemDrag = (event?: PointerEvent<HTMLElement>) => {
+    if (event?.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    clearPendingCustomItemDrag();
+    setDraggingCustomItemId(null);
+    setCustomItemDragState(null);
   };
 
   const startCustomItemSorting = (category: CustomItemCategory) => {
     setAddingCategory(null);
+    cancelCustomItemEditing();
     setSortingCategory(category);
+    setSortingDraftItems(customItems);
     setDraggingCustomItemId(null);
+    setCustomItemDragState(null);
   };
 
   const finishCustomItemSorting = () => {
+    finishCustomItemDrag();
+
+    if (sortingDraftItems) {
+      updateCustomItems(sortingDraftItems);
+    }
+
     setSortingCategory(null);
+    setSortingDraftItems(null);
     setDraggingCustomItemId(null);
+    setCustomItemDragState(null);
   };
 
   const startCustomItemAdding = (category: CustomItemCategory) => {
     setSortingCategory(null);
+    cancelCustomItemEditing();
     setAddingCategory(category);
-    setExpandedWeekdayItemId(category === "スポット追加" ? "__new__" : null);
+    setExpandedWeekdayItemId(null);
     setNewCustomItemDraft({
       name: "",
       count: "1",
@@ -1535,7 +1612,23 @@ export default function Home() {
   };
 
   const finishCustomItemAdding = (category: CustomItemCategory) => {
-    addCustomItem(category, newCustomItemDraft);
+    const added = addCustomItem(category, newCustomItemDraft);
+
+    if (!added) {
+      return;
+    }
+
+    setAddingCategory(null);
+    setNewCustomItemDraft({
+      name: "",
+      count: "1",
+      unit: "",
+      weekdays: [],
+    });
+    setExpandedWeekdayItemId(null);
+  };
+
+  const cancelCustomItemAdding = () => {
     setAddingCategory(null);
     setNewCustomItemDraft({
       name: "",
@@ -1562,8 +1655,11 @@ export default function Home() {
     setActiveEditingSectionId(null);
     setSelectedItemSettingsCategory(null);
     setSortingCategory(null);
+    setSortingDraftItems(null);
     setAddingCategory(null);
     setExpandedWeekdayItemId(null);
+    finishCustomItemDrag();
+    cancelCustomItemEditing();
   };
 
   const toggleChildSettings = () => {
@@ -1576,286 +1672,92 @@ export default function Home() {
     setIsItemSettingsOpen(false);
     setSelectedItemSettingsCategory(null);
     setSortingCategory(null);
+    setSortingDraftItems(null);
     setAddingCategory(null);
     setExpandedWeekdayItemId(null);
+    finishCustomItemDrag();
+    cancelCustomItemEditing();
     childNameEditor.discardChanges();
     setActiveEditingSectionId(null);
-  };
-
-  const renderCustomItemCard = (
-    customItem: CustomizableItem,
-    isSorting: boolean,
-  ) => {
-    const isRoughItem = customItem.category === "ざっくり管理";
-    const isSpotItem = customItem.category === "スポット追加";
-    const isDragging = draggingCustomItemId === customItem.id;
-
-    return (
-      <div
-        key={customItem.id}
-        data-custom-item-id={customItem.id}
-        data-custom-item-category={customItem.category}
-        draggable={isSorting}
-        onDragStart={() => {
-          if (isSorting) {
-            customItemDragOverIdRef.current = null;
-            setDraggingCustomItemId(customItem.id);
-          }
-        }}
-        onDragOver={(event) => {
-          if (isSorting) {
-            event.preventDefault();
-          }
-        }}
-        onDragEnter={() => {
-          if (!isSorting || draggingCustomItemId === null) {
-            return;
-          }
-
-          if (customItemDragOverIdRef.current === customItem.id) {
-            return;
-          }
-
-          customItemDragOverIdRef.current = customItem.id;
-          reorderCustomItemsInCategory(
-            customItem.category,
-            draggingCustomItemId,
-            customItem.id,
-          );
-        }}
-        onDragEnd={() => {
-          customItemDragOverIdRef.current = null;
-          setDraggingCustomItemId(null);
-        }}
-        onPointerEnter={() => {
-          if (!isSorting || draggingCustomItemId === null) {
-            return;
-          }
-
-          if (draggingCustomItemId === customItem.id) {
-            return;
-          }
-
-          if (customItemDragOverIdRef.current === customItem.id) {
-            return;
-          }
-
-          customItemDragOverIdRef.current = customItem.id;
-          reorderCustomItemsInCategory(
-            customItem.category,
-            draggingCustomItemId,
-            customItem.id,
-          );
-        }}
-        onPointerUp={() => {
-          customItemDragOverIdRef.current = null;
-          setDraggingCustomItemId(null);
-        }}
-        onPointerCancel={() => {
-          customItemDragOverIdRef.current = null;
-          setDraggingCustomItemId(null);
-        }}
-        className={`rounded-2xl bg-[#f8fbf9] p-2.5 ring-1 ring-[#edf3ef] transition-[transform,box-shadow,background-color] duration-200 ease-out will-change-transform ${
-          isSorting ? "cursor-grab active:cursor-grabbing" : ""
-        } ${
-          isDragging
-            ? "relative z-20 scale-[1.02] cursor-grabbing bg-surface shadow-[0_14px_32px_rgba(38,53,45,0.16)] ring-[#e5eee9]"
-            : "shadow-none"
-        }`}
-      >
-        <div
-          className={`grid items-center gap-2 ${
-            isRoughItem
-              ? isSorting
-                ? "grid-cols-[1.75rem_minmax(0,1fr)_3.5rem_5.5rem]"
-                : "grid-cols-[minmax(0,1fr)_3.5rem_5.5rem_2.75rem]"
-              : isSpotItem
-                ? isSorting
-                  ? "grid-cols-[1.75rem_minmax(0,1fr)_3.5rem]"
-                  : "grid-cols-[minmax(0,1fr)_3.5rem_4rem_2.75rem]"
-              : isSorting
-                ? "grid-cols-[1.75rem_minmax(0,1fr)_3.5rem]"
-                : "grid-cols-[minmax(0,1fr)_3.5rem_2.75rem]"
-          }`}
-        >
-          {isSorting ? (
-            <IconButton
-              type="button"
-              label={`${customItem.name}を並び替え`}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                customItemDragOverIdRef.current = null;
-                setDraggingCustomItemId(customItem.id);
-                event.currentTarget.setPointerCapture(event.pointerId);
-              }}
-              onPointerMove={(event) => {
-                if (draggingCustomItemId !== customItem.id) {
-                  return;
-                }
-
-                moveCustomItemByPointer(
-                  customItem.category,
-                  customItem.id,
-                  event.clientX,
-                  event.clientY,
-                );
-              }}
-              onPointerUp={(event) => {
-                event.currentTarget.releasePointerCapture(event.pointerId);
-                customItemDragOverIdRef.current = null;
-                setDraggingCustomItemId(null);
-              }}
-              onPointerCancel={() => {
-                customItemDragOverIdRef.current = null;
-                setDraggingCustomItemId(null);
-              }}
-              className="touch-none cursor-grab active:cursor-grabbing"
-            >
-              <GripVertical size={20} strokeWidth={2} />
-            </IconButton>
-          ) : null}
-          <input
-            ref={(element) => {
-              customItemNameRefs.current[customItem.id] = element;
-            }}
-            type="text"
-            disabled={isSorting}
-            value={customItem.name}
-            placeholder="持ち物名"
-            onChange={(event) =>
-              updateCustomItem(customItem.id, {
-                name: event.target.value,
-              })
-            }
-            className="h-11 min-w-0 rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
-          />
-          {isSpotItem ? (
-            <SpotQuantityControl
-              value={customItem.count}
-              disabled={isSorting}
-              onChange={(nextCount) => {
-                updateCustomItem(customItem.id, { count: nextCount });
-                setCustomItemQuantityInputs((current) => ({
-                  ...current,
-                  [customItem.id]: String(nextCount),
-                }));
-              }}
-            />
-          ) : (
-            <input
-              type="text"
-              inputMode="numeric"
-              disabled={isSorting}
-              value={
-                customItemQuantityInputs[customItem.id] ??
-                String(customItem.count)
-              }
-              placeholder="数量"
-              onChange={(event) =>
-                updateCustomItemQuantityInput(customItem.id, event.target.value)
-              }
-              onBlur={() => saveCustomItemQuantityInput(customItem.id)}
-              className={quantityInputClassName}
-            />
-          )}
-          {isRoughItem ? (
-            <input
-              type="text"
-              disabled={isSorting}
-              value={customItem.unit}
-              placeholder="単位"
-              onChange={(event) =>
-                updateCustomItem(customItem.id, {
-                  unit: event.target.value,
-                })
-              }
-              className="h-11 w-full rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green disabled:bg-transparent disabled:ring-transparent"
-            />
-          ) : null}
-          {isSpotItem && !isSorting ? (
-            <button
-              type="button"
-              aria-label={`${customItem.name}の曜日を設定`}
-              onClick={() =>
-                setExpandedWeekdayItemId((current) =>
-                  current === customItem.id ? null : customItem.id,
-                )
-              }
-              className={`h-11 w-16 rounded-xl px-2 text-caption font-normal ring-1 transition active:scale-95 ${
-                expandedWeekdayItemId === customItem.id ||
-                (customItem.weekdays?.length ?? 0) > 0
-                  ? "bg-card-today text-danger ring-danger/30"
-                  : "bg-surface text-text-tertiary ring-border-soft"
-              }`}
-            >
-              曜日
-            </button>
-          ) : null}
-          {!isSorting ? (
-            <IconButton
-              type="button"
-              label="削除"
-              tone="danger"
-              onClick={() => deleteCustomItem(customItem.id)}
-            >
-              <Trash2 size={20} strokeWidth={2.2} />
-            </IconButton>
-          ) : null}
-        </div>
-        {isSpotItem && expandedWeekdayItemId === customItem.id
-          ? renderWeekdayPicker({
-              selectedWeekdays: customItem.weekdays ?? [],
-              onToggle: (weekday) => toggleCustomItemWeekday(customItem, weekday),
-            })
-          : null}
-      </div>
-    );
   };
 
   const closeCustomItemEdit = () => {
     setSelectedItemSettingsCategory(null);
     setSortingCategory(null);
+    setSortingDraftItems(null);
     setAddingCategory(null);
     setExpandedWeekdayItemId(null);
+    finishCustomItemDrag();
+    cancelCustomItemEditing();
   };
 
-  const renderItemSettingsHeader = ({
-    title,
-    actionLabel,
-    onBack,
-    onAction,
+  const customItemRowColumns = (
+    category: CustomItemCategory,
+    mode: "view" | "edit" | "add" | "sort",
+  ) => {
+    if (category === "スポット追加") {
+      if (mode === "edit" || mode === "add") {
+        return "grid-cols-[minmax(80px,1fr)_40px_64px_36px_36px]";
+      }
+
+      if (mode === "sort") {
+        return "grid-cols-[36px_minmax(80px,1fr)_40px_64px]";
+      }
+
+      return "grid-cols-[minmax(80px,1fr)_40px_64px_36px]";
+    }
+
+    if (category === "ざっくり管理") {
+      if (mode === "edit" || mode === "add") {
+        return "grid-cols-[minmax(80px,1fr)_40px_56px_36px_36px]";
+      }
+
+      if (mode === "sort") {
+        return "grid-cols-[36px_minmax(80px,1fr)_40px_56px]";
+      }
+
+      return "grid-cols-[minmax(80px,1fr)_40px_56px_36px]";
+    }
+
+    if (mode === "edit" || mode === "add") {
+      return "grid-cols-[minmax(80px,1fr)_44px_36px_36px]";
+    }
+
+    if (mode === "sort") {
+      return "grid-cols-[36px_minmax(80px,1fr)_44px]";
+    }
+
+    return "grid-cols-[minmax(80px,1fr)_44px_36px]";
+  };
+
+  const renderFlatActionButton = ({
+    label,
+    children,
+    onClick,
+    tone = "default",
   }: {
-    title: string;
-    actionLabel: string;
-    onBack: () => void;
-    onAction: () => void;
+    label: string;
+    children: ReactNode;
+    onClick: () => void;
+    tone?: "default" | "primary" | "danger";
   }) => (
-    <div className="flex min-h-[44px] items-center justify-between gap-3">
-      <button
-        type="button"
-        aria-label="戻る"
-        onClick={onBack}
-        className="grid h-10 w-10 shrink-0 place-items-center rounded-button bg-surface text-text-tertiary transition active:scale-95"
-      >
-        <ChevronRight size={20} strokeWidth={2.2} className="rotate-180" />
-      </button>
-      <h3 className="min-w-0 flex-1 truncate text-center text-list-item font-semibold text-hoiku-ink">
-        {title}
-      </h3>
-      {actionLabel === "編集" ? (
-        <IconButton label="編集" onClick={onAction}>
-          <Pencil size={20} strokeWidth={2.1} />
-        </IconButton>
-      ) : (
-        <button
-          type="button"
-          onClick={onAction}
-          className="h-10 w-14 shrink-0 text-right text-number font-normal text-danger"
-        >
-          {actionLabel}
-        </button>
-      )}
-    </div>
+    <button
+      type="button"
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className={`grid h-9 w-9 shrink-0 place-items-center rounded-button text-number font-normal transition active:scale-95 ${
+        tone === "primary"
+          ? "bg-primary text-surface shadow-button"
+          : tone === "danger"
+            ? "bg-surface text-danger ring-1 ring-danger/20"
+            : "bg-surface text-icon-today ring-1 ring-border-soft"
+      }`}
+    >
+      {children}
+    </button>
   );
 
   const renderWeekdayPicker = ({
@@ -1865,16 +1767,19 @@ export default function Home() {
     selectedWeekdays: number[];
     onToggle: (weekday: number) => void;
   }) => (
-    <div className="mt-2 rounded-2xl bg-surface px-3 py-2.5 ring-1 ring-[#edf3ef]">
-      <div className="grid grid-cols-7 gap-1.5">
-        {weekdayOptions.map((weekday) => {
+    <div className="absolute right-0 top-10 z-30 w-56 rounded-section bg-surface p-2 shadow-floating ring-1 ring-danger/20">
+      <div className="grid grid-cols-7 gap-1">
+        {itemSettingsWeekdayOptions.map((weekday) => {
           const isSelected = selectedWeekdays.includes(weekday.value);
 
           return (
             <button
               key={weekday.value}
               type="button"
-              onClick={() => onToggle(weekday.value)}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggle(weekday.value);
+              }}
               className={`grid h-8 place-items-center rounded-full text-caption font-normal ring-1 transition active:scale-95 ${
                 isSelected
                   ? "bg-card-today text-danger ring-danger/30"
@@ -1889,31 +1794,366 @@ export default function Home() {
     </div>
   );
 
-  const renderCustomItemCategory = (category: CustomItemCategory) => {
-    const isSorting = sortingCategory === category;
-    const isAdding = addingCategory === category;
-    const isRoughCategory = category === "ざっくり管理";
-    const isSpotCategory = category === "スポット追加";
+  const renderWeekdayField = ({
+    id,
+    weekdays,
+    placeholder,
+    onToggle,
+  }: {
+    id: string;
+    weekdays: number[];
+    placeholder: string;
+    onToggle: (weekday: number) => void;
+  }) => {
+    const label = formatItemSettingsWeekdays(weekdays);
+    const isOpen = expandedWeekdayItemId === id;
 
     return (
-      <section key={category} className="space-y-3">
-        {renderItemSettingsHeader({
-          title: `${category}を編集`,
-          actionLabel: "完了",
-          onBack: closeCustomItemEdit,
-          onAction: closeCustomItemEdit,
-        })}
+      <div className="relative">
+        <button
+          type="button"
+          aria-label="曜日を設定"
+          onClick={(event) => {
+            event.stopPropagation();
+            setExpandedWeekdayItemId((current) => (current === id ? null : id));
+          }}
+          className={`h-9 w-16 rounded-button px-1 text-caption font-normal transition active:scale-95 ${
+            isOpen || label
+              ? "bg-card-today text-danger ring-1 ring-danger/30"
+              : "bg-surface text-text-tertiary ring-1 ring-border-soft"
+          }`}
+        >
+          <span className="block whitespace-nowrap text-center">
+            {label || placeholder}
+          </span>
+        </button>
+        {isOpen ? renderWeekdayPicker({ selectedWeekdays: weekdays, onToggle }) : null}
+      </div>
+    );
+  };
 
-        <div className="flex min-h-11 items-center justify-end gap-2 text-number font-normal">
-          {isSorting || isAdding ? (
+  const renderFlatTextInput = ({
+    value,
+    placeholder,
+    onChange,
+    inputMode,
+    className = "",
+  }: {
+    value: string;
+    placeholder: string;
+    onChange: (value: string) => void;
+    inputMode?: "numeric";
+    className?: string;
+  }) => (
+    <input
+      type="text"
+      inputMode={inputMode}
+      value={value}
+      placeholder={placeholder}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => onChange(event.target.value)}
+      className={`h-9 min-w-0 rounded-button bg-surface px-2 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green ${className}`}
+    />
+  );
+
+  const renderCustomItemAddRow = (category: CustomItemCategory) => {
+    const isSpotCategory = category === "スポット追加";
+    const isRoughCategory = category === "ざっくり管理";
+
+    return (
+      <div
+        className={`grid h-14 items-center gap-[6px] border-b border-[#edf3ef] bg-card-today/50 px-0 ${customItemRowColumns(
+          category,
+          "add",
+        )}`}
+      >
+        {renderFlatTextInput({
+          value: newCustomItemDraft.name,
+          placeholder: "持ち物名",
+          onChange: (name) =>
+            setNewCustomItemDraft((current) => ({ ...current, name })),
+          className: "min-w-[80px]",
+        })}
+        {renderFlatTextInput({
+          value: newCustomItemDraft.count,
+          placeholder: "数量",
+          inputMode: "numeric",
+          onChange: (count) => {
+            if (!/^\d*$/.test(count)) {
+              return;
+            }
+
+            setNewCustomItemDraft((current) => ({ ...current, count }));
+          },
+          className: "px-1 text-center",
+        })}
+        {isSpotCategory
+          ? renderWeekdayField({
+              id: "__new__",
+              weekdays: newCustomItemDraft.weekdays,
+              placeholder: "曜日",
+              onToggle: toggleNewCustomItemWeekday,
+            })
+          : null}
+        {isRoughCategory
+          ? renderFlatTextInput({
+              value: newCustomItemDraft.unit,
+              placeholder: "単位",
+              onChange: (unit) =>
+                setNewCustomItemDraft((current) => ({ ...current, unit })),
+              className: "px-1 text-center",
+            })
+          : null}
+        {renderFlatActionButton({
+          label: "追加",
+          onClick: () => finishCustomItemAdding(category),
+          tone: "primary",
+          children: "＋",
+        })}
+        {renderFlatActionButton({
+          label: "キャンセル",
+          onClick: cancelCustomItemAdding,
+          children: <X size={17} strokeWidth={2.4} />,
+        })}
+      </div>
+    );
+  };
+
+  const renderCustomItemEditRow = (customItem: CustomizableItem) => {
+    const isSpotItem = customItem.category === "スポット追加";
+    const isRoughItem = customItem.category === "ざっくり管理";
+
+    return (
+      <div
+        key={customItem.id}
+        data-custom-item-id={customItem.id}
+        data-custom-item-category={customItem.category}
+        className={`grid h-14 items-center gap-[6px] border-b border-[#edf3ef] bg-card-today/60 px-0 ${customItemRowColumns(
+          customItem.category,
+          "edit",
+        )}`}
+      >
+        {renderFlatTextInput({
+          value: customItemEditDraft.name,
+          placeholder: "持ち物名",
+          onChange: (name) =>
+            setCustomItemEditDraft((current) => ({ ...current, name })),
+          className: "min-w-[80px]",
+        })}
+        {renderFlatTextInput({
+          value: customItemEditDraft.count,
+          placeholder: "数量",
+          inputMode: "numeric",
+          onChange: (count) => {
+            if (!/^\d*$/.test(count)) {
+              return;
+            }
+
+            setCustomItemEditDraft((current) => ({ ...current, count }));
+          },
+          className: "px-1 text-center",
+        })}
+        {isSpotItem
+          ? renderWeekdayField({
+              id: customItem.id,
+              weekdays: customItemEditDraft.weekdays,
+              placeholder: "曜日",
+              onToggle: (weekday) =>
+                setCustomItemEditDraft((current) =>
+                  toggleDraftWeekday(current, weekday),
+                ),
+            })
+          : null}
+        {isRoughItem
+          ? renderFlatTextInput({
+              value: customItemEditDraft.unit,
+              placeholder: "単位",
+              onChange: (unit) =>
+                setCustomItemEditDraft((current) => ({ ...current, unit })),
+              className: "px-1 text-center",
+            })
+          : null}
+        {renderFlatActionButton({
+          label: "保存",
+          onClick: () => saveCustomItemEditing(customItem),
+          tone: "primary",
+          children: "✓",
+        })}
+        {renderFlatActionButton({
+          label: "キャンセル",
+          onClick: cancelCustomItemEditing,
+          children: <X size={17} strokeWidth={2.4} />,
+        })}
+      </div>
+    );
+  };
+
+  const renderCustomItemRow = (
+    customItem: CustomizableItem,
+    isSorting: boolean,
+  ) => {
+    const isSpotItem = customItem.category === "スポット追加";
+    const isRoughItem = customItem.category === "ざっくり管理";
+    const isEditing = editingCustomItemId === customItem.id;
+    const isDragging = draggingCustomItemId === customItem.id;
+
+    if (isEditing && !isSorting) {
+      return renderCustomItemEditRow(customItem);
+    }
+
+    return (
+      <div
+        key={customItem.id}
+        data-custom-item-id={customItem.id}
+        data-custom-item-category={customItem.category}
+        role={isSorting ? undefined : "button"}
+        tabIndex={isSorting ? undefined : 0}
+        onClick={() => {
+          if (!isSorting) {
+            startCustomItemEditing(customItem);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (!isSorting && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            startCustomItemEditing(customItem);
+          }
+        }}
+        onPointerDown={(event) =>
+          scheduleCustomItemDrag(event, customItem, isSorting)
+        }
+        onPointerMove={(event) => updateCustomItemDrag(event, customItem)}
+        onPointerUp={finishCustomItemDrag}
+        onPointerCancel={finishCustomItemDrag}
+        className={`grid h-14 items-center gap-[6px] border-b border-[#edf3ef] px-0 text-number font-normal transition-[transform,background-color,box-shadow] duration-200 ease-out will-change-transform ${customItemRowColumns(
+          customItem.category,
+          isSorting ? "sort" : "view",
+        )} ${
+          isSorting ? "touch-none cursor-grab active:cursor-grabbing" : "cursor-pointer"
+        } ${
+          isDragging
+            ? "bg-card-today/60 text-transparent ring-1 ring-danger/20 [&_*]:opacity-0"
+            : "bg-transparent"
+        }`}
+      >
+        {isSorting ? (
+          <span
+            aria-hidden="true"
+            className="grid h-9 w-9 touch-none place-items-center rounded-button bg-surface text-icon-today ring-1 ring-border-soft"
+          >
+            <GripVertical size={18} strokeWidth={2} />
+          </span>
+        ) : null}
+        <span className="min-w-[80px] truncate text-hoiku-ink">
+          {customItem.name}
+        </span>
+        <span className="whitespace-nowrap text-center text-text-secondary">
+          {customItem.count}
+        </span>
+        {isSpotItem ? (
+          <span className="whitespace-nowrap text-center text-caption font-normal text-text-secondary">
+            {formatItemSettingsWeekdays(customItem.weekdays ?? [])}
+          </span>
+        ) : null}
+        {isRoughItem ? (
+          <span className="whitespace-nowrap text-center text-text-secondary">
+            {customItem.unit}
+          </span>
+        ) : null}
+        {!isSorting
+          ? renderFlatActionButton({
+              label: "削除",
+              tone: "danger",
+              onClick: () => deleteCustomItem(customItem.id),
+              children: <Trash2 size={18} strokeWidth={2.2} />,
+            })
+          : null}
+      </div>
+    );
+  };
+
+  const renderItemSettingsHeader = (title: string) => (
+    <div className="flex min-h-[44px] items-center gap-3">
+      <button
+        type="button"
+        aria-label="戻る"
+        onClick={closeCustomItemEdit}
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-button bg-surface text-text-tertiary transition active:scale-95"
+      >
+        <ChevronRight size={20} strokeWidth={2.2} className="rotate-180" />
+      </button>
+      <h3 className="min-w-0 flex-1 truncate text-center text-list-item font-semibold text-hoiku-ink">
+        {title}
+      </h3>
+      <span className="h-10 w-10 shrink-0" aria-hidden="true" />
+    </div>
+  );
+
+  const renderCustomItemDragOverlay = (items: CustomizableItem[]) => {
+    if (!customItemDragState) {
+      return null;
+    }
+
+    const draggedItem = items.find((item) => item.id === customItemDragState.itemId);
+
+    if (!draggedItem) {
+      return null;
+    }
+
+    const isSpotItem = draggedItem.category === "スポット追加";
+    const isRoughItem = draggedItem.category === "ざっくり管理";
+
+    return (
+      <div
+        className={`pointer-events-none fixed z-50 grid h-14 scale-[1.02] items-center gap-[6px] rounded-section bg-surface px-0 text-number font-normal shadow-[0_14px_28px_rgba(38,53,45,0.18)] ring-1 ring-danger/20 ${customItemRowColumns(
+          draggedItem.category,
+          "sort",
+        )}`}
+        style={{
+          left: customItemDragState.left,
+          top: customItemDragState.currentY - customItemDragState.offsetY,
+          width: customItemDragState.width,
+        }}
+      >
+        <span className="grid h-9 w-9 place-items-center rounded-button bg-card-today text-danger ring-1 ring-danger/20">
+          <GripVertical size={18} strokeWidth={2} />
+        </span>
+        <span className="min-w-[80px] truncate text-hoiku-ink">
+          {draggedItem.name}
+        </span>
+        <span className="whitespace-nowrap text-center text-text-secondary">
+          {draggedItem.count}
+        </span>
+        {isSpotItem ? (
+          <span className="whitespace-nowrap text-center text-caption font-normal text-text-secondary">
+            {formatItemSettingsWeekdays(draggedItem.weekdays ?? [])}
+          </span>
+        ) : null}
+        {isRoughItem ? (
+          <span className="whitespace-nowrap text-center text-text-secondary">
+            {draggedItem.unit}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderCustomItemCategory = (category: CustomItemCategory) => {
+    const isSorting = sortingCategory === category;
+    const isAdding = !isSorting && addingCategory === category;
+    const itemSource = isSorting && sortingDraftItems ? sortingDraftItems : customItems;
+    const categoryItems = itemSource.filter((item) => item.category === category);
+
+    return (
+      <section key={category} className="space-y-3 px-0">
+        {renderItemSettingsHeader(`${category}を編集`)}
+
+        <div className="flex h-11 items-center justify-end gap-2 text-number font-normal">
+          {isSorting ? (
             <button
               type="button"
-              onClick={() =>
-                isAdding
-                  ? finishCustomItemAdding(category)
-                  : finishCustomItemSorting()
-              }
-              className="h-11 px-2 text-[#7a867e]"
+              onClick={finishCustomItemSorting}
+              className="h-10 rounded-button bg-primary px-4 text-number font-normal text-surface shadow-button transition active:scale-95"
             >
               完了
             </button>
@@ -1928,114 +2168,27 @@ export default function Home() {
               <button
                 type="button"
                 aria-label="追加"
-                onClick={() => startCustomItemAdding(category)}
-                className="grid h-11 min-w-11 place-items-center rounded-button bg-surface px-4 text-number font-normal text-hoiku-deep ring-1 ring-border-soft transition active:scale-95"
+                onClick={() =>
+                  isAdding ? cancelCustomItemAdding() : startCustomItemAdding(category)
+                }
+                className={`grid h-11 min-w-11 place-items-center rounded-button px-4 text-number font-normal transition active:scale-95 ${
+                  isAdding
+                    ? "bg-card-today text-danger ring-1 ring-danger/20"
+                    : "bg-surface text-hoiku-deep ring-1 ring-border-soft"
+                }`}
               >
                 ＋
               </button>
             </>
           )}
         </div>
-        <div className="space-y-2">
-          {isAdding ? (
-            <div className="rounded-2xl bg-[#f8fbf9] p-2.5 ring-1 ring-[#edf3ef]">
-              <div
-                className={`grid items-center gap-2 ${
-                  isRoughCategory
-                    ? "grid-cols-[minmax(0,1fr)_3.5rem_5.5rem]"
-                    : isSpotCategory
-                      ? "grid-cols-[minmax(0,1fr)_3.5rem_4rem]"
-                    : "grid-cols-[minmax(0,1fr)_3.5rem]"
-                }`}
-              >
-                <input
-                  ref={newCustomItemNameRef}
-                  type="text"
-                  value={newCustomItemDraft.name}
-                  placeholder="持ち物名"
-                  onChange={(event) =>
-                    setNewCustomItemDraft((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                  className="h-11 min-w-0 rounded-xl bg-surface px-3 text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
-                />
-                {isSpotCategory ? (
-                  <SpotQuantityControl
-                    value={clampSpotQuantity(Number(newCustomItemDraft.count))}
-                    onChange={(nextCount) =>
-                      setNewCustomItemDraft((current) => ({
-                        ...current,
-                        count: String(nextCount),
-                      }))
-                    }
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={newCustomItemDraft.count}
-                    placeholder="数量"
-                    onChange={(event) => {
-                      if (!/^\d*$/.test(event.target.value)) {
-                        return;
-                      }
-
-                      setNewCustomItemDraft((current) => ({
-                        ...current,
-                        count: event.target.value,
-                      }));
-                    }}
-                    className={quantityInputClassName}
-                  />
-                )}
-                {isSpotCategory ? (
-                  <button
-                    type="button"
-                    aria-label="曜日を設定"
-                    onClick={() =>
-                      setExpandedWeekdayItemId((current) =>
-                        current === "__new__" ? null : "__new__",
-                      )
-                    }
-                    className={`h-11 w-16 rounded-xl px-2 text-caption font-normal ring-1 transition active:scale-95 ${
-                      expandedWeekdayItemId === "__new__" ||
-                      newCustomItemDraft.weekdays.length > 0
-                        ? "bg-card-today text-danger ring-danger/30"
-                        : "bg-surface text-text-tertiary ring-border-soft"
-                    }`}
-                  >
-                    曜日
-                  </button>
-                ) : null}
-                {isRoughCategory ? (
-                  <input
-                    type="text"
-                    value={newCustomItemDraft.unit}
-                    placeholder="単位"
-                    onChange={(event) =>
-                      setNewCustomItemDraft((current) => ({
-                        ...current,
-                        unit: event.target.value,
-                      }))
-                    }
-                    className="h-11 w-full rounded-xl bg-surface px-2 text-center text-number font-normal text-hoiku-ink outline-none ring-1 ring-[#edf3ef] focus:ring-hoiku-green"
-                  />
-                ) : null}
-              </div>
-              {isSpotCategory && expandedWeekdayItemId === "__new__"
-                ? renderWeekdayPicker({
-                    selectedWeekdays: newCustomItemDraft.weekdays,
-                    onToggle: toggleNewCustomItemWeekday,
-                  })
-                : null}
-            </div>
-          ) : null}
-          {customItems
-            .filter((customItem) => customItem.category === category)
-            .map((customItem) => renderCustomItemCard(customItem, isSorting))}
+        <div className="mx-0 divide-y-0 overflow-visible">
+          {isAdding ? renderCustomItemAddRow(category) : null}
+          {categoryItems.map((customItem) =>
+            renderCustomItemRow(customItem, isSorting),
+          )}
         </div>
+        {renderCustomItemDragOverlay(categoryItems)}
       </section>
     );
   };
