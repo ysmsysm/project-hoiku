@@ -9,7 +9,7 @@ type FamilyMemberRow = {
   display_name: string;
 };
 
-export function getOwnerDisplayName(user: User) {
+export function getUserDisplayName(user: User) {
   const metadataName =
     typeof user.user_metadata?.full_name === "string"
       ? user.user_metadata.full_name
@@ -20,6 +20,10 @@ export function getOwnerDisplayName(user: User) {
   const normalizedName = (metadataName ?? fallbackName).trim() || "自分";
 
   return Array.from(normalizedName).slice(0, 3).join("");
+}
+
+export function getOwnerDisplayName(user: User) {
+  return getUserDisplayName(user);
 }
 
 export async function getCurrentFamilyMembership(

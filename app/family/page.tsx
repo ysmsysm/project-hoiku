@@ -2,7 +2,9 @@ import { redirect } from "next/navigation";
 import { SectionCard } from "../../src/components/ui/SectionCard";
 import { getCurrentUser } from "../../src/lib/auth/session";
 import { getCurrentFamilyMembership } from "../../src/lib/family-sharing/membership";
+import { getCurrentFamilyInviteStatus } from "../../src/lib/family-sharing/invites";
 import { CreateFamilyButton } from "./CreateFamilyButton";
+import { InviteControls } from "./InviteControls";
 import { LogoutButton } from "./LogoutButton";
 
 export default async function FamilyPage() {
@@ -13,6 +15,10 @@ export default async function FamilyPage() {
   }
 
   const membership = await getCurrentFamilyMembership(user);
+  const inviteStatus =
+    membership?.role === "owner"
+      ? await getCurrentFamilyInviteStatus()
+      : null;
 
   const displayName =
     typeof user.user_metadata?.full_name === "string"
@@ -50,6 +56,7 @@ export default async function FamilyPage() {
             </div>
 
             {membership ? (
+              <>
               <div className="rounded-section bg-card-stock px-4 py-3 ring-1 ring-border-soft">
                 <p className="text-status font-semibold text-hoiku-deep">
                   家族共有中
@@ -65,6 +72,25 @@ export default async function FamilyPage() {
                   </div>
                 </dl>
               </div>
+              {membership.role === "owner" ? (
+                <InviteControls
+                  initialStatus={
+                    inviteStatus?.ok
+                      ? {
+                          hasActiveInvite: inviteStatus.hasActiveInvite,
+                          expiresAt: inviteStatus.expiresAt,
+                          errorMessage: null,
+                        }
+                      : {
+                          hasActiveInvite: false,
+                          expiresAt: null,
+                          errorMessage:
+                            "招待の状態を確認できませんでした。少し時間をおいてもう一度お試しください。",
+                        }
+                  }
+                />
+              ) : null}
+              </>
             ) : (
               <div className="space-y-3 rounded-section bg-card-stock px-4 py-3 ring-1 ring-border-soft">
                 <div>

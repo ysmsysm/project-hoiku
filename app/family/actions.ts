@@ -3,6 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "../../src/lib/supabase/server";
 import { getOwnerDisplayName } from "../../src/lib/family-sharing/membership";
+import {
+  generateInviteToken,
+  getInviteActionError,
+  getInviteActionMessage,
+  getInvitePath,
+  hashInviteToken,
+} from "../../src/lib/family-sharing/invites";
+import type {
+  CreateFamilyInviteActionResult,
+  RevokeFamilyInviteActionResult,
+} from "../../src/types/family";
 
 export type CreateFamilyActionResult =
   | { ok: true }
@@ -45,4 +56,96 @@ export async function createFamilyAction(): Promise<CreateFamilyActionResult> {
 
   revalidatePath("/family");
   return { ok: true };
+}
+
+type CreateFamilyInviteRpcRow = {
+  expires_at?: string;
+};
+
+export async function createFamilyInviteAction(): Promise<CreateFamilyInviteActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return {
+      ok: false,
+      error: "not_authenticated",
+      message: getInviteActionMessage("not_authenticated"),
+    };
+  }
+
+  const token = generateInviteToken();
+  const invitePath = getInvitePath(token);
+  const { data, error } = await supabase.rpc("create_family_invite", {
+    token_hash: hashInviteToken(token),
+  });
+
+  if (error) {
+    const actionError = getInviteActionError(error.message);
+
+    return {
+      ok: false,
+      error: actionError,
+      message: getInviteActionMessage(actionError),
+    };
+  }
+
+  const row = Array.isArray(data)
+    ? (data[0] as CreateFamilyInviteRpcRow | undefined)
+    : (data as CreateFamilyInviteRpcRow | null);
+  const expiresAt = row?.expires_at;
+
+  if (!expiresAt) {
+    return {
+      ok: false,
+      error: "unknown",
+      message: getInviteActionMessage("unknown"),
+    };
+  }
+
+  revalidatePath("/family");
+
+  return {
+    ok: true,
+    invitePath,
+    expiresAt,
+  };
+}
+
+export async function revokeFamilyInviteAction(): Promise<RevokeFamilyInviteActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return {
+      ok: false,
+      error: "not_authenticated",
+      message: getInviteActionMessage("not_authenticated"),
+    };
+  }
+
+  const { data, error } = await supabase.rpc("revoke_family_invite");
+
+  if (error) {
+    const actionError = getInviteActionError(error.message);
+
+    return {
+      ok: false,
+      error: actionError,
+      message: getInviteActionMessage(actionError),
+    };
+  }
+
+  revalidatePath("/family");
+
+  return {
+    ok: true,
+    revoked: Boolean(data),
+  };
 }
