@@ -1,13 +1,11 @@
 import type { User } from "@supabase/supabase-js";
 import type { CurrentFamilyMembership } from "../../types/family";
 import { createClient } from "../supabase/server";
-
-type FamilyMemberRow = {
-  id: string;
-  family_id: string;
-  role: CurrentFamilyMembership["role"];
-  display_name: string;
-};
+import {
+  currentFamilyMembershipSelect,
+  mapCurrentFamilyMembershipRow,
+  type CurrentFamilyMembershipRow,
+} from "./membership-query";
 
 export function getUserDisplayName(user: User) {
   const metadataName =
@@ -32,11 +30,17 @@ export async function getCurrentFamilyMembership(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("family_members")
-    .select("id, family_id, role, display_name")
+    .select(currentFamilyMembershipSelect)
     .eq("user_id", user.id)
     .maybeSingle();
 
   if (error) {
+    console.error("Failed to fetch current family membership", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
     throw new Error("家族所属状態を取得できませんでした。");
   }
 
@@ -44,12 +48,5 @@ export async function getCurrentFamilyMembership(
     return null;
   }
 
-  const row = data as FamilyMemberRow;
-
-  return {
-    familyId: row.family_id,
-    memberId: row.id,
-    role: row.role,
-    displayName: row.display_name,
-  };
+  return mapCurrentFamilyMembershipRow(data as CurrentFamilyMembershipRow);
 }

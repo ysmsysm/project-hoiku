@@ -5,6 +5,9 @@ export type FamilyMembership = {
   familyId: string;
   role: FamilyMemberRole;
   displayName: string;
+  sharingStartedAt: string | null;
+  isSharingStarted: boolean;
+  isPreSharingOwner: boolean;
 };
 
 export type CurrentFamilyMembership = FamilyMembership;

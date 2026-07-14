@@ -4,6 +4,7 @@ import { getCurrentUser } from "../../src/lib/auth/session";
 import { getCurrentFamilyMembership } from "../../src/lib/family-sharing/membership";
 import { getCurrentFamilyInviteStatus } from "../../src/lib/family-sharing/invites";
 import { CreateFamilyButton } from "./CreateFamilyButton";
+import { FamilyDataSharingStart } from "./FamilyDataSharingStart";
 import { InviteControls } from "./InviteControls";
 import { LogoutButton } from "./LogoutButton";
 
@@ -72,6 +73,7 @@ export default async function FamilyPage() {
                   </div>
                 </dl>
               </div>
+              <FamilyDataSharingStart initialMembership={membership} />
               {membership.role === "owner" ? (
                 <InviteControls
                   initialStatus={
