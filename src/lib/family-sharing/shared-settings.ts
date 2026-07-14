@@ -39,6 +39,7 @@ export type SharedSettingsRows = {
 };
 
 export type SharedSettingsAppData = {
+  childId: string;
   childProfile: ChildProfile;
   customItems: CustomizableItem[];
   roughStates: Record<string, RoughState>;
@@ -181,6 +182,7 @@ export function mapSharedSettingsRowsToAppData(
   return {
     ok: true,
     data: {
+      childId: child.id,
       childProfile: mapChildToProfile(child),
       customItems,
       roughStates,

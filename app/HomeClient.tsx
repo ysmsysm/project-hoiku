@@ -49,6 +49,7 @@ import {
   isPreparationSessionCompleted,
 } from "../src/lib/preparation-status";
 import {
+  canEditHomeChildProfile,
   canEditHomeDurableSettings,
   getHomeLocalStorageLoadPlan,
   getSharedInitialDurableSettings,
@@ -57,7 +58,10 @@ import {
   sharedSettingsReadonlyMessage,
   type HomeDataSource,
 } from "../src/lib/home-data-source";
+import { saveHomeChildProfile } from "../src/lib/home-child-profile-save";
+import { saveSharedChildProfile } from "../src/lib/family-sharing/save-child-profile";
 import { clampSpotQuantity, formatSpotItemName } from "../src/lib/spotQuantity";
+import { createClient as createSupabaseClient } from "../src/lib/supabase/client";
 import { useEditableSection } from "../src/hooks/useEditableSection";
 import type { ChildProfile } from "../src/types/child";
 import type { SpotAddition } from "../src/types/spot";
@@ -451,7 +455,8 @@ function HomeClientContent({
     sharedInitialData?.childProfile ?? appRepository.defaultChildProfile;
   const initialRoughStates =
     sharedInitialData?.roughStates ?? createDefaultRoughStates(initialCustomItems);
-  const settingsEditable = canEditHomeDurableSettings(dataSource);
+  const childProfileEditable = canEditHomeChildProfile(dataSource);
+  const durableItemsEditable = canEditHomeDurableSettings(dataSource);
   const localStorageLoadPlan = getHomeLocalStorageLoadPlan(dataSource);
   const shouldLoadDurableSettings = localStorageLoadPlan.durableSettings;
   const shouldLoadDailyData = localStorageLoadPlan.dailyData;
@@ -474,8 +479,8 @@ function HomeClientContent({
   const childNameEditor = useEditableSection({
     initialValue: initialChildProfile.name,
     validate: validateChildName,
-    onSave: (name) => {
-      if (!settingsEditable) {
+    onSave: async (name) => {
+      if (!childProfileEditable) {
         return;
       }
 
@@ -485,8 +490,12 @@ function HomeClientContent({
         name: trimmedName,
       };
 
-      setChildProfile(nextProfile);
-      appRepository.saveChildProfile(nextProfile);
+      await saveHomeChildProfile(dataSource, nextProfile, {
+        applyChildProfile: setChildProfile,
+        saveLocalChildProfile: appRepository.saveChildProfile,
+        saveSharedChildProfile: (input) =>
+          saveSharedChildProfile(createSupabaseClient(), input),
+      });
     },
   });
   const setSavedChildName = childNameEditor.setSavedValue;
@@ -795,7 +804,7 @@ function HomeClientContent({
   };
 
   const toggleRoughState = (itemId: string) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1194,7 +1203,7 @@ function HomeClientContent({
       });
     }
 
-    if (settingsEditable && preparedStockItemIds.size > 0) {
+    if (durableItemsEditable && preparedStockItemIds.size > 0) {
       setRoughStates((current) => {
         const nextStates = { ...current };
 
@@ -1232,7 +1241,7 @@ function HomeClientContent({
   };
 
   const updateCustomItems = (nextItems: CustomizableItem[]) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1254,7 +1263,7 @@ function HomeClientContent({
   };
 
   const startChildNameEdit = () => {
-    if (!settingsEditable) {
+    if (!childProfileEditable) {
       return;
     }
 
@@ -1263,7 +1272,7 @@ function HomeClientContent({
   };
 
   const completeChildNameEdit = async () => {
-    if (!settingsEditable) {
+    if (!childProfileEditable) {
       return;
     }
 
@@ -1299,7 +1308,7 @@ function HomeClientContent({
   };
 
   const addCustomItem = (category: CustomItemCategory, draft: CustomItemDraft) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return false;
     }
 
@@ -1369,7 +1378,7 @@ function HomeClientContent({
     itemId: string,
     changes: Partial<Omit<CustomizableItem, "id">>,
   ) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1390,7 +1399,7 @@ function HomeClientContent({
   };
 
   const deleteCustomItem = (itemId: string) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1426,7 +1435,7 @@ function HomeClientContent({
   };
 
   const toggleNewCustomItemWeekday = (weekday: number) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1448,7 +1457,7 @@ function HomeClientContent({
     draft: CustomItemDraft,
     weekday: number,
   ): CustomItemDraft => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return draft;
     }
 
@@ -1478,7 +1487,7 @@ function HomeClientContent({
   });
 
   const startCustomItemEditing = (item: CustomizableItem) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1501,7 +1510,7 @@ function HomeClientContent({
   };
 
   const saveCustomItemEditing = (item: CustomizableItem) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1538,7 +1547,7 @@ function HomeClientContent({
     activeItemId: string,
     targetIndex: number,
   ) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1630,7 +1639,7 @@ function HomeClientContent({
     item: CustomizableItem,
     isSorting: boolean,
   ) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1657,7 +1666,7 @@ function HomeClientContent({
     event: PointerEvent<HTMLElement>,
     item: CustomizableItem,
   ) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1698,7 +1707,7 @@ function HomeClientContent({
   };
 
   const startCustomItemSorting = (category: CustomItemCategory) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1711,7 +1720,7 @@ function HomeClientContent({
   };
 
   const finishCustomItemSorting = () => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1728,7 +1737,7 @@ function HomeClientContent({
   };
 
   const startCustomItemAdding = (category: CustomItemCategory) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -1745,7 +1754,7 @@ function HomeClientContent({
   };
 
   const finishCustomItemAdding = (category: CustomItemCategory) => {
-    if (!settingsEditable) {
+    if (!durableItemsEditable) {
       return;
     }
 
@@ -2133,7 +2142,7 @@ function HomeClientContent({
     const isRoughItem = customItem.category === "ざっくり管理";
     const isEditing = editingCustomItemId === customItem.id;
     const isDragging = draggingCustomItemId === customItem.id;
-    const canInteract = settingsEditable && !isSorting;
+    const canInteract = durableItemsEditable && !isSorting;
 
     if (isEditing && !isSorting) {
       return renderCustomItemEditRow(customItem);
@@ -2201,7 +2210,7 @@ function HomeClientContent({
           >
             <GripVertical size={18} strokeWidth={2} />
           </span>
-        ) : settingsEditable ? (
+        ) : durableItemsEditable ? (
           renderFlatActionButton({
               label: "削除",
               tone: "danger",
@@ -2291,7 +2300,7 @@ function HomeClientContent({
       <section key={category} className="space-y-3 px-0">
         {renderItemSettingsHeader(`${category}を編集`)}
 
-        {settingsEditable ? (
+        {durableItemsEditable ? (
           <div className="flex h-11 items-center justify-end gap-2 text-number font-normal">
             {isSorting ? (
               <button
@@ -2462,9 +2471,9 @@ function HomeClientContent({
               {roughItems.map((item) => (
                 <CardListRow
                   key={item.id}
-                  as={settingsEditable ? "button" : "div"}
+                  as={durableItemsEditable ? "button" : "div"}
                   onClick={
-                    settingsEditable ? () => toggleRoughState(item.id) : undefined
+                    durableItemsEditable ? () => toggleRoughState(item.id) : undefined
                   }
                   left={item.name}
                   center={
@@ -2518,7 +2527,7 @@ function HomeClientContent({
               <h2 className="text-card-title font-semibold tracking-normal text-hoiku-ink">
                 設定
               </h2>
-              {!settingsEditable ? (
+              {!durableItemsEditable ? (
                 <p className="mt-3 rounded-section bg-card-today px-4 py-3 text-status font-normal leading-relaxed text-text-secondary ring-1 ring-border-soft">
                   {sharedSettingsReadonlyMessage}
                 </p>
@@ -2580,7 +2589,7 @@ function HomeClientContent({
                               >
                                 完了
                               </button>
-                            ) : settingsEditable ? (
+                            ) : childProfileEditable ? (
                               <IconButton label="編集" onClick={startChildNameEdit}>
                                 <Pencil size={20} strokeWidth={2.1} />
                               </IconButton>

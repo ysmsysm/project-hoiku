@@ -48,6 +48,7 @@ async function getHomeDataSource(): Promise<HomeDataSource> {
     mode: "shared",
     familyId: membership.familyId,
     initialData: sharedSettings.data,
-    settingsEditable: false,
+    childProfileEditable: true,
+    durableItemsEditable: false,
   };
 }

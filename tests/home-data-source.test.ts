@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  canEditHomeChildProfile,
   canEditHomeDurableSettings,
   getHomeLocalStorageLoadPlan,
   getSharedInitialDurableSettings,
@@ -12,6 +13,7 @@ import {
 import type { SharedSettingsAppData } from "../src/lib/family-sharing/shared-settings";
 
 const sharedInitialData: SharedSettingsAppData = {
+  childId: "child-1",
   childProfile: {
     name: "Sota",
     iconType: "default",
@@ -49,6 +51,7 @@ test("local mode keeps existing localStorage loading and durable settings editin
     dailyData: true,
   });
   assert.equal(getSharedInitialDurableSettings(dataSource), null);
+  assert.equal(canEditHomeChildProfile(dataSource), true);
   assert.equal(canEditHomeDurableSettings(dataSource), true);
 });
 
@@ -57,7 +60,8 @@ test("shared mode uses initialData and skips durable localStorage loading", () =
     mode: "shared",
     familyId: "family-1",
     initialData: sharedInitialData,
-    settingsEditable: false,
+    childProfileEditable: true,
+    durableItemsEditable: false,
   };
 
   assert.deepEqual(getHomeLocalStorageLoadPlan(dataSource), {
@@ -87,9 +91,11 @@ test("shared mode disables durable settings editing", () => {
     mode: "shared",
     familyId: "family-1",
     initialData: sharedInitialData,
-    settingsEditable: false,
+    childProfileEditable: true,
+    durableItemsEditable: false,
   };
 
+  assert.equal(canEditHomeChildProfile(dataSource), true);
   assert.equal(canEditHomeDurableSettings(dataSource), false);
 });
 

@@ -14,7 +14,8 @@ export type HomeDataSource =
       mode: "shared";
       familyId: string;
       initialData: SharedSettingsAppData;
-      settingsEditable: false;
+      childProfileEditable: true;
+      durableItemsEditable: false;
     }
   | {
       mode: "shared-error";
@@ -57,6 +58,10 @@ export function getSharedInitialDurableSettings(dataSource: HomeDataSource) {
 
 export function canEditHomeDurableSettings(dataSource: HomeDataSource) {
   return dataSource.mode === "local";
+}
+
+export function canEditHomeChildProfile(dataSource: HomeDataSource) {
+  return dataSource.mode === "local" || dataSource.mode === "shared";
 }
 
 export function toHomeSharedErrorReason(

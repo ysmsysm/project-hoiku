@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 export type EditMode = "view" | "edit";
 
@@ -31,6 +31,7 @@ export function useEditableSection<T>({
   const [draftValue, setDraftValue] = useState(initialValue);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const saveInFlightRef = useRef(false);
 
   const validationError = useMemo(
     () => validate(draftValue),
@@ -57,6 +58,10 @@ export function useEditableSection<T>({
   }, []);
 
   const completeEdit = useCallback(async () => {
+    if (saveInFlightRef.current) {
+      return false;
+    }
+
     const nextValidationError = validate(draftValue);
 
     if (nextValidationError) {
@@ -70,6 +75,7 @@ export function useEditableSection<T>({
       return true;
     }
 
+    saveInFlightRef.current = true;
     setIsSaving(true);
     setError(null);
 
@@ -82,6 +88,7 @@ export function useEditableSection<T>({
       setError("保存できませんでした。もう一度お試しください");
       return false;
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   }, [draftValue, isDirty, onSave, validate]);

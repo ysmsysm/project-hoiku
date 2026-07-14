@@ -98,6 +98,7 @@ test("maps regular, spot, rough, weekdays, sort order, rough states, and default
     birthday: null,
     photoUrl: null,
   });
+  assert.equal(result.data.childId, childId);
   assert.deepEqual(
     result.data.customItems.map((item) => item.id),
     ["template-regular", "template-spot", "template-rough"],
