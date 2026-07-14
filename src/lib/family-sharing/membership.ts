@@ -4,6 +4,7 @@ import { createClient } from "../supabase/server";
 import {
   currentFamilyMembershipSelect,
   mapCurrentFamilyMembershipRow,
+  mapCurrentFamilyMembershipRowWithSharingStartedAt,
   type CurrentFamilyMembershipRow,
 } from "./membership-query";
 
@@ -48,5 +49,31 @@ export async function getCurrentFamilyMembership(
     return null;
   }
 
-  return mapCurrentFamilyMembershipRow(data as CurrentFamilyMembershipRow);
+  const membershipRow = data as CurrentFamilyMembershipRow;
+  const membership = mapCurrentFamilyMembershipRow(membershipRow);
+
+  const { data: familyData, error: familyError } = await supabase
+    .from("families")
+    .select("sharing_started_at")
+    .eq("id", membership.familyId)
+    .maybeSingle();
+
+  if (familyError) {
+    console.error("Failed to fetch current family sharing status", {
+      code: familyError.code,
+      message: familyError.message,
+      details: familyError.details,
+      hint: familyError.hint,
+    });
+    throw new Error("家族共有状態を取得できませんでした。");
+  }
+
+  if (!familyData) {
+    throw new Error("家族共有状態を取得できませんでした。");
+  }
+
+  return mapCurrentFamilyMembershipRowWithSharingStartedAt(
+    membershipRow,
+    familyData.sharing_started_at,
+  );
 }

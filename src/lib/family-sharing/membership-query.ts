@@ -22,7 +22,16 @@ export function mapCurrentFamilyMembershipRow(
   row: CurrentFamilyMembershipRow,
 ): CurrentFamilyMembership {
   const family = getFamilyRow(row.families);
-  const sharingStartedAt = family?.sharing_started_at ?? null;
+  return mapCurrentFamilyMembershipRowWithSharingStartedAt(
+    row,
+    family?.sharing_started_at ?? null,
+  );
+}
+
+export function mapCurrentFamilyMembershipRowWithSharingStartedAt(
+  row: Omit<CurrentFamilyMembershipRow, "families">,
+  sharingStartedAt: string | null,
+): CurrentFamilyMembership {
 
   return {
     familyId: row.family_id,

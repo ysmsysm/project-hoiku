@@ -44,6 +44,19 @@ import {
   getTomorrowDateKey,
   isSpotDeadlineEnabled,
 } from "../src/lib/deadline";
+import {
+  getPreparationCompletedAt,
+  isPreparationSessionCompleted,
+} from "../src/lib/preparation-status";
+import {
+  canEditHomeDurableSettings,
+  getHomeLocalStorageLoadPlan,
+  getSharedInitialDurableSettings,
+  sharedSettingsLoadErrorBody,
+  sharedSettingsLoadErrorTitle,
+  sharedSettingsReadonlyMessage,
+  type HomeDataSource,
+} from "../src/lib/home-data-source";
 import { clampSpotQuantity, formatSpotItemName } from "../src/lib/spotQuantity";
 import { useEditableSection } from "../src/hooks/useEditableSection";
 import type { ChildProfile } from "../src/types/child";
@@ -91,6 +104,10 @@ type CustomItemDragState = {
   currentY: number;
   left: number;
   width: number;
+};
+
+type HomeClientProps = {
+  dataSource?: HomeDataSource;
 };
 
 const roughStateStyles: Record<RoughState, string> = {
@@ -376,12 +393,74 @@ const buildPreparationItems = (items: PreparationItem[]): PreparationItem[] =>
     }, new Map()).values(),
   );
 
-export default function HomeClient() {
+export default function HomeClient({
+  dataSource = { mode: "local" },
+}: HomeClientProps) {
+  if (dataSource.mode === "shared-error") {
+    return <SharedErrorScreen />;
+  }
+
+  return <HomeClientContent dataSource={dataSource} />;
+}
+
+function SharedErrorScreen() {
+  return (
+    <main className="min-h-dvh bg-background px-5 py-8 text-hoiku-ink">
+      <div className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-[430px] items-center">
+        <SectionCard appearance="current" className="w-full">
+          <div className="space-y-4">
+            <div>
+              <h1 className="text-card-title font-semibold text-text-primary">
+                {sharedSettingsLoadErrorTitle}
+              </h1>
+              <p className="mt-2 text-status font-normal leading-relaxed text-text-secondary">
+                {sharedSettingsLoadErrorBody}
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="h-[48px] rounded-button bg-primary px-4 text-button font-bold text-surface shadow-button transition active:scale-[0.99]"
+              >
+                再読み込み
+              </button>
+              <a
+                href="/family"
+                className="grid h-[48px] place-items-center rounded-button border border-border-soft bg-surface px-4 text-button font-bold text-text-primary shadow-card transition active:scale-[0.99]"
+              >
+                家族画面へ
+              </a>
+            </div>
+          </div>
+        </SectionCard>
+      </div>
+    </main>
+  );
+}
+
+function HomeClientContent({
+  dataSource,
+}: {
+  dataSource: Exclude<HomeDataSource, { mode: "shared-error" }>;
+}) {
+  const sharedInitialData = getSharedInitialDurableSettings(dataSource);
+  const initialCustomItems =
+    sharedInitialData?.customItems ?? defaultCustomItems;
+  const initialChildProfile =
+    sharedInitialData?.childProfile ?? appRepository.defaultChildProfile;
+  const initialRoughStates =
+    sharedInitialData?.roughStates ?? createDefaultRoughStates(initialCustomItems);
+  const settingsEditable = canEditHomeDurableSettings(dataSource);
+  const localStorageLoadPlan = getHomeLocalStorageLoadPlan(dataSource);
+  const shouldLoadDurableSettings = localStorageLoadPlan.durableSettings;
+  const shouldLoadDailyData = localStorageLoadPlan.dailyData;
+
   const [activeTab, setActiveTab] = useState<AppTab>("check");
   const [customItems, setCustomItems] =
-    useState<CustomizableItem[]>(defaultCustomItems);
+    useState<CustomizableItem[]>(initialCustomItems);
   const [shortageCounts, setShortageCounts] = useState(
-    createDefaultShortageCounts(defaultCustomItems),
+    createDefaultShortageCounts(initialCustomItems),
   );
   const [session, setSession] = useState<PreparationSession>({
     checkedBy: "ママ",
@@ -391,11 +470,15 @@ export default function HomeClient() {
     thanksSent: false,
   });
   const [childProfile, setChildProfile] =
-    useState<ChildProfile>(appRepository.defaultChildProfile);
+    useState<ChildProfile>(initialChildProfile);
   const childNameEditor = useEditableSection({
-    initialValue: appRepository.defaultChildProfile.name,
+    initialValue: initialChildProfile.name,
     validate: validateChildName,
     onSave: (name) => {
+      if (!settingsEditable) {
+        return;
+      }
+
       const trimmedName = name.trim().slice(0, 8);
       const nextProfile: ChildProfile = {
         ...childProfile,
@@ -409,7 +492,7 @@ export default function HomeClient() {
   const setSavedChildName = childNameEditor.setSavedValue;
   const setChildNameDraft = childNameEditor.setDraftValue;
   const [roughStates, setRoughStates] = useState<Record<string, RoughState>>(
-    () => createDefaultRoughStates(defaultCustomItems),
+    () => initialRoughStates,
   );
   const [selectedTodayOnlyIds, setSelectedTodayOnlyIds] = useState<string[]>([]);
   const [spotAdditions, setSpotAdditions] = useState<SpotAddition[]>([]);
@@ -486,19 +569,41 @@ export default function HomeClient() {
   const previousActiveTabRef = useRef<AppTab>(activeTab);
 
   useEffect(() => {
-    const savedChildProfile = appRepository.loadChildProfile();
-    const savedCustomItems = normalizeCustomItems(
-      appRepository.loadCustomItems(defaultCustomItems),
-    );
-    setChildProfile(savedChildProfile);
-    setSavedChildName(savedChildProfile.name);
-    setChildNameDraft(savedChildProfile.name);
-    setCustomItems(savedCustomItems);
+    if (!sharedInitialData) {
+      return;
+    }
+
+    setChildProfile(sharedInitialData.childProfile);
+    setSavedChildName(sharedInitialData.childProfile.name);
+    setChildNameDraft(sharedInitialData.childProfile.name);
+    setCustomItems(sharedInitialData.customItems);
+    setRoughStates(sharedInitialData.roughStates);
+  }, [setChildNameDraft, setSavedChildName, sharedInitialData]);
+
+  useEffect(() => {
+    let durableItems = initialCustomItems;
+
+    if (shouldLoadDurableSettings) {
+      const savedChildProfile = appRepository.loadChildProfile();
+      const savedCustomItems = normalizeCustomItems(
+        appRepository.loadCustomItems(defaultCustomItems),
+      );
+      durableItems = savedCustomItems;
+      setChildProfile(savedChildProfile);
+      setSavedChildName(savedChildProfile.name);
+      setChildNameDraft(savedChildProfile.name);
+      setCustomItems(savedCustomItems);
+      setRoughStates(
+        appRepository.loadRoughStates(createDefaultRoughStates(savedCustomItems)),
+      );
+    }
+
+    if (!shouldLoadDailyData) {
+      return;
+    }
+
     setShortageCounts(
-      appRepository.loadCheckCounts(createDefaultShortageCounts(savedCustomItems)),
-    );
-    setRoughStates(
-      appRepository.loadRoughStates(createDefaultRoughStates(savedCustomItems)),
+      appRepository.loadCheckCounts(createDefaultShortageCounts(durableItems)),
     );
     setSession(appRepository.loadPreparationSession());
     setTemporaryTodayOnlyItems(appRepository.loadTodayOnlyTemporaryItems());
@@ -506,7 +611,13 @@ export default function HomeClient() {
     setSpotAdditions(savedSpotAdditions);
     setSelectedTodayOnlyIds(savedSpotAdditions.map((addition) => addition.itemId));
     setSpotDeadlines(appRepository.loadSpotDeadlines());
-  }, [setChildNameDraft, setSavedChildName]);
+  }, [
+    initialCustomItems,
+    setChildNameDraft,
+    setSavedChildName,
+    shouldLoadDailyData,
+    shouldLoadDurableSettings,
+  ]);
 
   useEffect(() => {
     if (
@@ -665,15 +776,11 @@ export default function HomeClient() {
     session.items.length === 0 ||
     session.items.every((item) => item.checked || item.later);
   const hasCarryoverItems = session.items.some((item) => item.carryover);
-  const isCurrentPreparationDone = isPreparationDone && !hasCarryoverItems;
+  const preparationCompletedAt = getPreparationCompletedAt(session);
   const canShowPreparationStatus =
-    session.items.length > 0 &&
-    isCurrentPreparationDone &&
-    Boolean(session.completedAt);
+    session.items.length > 0 && isPreparationSessionCompleted(session);
   const lastConfirmedDate = formatHistoryDate(session.confirmedAt);
-  const lastPreparedDate = formatHistoryDate(
-    isCurrentPreparationDone ? session.completedAt : null,
-  );
+  const lastPreparedDate = formatHistoryDate(preparationCompletedAt);
   const updateSession = (nextSession: PreparationSession) => {
     setSession(nextSession);
     appRepository.savePreparationSession(nextSession);
@@ -688,6 +795,10 @@ export default function HomeClient() {
   };
 
   const toggleRoughState = (itemId: string) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     setRoughStates((current) => {
       const currentState = current[itemId] ?? "十分";
       const currentIndex = roughStateOrder.indexOf(currentState);
@@ -1083,7 +1194,7 @@ export default function HomeClient() {
       });
     }
 
-    if (preparedStockItemIds.size > 0) {
+    if (settingsEditable && preparedStockItemIds.size > 0) {
       setRoughStates((current) => {
         const nextStates = { ...current };
 
@@ -1121,6 +1232,10 @@ export default function HomeClient() {
   };
 
   const updateCustomItems = (nextItems: CustomizableItem[]) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     setCustomItems(nextItems);
     appRepository.saveCustomItems(nextItems);
   };
@@ -1139,11 +1254,19 @@ export default function HomeClient() {
   };
 
   const startChildNameEdit = () => {
+    if (!settingsEditable) {
+      return;
+    }
+
     setActiveEditingSectionId(childSettingsSectionId);
     childNameEditor.startEdit();
   };
 
   const completeChildNameEdit = async () => {
+    if (!settingsEditable) {
+      return;
+    }
+
     const saved = await childNameEditor.completeEdit();
 
     if (saved) {
@@ -1176,6 +1299,10 @@ export default function HomeClient() {
   };
 
   const addCustomItem = (category: CustomItemCategory, draft: CustomItemDraft) => {
+    if (!settingsEditable) {
+      return false;
+    }
+
     const trimmedName = draft.name.trim();
 
     if (!trimmedName) {
@@ -1242,6 +1369,10 @@ export default function HomeClient() {
     itemId: string,
     changes: Partial<Omit<CustomizableItem, "id">>,
   ) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     const currentItem = customItems.find((item) => item.id === itemId);
     const nextItems = customItems.map((item) =>
       item.id === itemId ? { ...item, ...changes } : item,
@@ -1259,6 +1390,10 @@ export default function HomeClient() {
   };
 
   const deleteCustomItem = (itemId: string) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     if (editingCustomItemId === itemId) {
       cancelCustomItemEditing();
     }
@@ -1291,6 +1426,10 @@ export default function HomeClient() {
   };
 
   const toggleNewCustomItemWeekday = (weekday: number) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     setNewCustomItemDraft((current) => {
       const nextWeekdays = current.weekdays.includes(weekday)
         ? current.weekdays.filter((day) => day !== weekday)
@@ -1309,6 +1448,10 @@ export default function HomeClient() {
     draft: CustomItemDraft,
     weekday: number,
   ): CustomItemDraft => {
+    if (!settingsEditable) {
+      return draft;
+    }
+
     const nextWeekdays = draft.weekdays.includes(weekday)
       ? draft.weekdays.filter((day) => day !== weekday)
       : draft.weekdays.length >= 2
@@ -1335,6 +1478,10 @@ export default function HomeClient() {
   });
 
   const startCustomItemEditing = (item: CustomizableItem) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     setAddingCategory(null);
     setSortingCategory(null);
     setExpandedWeekdayItemId(null);
@@ -1354,6 +1501,10 @@ export default function HomeClient() {
   };
 
   const saveCustomItemEditing = (item: CustomizableItem) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     const trimmedName = customItemEditDraft.name.trim();
 
     if (!trimmedName) {
@@ -1387,6 +1538,10 @@ export default function HomeClient() {
     activeItemId: string,
     targetIndex: number,
   ) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     setSortingDraftItems((currentItems) => {
       const sourceItems = currentItems ?? customItems;
       const categoryItems = sourceItems.filter(
@@ -1475,6 +1630,10 @@ export default function HomeClient() {
     item: CustomizableItem,
     isSorting: boolean,
   ) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     if (!isSorting || sortingCategory !== item.category) {
       return;
     }
@@ -1498,6 +1657,10 @@ export default function HomeClient() {
     event: PointerEvent<HTMLElement>,
     item: CustomizableItem,
   ) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     const pendingDrag = pendingCustomItemDragRef.current;
 
     if (pendingDrag?.itemId === item.id) {
@@ -1535,6 +1698,10 @@ export default function HomeClient() {
   };
 
   const startCustomItemSorting = (category: CustomItemCategory) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     setAddingCategory(null);
     cancelCustomItemEditing();
     setSortingCategory(category);
@@ -1544,6 +1711,10 @@ export default function HomeClient() {
   };
 
   const finishCustomItemSorting = () => {
+    if (!settingsEditable) {
+      return;
+    }
+
     finishCustomItemDrag();
 
     if (sortingDraftItems) {
@@ -1557,6 +1728,10 @@ export default function HomeClient() {
   };
 
   const startCustomItemAdding = (category: CustomItemCategory) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     setSortingCategory(null);
     cancelCustomItemEditing();
     setAddingCategory(category);
@@ -1570,6 +1745,10 @@ export default function HomeClient() {
   };
 
   const finishCustomItemAdding = (category: CustomItemCategory) => {
+    if (!settingsEditable) {
+      return;
+    }
+
     const added = addCustomItem(category, newCustomItemDraft);
 
     if (!added) {
@@ -1954,6 +2133,7 @@ export default function HomeClient() {
     const isRoughItem = customItem.category === "ざっくり管理";
     const isEditing = editingCustomItemId === customItem.id;
     const isDragging = draggingCustomItemId === customItem.id;
+    const canInteract = settingsEditable && !isSorting;
 
     if (isEditing && !isSorting) {
       return renderCustomItemEditRow(customItem);
@@ -1964,15 +2144,15 @@ export default function HomeClient() {
         key={customItem.id}
         data-custom-item-id={customItem.id}
         data-custom-item-category={customItem.category}
-        role={isSorting ? undefined : "button"}
-        tabIndex={isSorting ? undefined : 0}
+        role={canInteract ? "button" : undefined}
+        tabIndex={canInteract ? 0 : undefined}
         onClick={() => {
-          if (!isSorting) {
+          if (canInteract) {
             startCustomItemEditing(customItem);
           }
         }}
         onKeyDown={(event) => {
-          if (!isSorting && (event.key === "Enter" || event.key === " ")) {
+          if (canInteract && (event.key === "Enter" || event.key === " ")) {
             event.preventDefault();
             startCustomItemEditing(customItem);
           }
@@ -1987,7 +2167,11 @@ export default function HomeClient() {
           customItem.category,
           isSorting ? "sort" : "view",
         )} ${
-          isSorting ? "touch-none cursor-grab active:cursor-grabbing" : "cursor-pointer"
+          isSorting
+            ? "touch-none cursor-grab active:cursor-grabbing"
+            : canInteract
+              ? "cursor-pointer"
+              : "cursor-default"
         } ${
           isDragging
             ? "bg-card-today/60 text-transparent ring-1 ring-danger/20 [&_*]:opacity-0"
@@ -2017,13 +2201,15 @@ export default function HomeClient() {
           >
             <GripVertical size={18} strokeWidth={2} />
           </span>
-        ) : (
+        ) : settingsEditable ? (
           renderFlatActionButton({
               label: "削除",
               tone: "danger",
               onClick: () => deleteCustomItem(customItem.id),
               children: <Trash2 size={18} strokeWidth={2.2} />,
             })
+        ) : (
+          <span className="h-9 w-9" aria-hidden="true" />
         )}
       </div>
     );
@@ -2105,40 +2291,46 @@ export default function HomeClient() {
       <section key={category} className="space-y-3 px-0">
         {renderItemSettingsHeader(`${category}を編集`)}
 
-        <div className="flex h-11 items-center justify-end gap-2 text-number font-normal">
-          {isSorting ? (
-            <button
-              type="button"
-              onClick={finishCustomItemSorting}
-              className="h-10 px-1 text-number font-normal text-danger transition active:scale-95"
-            >
-              完了
-            </button>
-          ) : (
-            <>
-              <IconButton
-                label="並び替え"
-                onClick={() => startCustomItemSorting(category)}
-                className="h-10 w-10 text-text-secondary"
+        {settingsEditable ? (
+          <div className="flex h-11 items-center justify-end gap-2 text-number font-normal">
+            {isSorting ? (
+              <button
+                type="button"
+                onClick={finishCustomItemSorting}
+                className="h-10 px-1 text-number font-normal text-danger transition active:scale-95"
               >
-                <GripVertical size={18} strokeWidth={2} />
-              </IconButton>
-              <IconButton
-                label="追加"
-                onClick={() =>
-                  isAdding ? cancelCustomItemAdding() : startCustomItemAdding(category)
-                }
-                className={`h-10 w-10 ${
-                  isAdding
-                    ? "bg-card-today text-danger ring-1 ring-danger/20"
-                    : "text-text-secondary"
-                }`}
-              >
-                <Plus size={19} strokeWidth={2.2} />
-              </IconButton>
-            </>
-          )}
-        </div>
+                完了
+              </button>
+            ) : (
+              <>
+                <IconButton
+                  label="並び替え"
+                  onClick={() => startCustomItemSorting(category)}
+                  className="h-10 w-10 text-text-secondary"
+                >
+                  <GripVertical size={18} strokeWidth={2} />
+                </IconButton>
+                <IconButton
+                  label="追加"
+                  onClick={() =>
+                    isAdding ? cancelCustomItemAdding() : startCustomItemAdding(category)
+                  }
+                  className={`h-10 w-10 ${
+                    isAdding
+                      ? "bg-card-today text-danger ring-1 ring-danger/20"
+                      : "text-text-secondary"
+                  }`}
+                >
+                  <Plus size={19} strokeWidth={2.2} />
+                </IconButton>
+              </>
+            )}
+          </div>
+        ) : (
+          <p className="rounded-section bg-card-today px-4 py-3 text-status font-normal leading-relaxed text-text-secondary ring-1 ring-border-soft">
+            {sharedSettingsReadonlyMessage}
+          </p>
+        )}
         <div className="mx-0 divide-y-0 overflow-visible">
           {isAdding ? renderCustomItemAddRow(category) : null}
           {categoryItems.map((customItem) =>
@@ -2270,8 +2462,10 @@ export default function HomeClient() {
               {roughItems.map((item) => (
                 <CardListRow
                   key={item.id}
-                  as="button"
-                  onClick={() => toggleRoughState(item.id)}
+                  as={settingsEditable ? "button" : "div"}
+                  onClick={
+                    settingsEditable ? () => toggleRoughState(item.id) : undefined
+                  }
                   left={item.name}
                   center={
                     <div
@@ -2309,7 +2503,7 @@ export default function HomeClient() {
           <div className={cardStackClassName}>
             <PreparationChecklist
               items={session.items}
-              completedAt={isCurrentPreparationDone ? session.completedAt : null}
+              completedAt={preparationCompletedAt}
               onToggle={togglePreparationItem}
               onCheckAll={checkAllPreparationItems}
               onToggleLater={togglePreparationItemLater}
@@ -2324,6 +2518,11 @@ export default function HomeClient() {
               <h2 className="text-card-title font-semibold tracking-normal text-hoiku-ink">
                 設定
               </h2>
+              {!settingsEditable ? (
+                <p className="mt-3 rounded-section bg-card-today px-4 py-3 text-status font-normal leading-relaxed text-text-secondary ring-1 ring-border-soft">
+                  {sharedSettingsReadonlyMessage}
+                </p>
+              ) : null}
               <div className="mt-4 divide-y divide-[#edf3ef]">
                 {settingsItems.map((item) => (
                   <div key={item.id}>
@@ -2381,10 +2580,12 @@ export default function HomeClient() {
                               >
                                 完了
                               </button>
-                            ) : (
+                            ) : settingsEditable ? (
                               <IconButton label="編集" onClick={startChildNameEdit}>
                                 <Pencil size={20} strokeWidth={2.1} />
                               </IconButton>
+                            ) : (
+                              <span className="h-10 w-10 shrink-0" aria-hidden="true" />
                             )}
                           </div>
 
