@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  canAddHomeDurableItems,
+  canDeleteHomeDurableItems,
   canEditHomeChildProfile,
   canEditHomeDurableSettings,
+  canEditHomeExistingItemDetails,
+  canEditHomeItemWeekdays,
+  canEditHomeRoughItemUnit,
+  canSortHomeDurableItems,
+  canToggleHomeRoughState,
   getHomeLocalStorageLoadPlan,
   getSharedInitialDurableSettings,
   sharedSettingsLoadErrorBody,
@@ -53,6 +60,13 @@ test("local mode keeps existing localStorage loading and durable settings editin
   assert.equal(getSharedInitialDurableSettings(dataSource), null);
   assert.equal(canEditHomeChildProfile(dataSource), true);
   assert.equal(canEditHomeDurableSettings(dataSource), true);
+  assert.equal(canEditHomeExistingItemDetails(dataSource), true);
+  assert.equal(canEditHomeRoughItemUnit(dataSource), true);
+  assert.equal(canToggleHomeRoughState(dataSource), true);
+  assert.equal(canAddHomeDurableItems(dataSource), true);
+  assert.equal(canDeleteHomeDurableItems(dataSource), true);
+  assert.equal(canEditHomeItemWeekdays(dataSource), true);
+  assert.equal(canSortHomeDurableItems(dataSource), true);
 });
 
 test("shared mode uses initialData and skips durable localStorage loading", () => {
@@ -86,7 +100,7 @@ test("shared mode uses initialData and skips durable localStorage loading", () =
   });
 });
 
-test("shared mode disables durable settings editing", () => {
+test("shared mode separates durable item editing permissions by operation", () => {
   const dataSource: HomeDataSource = {
     mode: "shared",
     familyId: "family-1",
@@ -97,6 +111,13 @@ test("shared mode disables durable settings editing", () => {
 
   assert.equal(canEditHomeChildProfile(dataSource), true);
   assert.equal(canEditHomeDurableSettings(dataSource), false);
+  assert.equal(canEditHomeExistingItemDetails(dataSource), true);
+  assert.equal(canEditHomeRoughItemUnit(dataSource), true);
+  assert.equal(canToggleHomeRoughState(dataSource), true);
+  assert.equal(canAddHomeDurableItems(dataSource), false);
+  assert.equal(canDeleteHomeDurableItems(dataSource), false);
+  assert.equal(canEditHomeItemWeekdays(dataSource), false);
+  assert.equal(canSortHomeDurableItems(dataSource), false);
 });
 
 test("shared-error does not fall back to localStorage and has error copy", () => {

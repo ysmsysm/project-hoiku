@@ -60,6 +60,34 @@ export function canEditHomeDurableSettings(dataSource: HomeDataSource) {
   return dataSource.mode === "local";
 }
 
+export function canEditHomeExistingItemDetails(dataSource: HomeDataSource) {
+  return dataSource.mode === "local" || dataSource.mode === "shared";
+}
+
+export function canEditHomeRoughItemUnit(dataSource: HomeDataSource) {
+  return dataSource.mode === "local" || dataSource.mode === "shared";
+}
+
+export function canToggleHomeRoughState(dataSource: HomeDataSource) {
+  return dataSource.mode === "local" || dataSource.mode === "shared";
+}
+
+export function canAddHomeDurableItems(dataSource: HomeDataSource) {
+  return dataSource.mode === "local";
+}
+
+export function canDeleteHomeDurableItems(dataSource: HomeDataSource) {
+  return dataSource.mode === "local";
+}
+
+export function canEditHomeItemWeekdays(dataSource: HomeDataSource) {
+  return dataSource.mode === "local";
+}
+
+export function canSortHomeDurableItems(dataSource: HomeDataSource) {
+  return dataSource.mode === "local";
+}
+
 export function canEditHomeChildProfile(dataSource: HomeDataSource) {
   return dataSource.mode === "local" || dataSource.mode === "shared";
 }
