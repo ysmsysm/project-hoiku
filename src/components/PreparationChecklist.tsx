@@ -4,6 +4,7 @@ import type { PreparationItem } from "../types/preparation";
 import { getDeadlineDisplay } from "../lib/deadline";
 import { getSpotQuantityLabel } from "../lib/spotQuantity";
 import { ItemRow } from "./ui/ItemRow";
+import { HomeItemQuantityText } from "./ui/HomeItemQuantityText";
 import { ReusableCard } from "./ui/ReusableCard";
 
 type PreparationChecklistProps = {
@@ -84,10 +85,11 @@ export function PreparationChecklist({
       {items.map((item) => {
         const isLater = Boolean(item.later && !item.checked);
         const deadline = getDeadlineDisplay(item.dueDate);
-        const quantityText =
-          item.source === "spot"
-            ? getSpotQuantityLabel(item.count).trim()
-            : `${item.count}${item.unit}`;
+        const quantityText = item.source === "spot" ? (
+          getSpotQuantityLabel(item.count).trim()
+        ) : (
+          <HomeItemQuantityText count={item.count} unit={item.unit} />
+        );
         const mutedTextClass = isLater
           ? "text-text-tertiary"
           : "text-text-primary";
@@ -141,7 +143,7 @@ export function PreparationChecklist({
           >
             <div className="flex shrink-0 items-center gap-3">
               <p
-                className={`w-[4.75rem] shrink-0 whitespace-nowrap text-left text-number font-normal ${mutedTextClass}`}
+                className={`w-[4.75rem] shrink-0 text-left text-number font-normal ${mutedTextClass}`}
               >
                 {quantityText}
               </p>

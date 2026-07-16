@@ -6,11 +6,14 @@ export const CARD_LIST_ROW_VALUE_COLUMN_WIDTH = "3rem";
 export const CARD_LIST_ROW_NAME_MIN_WIDTH = "5.5em";
 export const CARD_LIST_ROW_COLUMN_GAP = "0.25rem";
 
-export function getCardListRowIndicatorWidth(columnCount: number) {
+export function getCardListRowIndicatorWidth(
+  columnCount: number,
+  valueColumnWidth = CARD_LIST_ROW_VALUE_COLUMN_WIDTH,
+) {
   const preferredWidth =
     Math.max(1, columnCount) * CARD_LIST_ROW_DOT_COLUMN_SIZE;
 
-  return `min(${preferredWidth}px, calc(100% - ${CARD_LIST_ROW_NAME_MIN_WIDTH} - ${CARD_LIST_ROW_VALUE_COLUMN_WIDTH} - (${CARD_LIST_ROW_COLUMN_GAP} * 2)))`;
+  return `min(${preferredWidth}px, calc(100% - ${CARD_LIST_ROW_NAME_MIN_WIDTH} - ${valueColumnWidth} - (${CARD_LIST_ROW_COLUMN_GAP} * 2)))`;
 }
 
 type CardListRowProps = {
@@ -21,6 +24,7 @@ type CardListRowProps = {
   onClick?: () => void;
   statusColor?: string;
   indicatorWidth?: string;
+  valueColumnWidth?: string;
 };
 
 const rowClassName =
@@ -34,9 +38,10 @@ export function CardListRow({
   onClick,
   statusColor = "",
   indicatorWidth = getCardListRowIndicatorWidth(1),
+  valueColumnWidth = CARD_LIST_ROW_VALUE_COLUMN_WIDTH,
 }: CardListRowProps) {
   const rowStyle: CSSProperties = {
-    gridTemplateColumns: `minmax(${CARD_LIST_ROW_NAME_MIN_WIDTH}, 1fr) ${indicatorWidth} ${CARD_LIST_ROW_VALUE_COLUMN_WIDTH}`,
+    gridTemplateColumns: `minmax(${CARD_LIST_ROW_NAME_MIN_WIDTH}, 1fr) ${indicatorWidth} ${valueColumnWidth}`,
     columnGap: CARD_LIST_ROW_COLUMN_GAP,
   };
 

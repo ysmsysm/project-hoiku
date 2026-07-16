@@ -1,4 +1,5 @@
 import type { SharedSettingsAppData } from "./family-sharing/shared-settings";
+import type { CustomItemCategory } from "../types/preparation";
 
 export type HomeSharedErrorReason =
   | "membership-query-failed"
@@ -72,8 +73,14 @@ export function canToggleHomeRoughState(dataSource: HomeDataSource) {
   return dataSource.mode === "local" || dataSource.mode === "shared";
 }
 
-export function canAddHomeDurableItems(dataSource: HomeDataSource) {
-  return dataSource.mode === "local";
+export function canAddHomeDurableItem(
+  dataSource: HomeDataSource,
+  category: CustomItemCategory,
+) {
+  return (
+    dataSource.mode === "local" ||
+    (dataSource.mode === "shared" && category !== "スポット追加")
+  );
 }
 
 export function canDeleteHomeDurableItems(dataSource: HomeDataSource) {

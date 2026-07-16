@@ -32,6 +32,10 @@ import {
   getCardListRowIndicatorWidth,
 } from "../src/components/ui/CardListRow";
 import { IconButton } from "../src/components/ui/IconButton";
+import {
+  HomeItemQuantityText,
+  HomeItemUnitText,
+} from "../src/components/ui/HomeItemQuantityText";
 import { ReusableCard } from "../src/components/ui/ReusableCard";
 import { SectionCard } from "../src/components/ui/SectionCard";
 import { appRepository } from "../src/lib/repositories/app-repository";
@@ -49,7 +53,7 @@ import {
   isPreparationSessionCompleted,
 } from "../src/lib/preparation-status";
 import {
-  canAddHomeDurableItems,
+  canAddHomeDurableItem,
   canDeleteHomeDurableItems,
   canEditHomeChildProfile,
   canEditHomeDurableSettings,
@@ -69,12 +73,17 @@ import { saveHomeChildProfile } from "../src/lib/home-child-profile-save";
 import { saveSharedChildProfile } from "../src/lib/family-sharing/save-child-profile";
 import {
   applyHomeRoughStateChange,
+  appendHomeCustomItemToCategory,
+  saveHomeCustomItemAdd,
   saveHomeCustomItemEdit,
   saveHomeRoughState,
 } from "../src/lib/home-item-template-save";
+import { homeItemQuantityMax } from "../src/lib/home-item-template-constraints";
 import {
+  saveSharedItemTemplateAdd,
   saveSharedItemTemplateEdit,
   saveSharedRoughState,
+  type SharedItemTemplateAddClient,
 } from "../src/lib/family-sharing/save-item-template";
 import { clampSpotQuantity, formatSpotItemName } from "../src/lib/spotQuantity";
 import { createClient as createSupabaseClient } from "../src/lib/supabase/client";
@@ -477,7 +486,6 @@ function HomeClientContent({
     canEditHomeExistingItemDetails(dataSource);
   const roughItemUnitEditable = canEditHomeRoughItemUnit(dataSource);
   const roughStateEditable = canToggleHomeRoughState(dataSource);
-  const durableItemsAddable = canAddHomeDurableItems(dataSource);
   const durableItemsDeletable = canDeleteHomeDurableItems(dataSource);
   const itemWeekdaysEditable = canEditHomeItemWeekdays(dataSource);
   const durableItemsSortable = canSortHomeDurableItems(dataSource);
@@ -583,6 +591,10 @@ function HomeClientContent({
   const [customItemEditError, setCustomItemEditError] = useState<string | null>(
     null,
   );
+  const [customItemAddError, setCustomItemAddError] = useState<string | null>(
+    null,
+  );
+  const [isAddingCustomItem, setIsAddingCustomItem] = useState(false);
   const [savingCustomItemId, setSavingCustomItemId] = useState<string | null>(
     null,
   );
@@ -613,6 +625,7 @@ function HomeClientContent({
   const customItemDragStartTimeoutRef = useRef<number | null>(null);
   const previousActiveTabRef = useRef<AppTab>(activeTab);
   const customItemSaveInFlightRef = useRef(false);
+  const customItemAddInFlightRef = useRef(false);
   const roughStateSaveInFlightItemIdsRef = useRef(new Set<string>());
   const roughStatesRef = useRef(initialRoughStates);
 
@@ -821,8 +834,10 @@ function HomeClientContent({
     1,
     ...lockerItems.map((item) => item.requiredCount),
   );
-  const lockerIndicatorColumnWidth = getCardListRowIndicatorWidth(
+  const roughValueColumnWidth = "5rem";
+  const roughIndicatorColumnWidth = getCardListRowIndicatorWidth(
     maxLockerRequiredCount + 1,
+    roughValueColumnWidth,
   );
 
   const isPreparationDone =
@@ -1382,11 +1397,19 @@ function HomeClientContent({
     setIsChildSettingsOpen(false);
   };
 
-  const addCustomItem = (category: CustomItemCategory, draft: CustomItemDraft) => {
-    if (!durableItemsAddable) {
+  const addCustomItem = async (
+    category: CustomItemCategory,
+    draft: CustomItemDraft,
+  ) => {
+    if (!canAddHomeDurableItem(dataSource, category)) {
       return false;
     }
 
+    if (customItemAddInFlightRef.current) {
+      return false;
+    }
+
+    setCustomItemAddError(null);
     const trimmedName = draft.name.trim();
 
     if (!trimmedName) {
@@ -1394,59 +1417,77 @@ function HomeClientContent({
     }
 
     const parsedCount = draft.count === "" ? 0 : Number(draft.count);
-    const count =
-      category === "スポット追加"
-        ? clampSpotQuantity(parsedCount)
-        : Number.isNaN(parsedCount)
-          ? 0
-          : parsedCount;
-    const newItem: CustomizableItem = {
-      id: `custom-${Date.now()}`,
-      name: trimmedName,
-      unit:
-        category === "ざっくり管理"
-          ? draft.unit
-          : category === "スポット追加"
-            ? "個"
-            : "枚",
-      count,
-      category,
-      weekdays: category === "スポット追加" ? draft.weekdays : [],
-    };
-    const categoryStartIndex = customItems.findIndex(
-      (item) => item.category === category,
-    );
-    const nextItems =
-      categoryStartIndex === -1
-        ? [...customItems, newItem]
-        : [
-            ...customItems.slice(0, categoryStartIndex),
-            newItem,
-            ...customItems.slice(categoryStartIndex),
-          ];
+    const count = Number.isNaN(parsedCount) ? 0 : parsedCount;
+    const unit =
+      category === "ざっくり管理"
+        ? draft.unit
+        : category === "スポット追加"
+          ? "個"
+          : "枚";
 
-    updateCustomItems(nextItems);
-    if (category === "持ち物") {
-      setShortageCounts((current) => {
-        const nextCounts = { ...current, [newItem.id]: 0 };
-        appRepository.saveCheckCounts(nextCounts);
-        return nextCounts;
-      });
+    customItemAddInFlightRef.current = true;
+    setIsAddingCustomItem(true);
+
+    try {
+      const result = await saveHomeCustomItemAdd(
+        dataSource,
+        customItems,
+        roughStatesRef.current,
+        {
+          name: trimmedName,
+          count,
+          unit,
+          category,
+          weekdays: category === "スポット追加" ? draft.weekdays : [],
+        },
+        "十分",
+        {
+          createLocalItemId: () => `custom-${Date.now()}`,
+          saveLocalCustomItems: appRepository.saveCustomItems,
+          saveLocalRoughStates: appRepository.saveRoughStates,
+          saveSharedItemTemplateAdd: (input) =>
+            saveSharedItemTemplateAdd(
+              createSupabaseClient() as unknown as SharedItemTemplateAddClient,
+              input,
+            ),
+        },
+      );
+
+      setCustomItems((currentItems) =>
+        appendHomeCustomItemToCategory(currentItems, result.item),
+      );
+      if (category === "持ち物") {
+        setShortageCounts((current) => {
+          const nextCounts = { ...current, [result.item.id]: 0 };
+          appRepository.saveCheckCounts(nextCounts);
+          return nextCounts;
+        });
+      }
+
+      if (result.initialRoughState !== null) {
+        roughStatesRef.current = applyHomeRoughStateChange(
+          roughStatesRef.current,
+          result.item.id,
+          result.initialRoughState,
+        );
+        setRoughStates((currentStates) =>
+          applyHomeRoughStateChange(
+            currentStates,
+            result.item.id,
+            result.initialRoughState,
+          ),
+        );
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Failed to add custom item", error);
+      setCustomItemAddError("保存できませんでした。もう一度お試しください");
+      return false;
+    } finally {
+      customItemAddInFlightRef.current = false;
+      setIsAddingCustomItem(false);
     }
-
-    if (category === "ざっくり管理") {
-      setRoughStates((current) => {
-        const nextStates = {
-          ...current,
-          [newItem.id]: current[newItem.id] ?? "十分",
-        };
-
-        appRepository.saveRoughStates(nextStates);
-        return nextStates;
-      });
-    }
-
-    return true;
   };
 
   const deleteCustomItem = (itemId: string) => {
@@ -1490,6 +1531,7 @@ function HomeClientContent({
       return;
     }
 
+    setCustomItemAddError(null);
     setNewCustomItemDraft((current) => {
       const nextWeekdays = current.weekdays.includes(weekday)
         ? current.weekdays.filter((day) => day !== weekday)
@@ -1543,6 +1585,7 @@ function HomeClientContent({
     }
 
     setAddingCategory(null);
+    setCustomItemAddError(null);
     setSortingCategory(null);
     setExpandedWeekdayItemId(null);
     setCustomItemEditError(null);
@@ -1580,12 +1623,7 @@ function HomeClientContent({
 
     const parsedCount =
       customItemEditDraft.count === "" ? 0 : Number(customItemEditDraft.count);
-    const nextCount =
-      item.category === "スポット追加"
-        ? clampSpotQuantity(parsedCount)
-        : Number.isNaN(parsedCount)
-          ? 0
-          : parsedCount;
+    const nextCount = Number.isNaN(parsedCount) ? 0 : parsedCount;
     const nextChanges: Partial<Omit<CustomizableItem, "id">> = {
       name: trimmedName,
       count: nextCount,
@@ -1805,6 +1843,7 @@ function HomeClientContent({
     }
 
     setAddingCategory(null);
+    setCustomItemAddError(null);
     cancelCustomItemEditing();
     setSortingCategory(category);
     setSortingDraftItems(customItems);
@@ -1830,10 +1869,15 @@ function HomeClientContent({
   };
 
   const startCustomItemAdding = (category: CustomItemCategory) => {
-    if (!durableItemsAddable) {
+    if (!canAddHomeDurableItem(dataSource, category)) {
       return;
     }
 
+    if (customItemAddInFlightRef.current) {
+      return;
+    }
+
+    setCustomItemAddError(null);
     setSortingCategory(null);
     cancelCustomItemEditing();
     setAddingCategory(category);
@@ -1846,18 +1890,19 @@ function HomeClientContent({
     });
   };
 
-  const finishCustomItemAdding = (category: CustomItemCategory) => {
-    if (!durableItemsAddable) {
+  const finishCustomItemAdding = async (category: CustomItemCategory) => {
+    if (!canAddHomeDurableItem(dataSource, category)) {
       return;
     }
 
-    const added = addCustomItem(category, newCustomItemDraft);
+    const added = await addCustomItem(category, newCustomItemDraft);
 
     if (!added) {
       return;
     }
 
     setAddingCategory(null);
+    setCustomItemAddError(null);
     setNewCustomItemDraft({
       name: "",
       count: "1",
@@ -1869,6 +1914,7 @@ function HomeClientContent({
 
   const cancelCustomItemAdding = () => {
     setAddingCategory(null);
+    setCustomItemAddError(null);
     setNewCustomItemDraft({
       name: "",
       count: "1",
@@ -1893,6 +1939,7 @@ function HomeClientContent({
     childNameEditor.discardChanges();
     setActiveEditingSectionId(null);
     setSelectedItemSettingsCategory(null);
+    setCustomItemAddError(null);
     setSortingCategory(null);
     setSortingDraftItems(null);
     setAddingCategory(null);
@@ -1910,6 +1957,7 @@ function HomeClientContent({
     setIsChildSettingsOpen(true);
     setIsItemSettingsOpen(false);
     setSelectedItemSettingsCategory(null);
+    setCustomItemAddError(null);
     setSortingCategory(null);
     setSortingDraftItems(null);
     setAddingCategory(null);
@@ -1922,6 +1970,7 @@ function HomeClientContent({
 
   const closeCustomItemEdit = () => {
     setSelectedItemSettingsCategory(null);
+    setCustomItemAddError(null);
     setSortingCategory(null);
     setSortingDraftItems(null);
     setAddingCategory(null);
@@ -2092,8 +2141,11 @@ function HomeClientContent({
     className?: string;
   }) => (
     <input
-      type="text"
+      type={inputMode === "numeric" ? "number" : "text"}
       inputMode={inputMode}
+      min={inputMode === "numeric" ? 0 : undefined}
+      max={inputMode === "numeric" ? homeItemQuantityMax : undefined}
+      step={inputMode === "numeric" ? 1 : undefined}
       value={value}
       placeholder={placeholder}
       onClick={(event) => event.stopPropagation()}
@@ -2116,8 +2168,10 @@ function HomeClientContent({
         {renderFlatTextInput({
           value: newCustomItemDraft.name,
           placeholder: "持ち物名",
-          onChange: (name) =>
-            setNewCustomItemDraft((current) => ({ ...current, name })),
+          onChange: (name) => {
+            setCustomItemAddError(null);
+            setNewCustomItemDraft((current) => ({ ...current, name }));
+          },
           className: "min-w-[80px]",
         })}
         {renderFlatTextInput({
@@ -2129,6 +2183,7 @@ function HomeClientContent({
               return;
             }
 
+            setCustomItemAddError(null);
             setNewCustomItemDraft((current) => ({ ...current, count }));
           },
           className: "px-1 text-center",
@@ -2145,8 +2200,10 @@ function HomeClientContent({
           ? renderFlatTextInput({
               value: newCustomItemDraft.unit,
               placeholder: "単位",
-              onChange: (unit) =>
-                setNewCustomItemDraft((current) => ({ ...current, unit })),
+              onChange: (unit) => {
+                setCustomItemAddError(null);
+                setNewCustomItemDraft((current) => ({ ...current, unit }));
+              },
               className: "px-1 text-center",
             })
           : null}
@@ -2154,11 +2211,13 @@ function HomeClientContent({
           label: "追加",
           onClick: () => finishCustomItemAdding(category),
           tone: "primary",
+          disabled: isAddingCustomItem,
           children: "＋",
         })}
         {renderFlatActionButton({
           label: "キャンセル",
           onClick: cancelCustomItemAdding,
+          disabled: isAddingCustomItem,
           children: <X size={17} strokeWidth={2.4} />,
         })}
       </div>
@@ -2232,8 +2291,8 @@ function HomeClientContent({
                 className: "px-1 text-center",
               })
             ) : (
-              <span className="whitespace-nowrap text-center text-text-secondary">
-                {customItem.unit}
+              <span className="min-w-0 text-center text-text-secondary">
+                <HomeItemUnitText unit={customItem.unit} />
               </span>
             )
           ) : null}
@@ -2325,8 +2384,8 @@ function HomeClientContent({
           </span>
         ) : null}
         {isRoughItem ? (
-          <span className="whitespace-nowrap text-center text-text-secondary">
-            {customItem.unit}
+          <span className="min-w-0 text-center text-text-secondary">
+            <HomeItemUnitText unit={customItem.unit} />
           </span>
         ) : null}
         {isSorting ? (
@@ -2405,8 +2464,8 @@ function HomeClientContent({
           </span>
         ) : null}
         {isRoughItem ? (
-          <span className="whitespace-nowrap text-center text-text-secondary">
-            {draggedItem.unit}
+          <span className="min-w-0 text-center text-text-secondary">
+            <HomeItemUnitText unit={draggedItem.unit} />
           </span>
         ) : null}
         <span className="grid h-9 w-9 place-items-center text-danger">
@@ -2419,6 +2478,7 @@ function HomeClientContent({
   const renderCustomItemCategory = (category: CustomItemCategory) => {
     const isSorting = sortingCategory === category;
     const isAdding = !isSorting && addingCategory === category;
+    const durableItemAddable = canAddHomeDurableItem(dataSource, category);
     const itemSource = isSorting && sortingDraftItems ? sortingDraftItems : customItems;
     const categoryItems = itemSource.filter((item) => item.category === category);
 
@@ -2426,7 +2486,7 @@ function HomeClientContent({
       <section key={category} className="space-y-3 px-0">
         {renderItemSettingsHeader(`${category}を編集`)}
 
-        {durableItemsAddable || durableItemsSortable ? (
+        {durableItemAddable || durableItemsSortable ? (
           <div className="flex h-11 items-center justify-end gap-2 text-number font-normal">
             {isSorting ? (
               <button
@@ -2447,9 +2507,10 @@ function HomeClientContent({
                     <GripVertical size={18} strokeWidth={2} />
                   </IconButton>
                 ) : null}
-                {durableItemsAddable ? (
+                {durableItemAddable ? (
                   <IconButton
                     label="追加"
+                    disabled={isAddingCustomItem}
                     onClick={() =>
                       isAdding ? cancelCustomItemAdding() : startCustomItemAdding(category)
                     }
@@ -2468,6 +2529,11 @@ function HomeClientContent({
         ) : null}
         <div className="mx-0 divide-y-0 overflow-visible">
           {isAdding ? renderCustomItemAddRow(category) : null}
+          {isAdding && customItemAddError ? (
+            <p className="px-1 py-2 text-status font-normal text-danger">
+              {customItemAddError}
+            </p>
+          ) : null}
           {categoryItems.map((customItem) =>
             renderCustomItemRow(customItem, isSorting),
           )}
@@ -2631,8 +2697,11 @@ function HomeClientContent({
                         </div>
                       </div>
                     }
-                    right={`${item.count}${item.unit}`}
-                    indicatorWidth={lockerIndicatorColumnWidth}
+                    right={
+                      <HomeItemQuantityText count={item.count} unit={item.unit} />
+                    }
+                    indicatorWidth={roughIndicatorColumnWidth}
+                    valueColumnWidth={roughValueColumnWidth}
                   />
                 );
               })}
@@ -2815,6 +2884,7 @@ function HomeClientContent({
                                 aria-label={`${category}を編集`}
                                 onClick={() => {
                                   setSelectedItemSettingsCategory(category);
+                                  setCustomItemAddError(null);
                                   setSortingCategory(null);
                                   setAddingCategory(null);
                                   setExpandedWeekdayItemId(null);
