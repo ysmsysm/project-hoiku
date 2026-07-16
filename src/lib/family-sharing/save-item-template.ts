@@ -37,6 +37,12 @@ export type SaveSharedItemTemplateAddResult = {
   sortOrder: number;
 };
 
+export type SaveSharedItemTemplateDeleteInput = {
+  familyId: string;
+  childId: string;
+  itemId: string;
+};
+
 type ItemTemplateInsert = {
   family_id: string;
   child_id: string;
@@ -55,6 +61,7 @@ type ItemTemplatesUpdate = {
   default_quantity?: number;
   unit?: string;
   current_rough_state?: DbRoughState;
+  is_active?: false;
 };
 
 type ItemTemplatesUpdateQuery = {
@@ -242,6 +249,32 @@ export async function saveSharedItemTemplateEdit(
   const { data, error } = await supabase
     .from("item_templates")
     .update(update)
+    .eq("id", input.itemId)
+    .eq("family_id", input.familyId)
+    .eq("child_id", input.childId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error("shared_item_template_not_found");
+  }
+}
+
+export async function saveSharedItemTemplateDelete(
+  supabase: SharedItemTemplateClient,
+  input: SaveSharedItemTemplateDeleteInput,
+) {
+  assertNonEmptyId(input.familyId, "familyId");
+  assertNonEmptyId(input.childId, "childId");
+  assertNonEmptyId(input.itemId, "itemId");
+
+  const { data, error } = await supabase
+    .from("item_templates")
+    .update({ is_active: false })
     .eq("id", input.itemId)
     .eq("family_id", input.familyId)
     .eq("child_id", input.childId)

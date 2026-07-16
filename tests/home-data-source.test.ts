@@ -119,7 +119,7 @@ test("shared mode separates durable item editing permissions by operation", () =
   assert.equal(canAddHomeDurableItem(dataSource, "持ち物"), true);
   assert.equal(canAddHomeDurableItem(dataSource, "ざっくり管理"), true);
   assert.equal(canAddHomeDurableItem(dataSource, "スポット追加"), false);
-  assert.equal(canDeleteHomeDurableItems(dataSource), false);
+  assert.equal(canDeleteHomeDurableItems(dataSource), true);
   assert.equal(canEditHomeItemWeekdays(dataSource), false);
   assert.equal(canSortHomeDurableItems(dataSource), false);
 });

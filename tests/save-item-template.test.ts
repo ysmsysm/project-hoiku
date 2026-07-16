@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   saveSharedItemTemplateAdd,
+  saveSharedItemTemplateDelete,
   saveSharedItemTemplateEdit,
   saveSharedRoughState,
   toDbRoughState,
@@ -357,6 +358,83 @@ test("updates shared item template edit with item, family, and child filters", a
     ["select", "id"],
     ["maybeSingle"],
   ]);
+});
+
+test("soft deletes a shared item template with item, family, and child filters", async () => {
+  const calls: unknown[] = [];
+
+  await saveSharedItemTemplateDelete(
+    createMockClient(calls, {
+      data: { id: "template-1" },
+      error: null,
+    }),
+    {
+      familyId: "family-1",
+      childId: "child-1",
+      itemId: "template-1",
+    },
+  );
+
+  assert.deepEqual(calls, [
+    ["from", "item_templates"],
+    ["update", { is_active: false }],
+    ["eq", "id", "template-1"],
+    ["eq", "family_id", "family-1"],
+    ["eq", "child_id", "child-1"],
+    ["select", "id"],
+    ["maybeSingle"],
+  ]);
+});
+
+test("throws when shared item template delete matches no rows", async () => {
+  await assert.rejects(
+    saveSharedItemTemplateDelete(
+      createMockClient([], { data: null, error: null }),
+      {
+        familyId: "family-1",
+        childId: "child-1",
+        itemId: "template-1",
+      },
+    ),
+    /shared_item_template_not_found/,
+  );
+});
+
+test("throws when shared item template delete update fails", async () => {
+  const updateError = new Error("delete failed");
+
+  await assert.rejects(
+    saveSharedItemTemplateDelete(
+      createMockClient([], { data: null, error: updateError }),
+      {
+        familyId: "family-1",
+        childId: "child-1",
+        itemId: "template-1",
+      },
+    ),
+    updateError,
+  );
+});
+
+test("does not run ambiguous shared item template deletes without ids", async () => {
+  for (const input of [
+    { familyId: "", childId: "child-1", itemId: "template-1" },
+    { familyId: "family-1", childId: " ", itemId: "template-1" },
+    { familyId: "family-1", childId: "child-1", itemId: "" },
+  ]) {
+    const calls: unknown[] = [];
+    await assert.rejects(
+      saveSharedItemTemplateDelete(
+        createMockClient(calls, {
+          data: { id: "template-1" },
+          error: null,
+        }),
+        input,
+      ),
+      /missing_(familyId|childId|itemId)/,
+    );
+    assert.deepEqual(calls, []);
+  }
 });
 
 test("accepts shared item edits at the quantity and unit write limits", async () => {

@@ -4,6 +4,7 @@ import {
   applyHomeRoughStateChange,
   appendHomeCustomItemToCategory,
   saveHomeCustomItemAdd,
+  saveHomeCustomItemDelete,
   saveHomeCustomItemEdit,
   saveHomeRoughState,
 } from "../src/lib/home-item-template-save";
@@ -481,6 +482,66 @@ test("shared item edit save does not apply state or local fallback when Supabase
         applyCustomItems: () => calls.push("apply"),
         saveLocalCustomItems: () => calls.push("local"),
         saveSharedItemTemplateEdit: async () => {
+          calls.push("shared");
+          throw error;
+        },
+      },
+    ),
+    error,
+  );
+
+  assert.deepEqual(calls, ["shared"]);
+});
+
+test("local item delete uses the existing local durable settings path", () => {
+  const calls: string[] = [];
+
+  const result = saveHomeCustomItemDelete(
+    { mode: "local" },
+    "template-regular",
+    [],
+    {
+      saveLocalCustomItems: (items) => calls.push(`local:${items.length}`),
+      saveSharedItemTemplateDelete: async () => {
+        calls.push("shared");
+      },
+    },
+  );
+
+  assert.equal(result, undefined);
+  assert.deepEqual(calls, ["local:0"]);
+});
+
+test("shared item delete uses Supabase without local durable settings", async () => {
+  const calls: string[] = [];
+
+  await saveHomeCustomItemDelete(
+    sharedDataSource(),
+    "template-regular",
+    [],
+    {
+      saveLocalCustomItems: () => calls.push("local"),
+      saveSharedItemTemplateDelete: async (input) => {
+        calls.push(`${input.familyId}:${input.childId}:${input.itemId}`);
+      },
+    },
+  );
+
+  assert.deepEqual(calls, ["family-1:child-1:template-regular"]);
+});
+
+test("shared item delete does not fall back to local storage when Supabase fails", async () => {
+  const calls: string[] = [];
+  const error = new Error("delete failed");
+
+  await assert.rejects(
+    saveHomeCustomItemDelete(
+      sharedDataSource(),
+      "template-regular",
+      [],
+      {
+        saveLocalCustomItems: () => calls.push("local"),
+        saveSharedItemTemplateDelete: async () => {
           calls.push("shared");
           throw error;
         },

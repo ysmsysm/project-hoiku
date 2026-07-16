@@ -75,12 +75,14 @@ import {
   applyHomeRoughStateChange,
   appendHomeCustomItemToCategory,
   saveHomeCustomItemAdd,
+  saveHomeCustomItemDelete,
   saveHomeCustomItemEdit,
   saveHomeRoughState,
 } from "../src/lib/home-item-template-save";
 import { homeItemQuantityMax } from "../src/lib/home-item-template-constraints";
 import {
   saveSharedItemTemplateAdd,
+  saveSharedItemTemplateDelete,
   saveSharedItemTemplateEdit,
   saveSharedRoughState,
   type SharedItemTemplateAddClient,
@@ -594,6 +596,15 @@ function HomeClientContent({
   const [customItemAddError, setCustomItemAddError] = useState<string | null>(
     null,
   );
+  const [customItemDeleteError, setCustomItemDeleteError] = useState<{
+    itemId: string;
+    message: string;
+  } | null>(null);
+  const [customItemDeleteConfirmItemId, setCustomItemDeleteConfirmItemId] =
+    useState<string | null>(null);
+  const [customItemDeletingItemIds, setCustomItemDeletingItemIds] = useState(
+    () => new Set<string>(),
+  );
   const [isAddingCustomItem, setIsAddingCustomItem] = useState(false);
   const [savingCustomItemId, setSavingCustomItemId] = useState<string | null>(
     null,
@@ -626,6 +637,7 @@ function HomeClientContent({
   const previousActiveTabRef = useRef<AppTab>(activeTab);
   const customItemSaveInFlightRef = useRef(false);
   const customItemAddInFlightRef = useRef(false);
+  const customItemDeleteInFlightItemIdsRef = useRef(new Set<string>());
   const roughStateSaveInFlightItemIdsRef = useRef(new Set<string>());
   const roughStatesRef = useRef(initialRoughStates);
 
@@ -1490,18 +1502,11 @@ function HomeClientContent({
     }
   };
 
-  const deleteCustomItem = (itemId: string) => {
-    if (!durableItemsDeletable) {
-      return;
-    }
-
-    if (editingCustomItemId === itemId) {
-      cancelCustomItemEditing();
-    }
-    if (expandedWeekdayItemId === itemId) {
-      setExpandedWeekdayItemId(null);
-    }
-    updateCustomItems(customItems.filter((item) => item.id !== itemId));
+  const applyCustomItemDeletion = (
+    itemId: string,
+    saveLocalDurableSettings: boolean,
+  ) => {
+    setCustomItems((current) => current.filter((item) => item.id !== itemId));
     setSelectedTodayOnlyIds((current) =>
       current.filter((selectedId) => selectedId !== itemId),
     );
@@ -1514,16 +1519,122 @@ function HomeClientContent({
     setRoughStates((current) => {
       const nextStates = { ...current };
       delete nextStates[itemId];
-      appRepository.saveRoughStates(nextStates);
+      roughStatesRef.current = nextStates;
+      if (saveLocalDurableSettings) {
+        appRepository.saveRoughStates(nextStates);
+      }
       return nextStates;
     });
-    updateSpotAdditions(
-      spotAdditions.filter((addition) => addition.itemId !== itemId),
-    );
-    updateSession({
-      ...session,
-      items: session.items.filter((item) => item.id !== itemId),
+    setSpotAdditions((current) => {
+      const nextAdditions = current.filter(
+        (addition) => addition.itemId !== itemId,
+      );
+      appRepository.saveSpotAdditions(nextAdditions);
+      return nextAdditions;
     });
+    setSession((current) => {
+      const nextSession = {
+        ...current,
+        items: current.items.filter((item) => item.id !== itemId),
+      };
+      appRepository.savePreparationSession(nextSession);
+      return nextSession;
+    });
+    setSpotDeadlines((current) => {
+      const nextDeadlines = { ...current };
+      delete nextDeadlines[itemId];
+      appRepository.saveSpotDeadlines(nextDeadlines);
+      return nextDeadlines;
+    });
+    setSpotDeadlinePicker((current) =>
+      current?.itemId === itemId ? null : current,
+    );
+    setExpandedWeekdayItemId((current) =>
+      current === itemId ? null : current,
+    );
+
+    if (editingCustomItemId === itemId) {
+      cancelCustomItemEditing();
+    }
+
+    setCustomItemDeleteError((current) =>
+      current?.itemId === itemId ? null : current,
+    );
+  };
+
+  const deleteCustomItem = async (itemId: string) => {
+    if (!durableItemsDeletable) {
+      return;
+    }
+
+    if (customItemDeleteInFlightItemIdsRef.current.has(itemId)) {
+      return;
+    }
+
+    customItemDeleteInFlightItemIdsRef.current.add(itemId);
+    setCustomItemDeletingItemIds((current) => {
+      const next = new Set(current);
+      next.add(itemId);
+      return next;
+    });
+    setCustomItemDeleteError((current) =>
+      current?.itemId === itemId ? null : current,
+    );
+
+    try {
+      const saveResult = saveHomeCustomItemDelete(
+        dataSource,
+        itemId,
+        customItems.filter((item) => item.id !== itemId),
+        {
+          saveLocalCustomItems: appRepository.saveCustomItems,
+          saveSharedItemTemplateDelete: (input) =>
+            saveSharedItemTemplateDelete(createSupabaseClient(), input),
+        },
+      );
+
+      if (saveResult) {
+        await saveResult;
+      }
+
+      applyCustomItemDeletion(itemId, dataSource.mode === "local");
+    } catch (error) {
+      console.error("Failed to delete custom item", error);
+      setCustomItemDeleteError({
+        itemId,
+        message: "保存できませんでした。もう一度お試しください",
+      });
+    } finally {
+      customItemDeleteInFlightItemIdsRef.current.delete(itemId);
+      setCustomItemDeletingItemIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
+    }
+  };
+
+  const requestCustomItemDelete = (itemId: string) => {
+    if (customItemDeleteInFlightItemIdsRef.current.has(itemId)) {
+      return;
+    }
+
+    if (dataSource.mode === "shared") {
+      setCustomItemDeleteConfirmItemId(itemId);
+      return;
+    }
+
+    void deleteCustomItem(itemId);
+  };
+
+  const confirmCustomItemDelete = () => {
+    const itemId = customItemDeleteConfirmItemId;
+    if (!itemId || customItemDeleteInFlightItemIdsRef.current.has(itemId)) {
+      return;
+    }
+
+    setCustomItemDeleteConfirmItemId(null);
+    void deleteCustomItem(itemId);
   };
 
   const toggleNewCustomItemWeekday = (weekday: number) => {
@@ -2327,84 +2438,93 @@ function HomeClientContent({
     const isRoughItem = customItem.category === "ざっくり管理";
     const isEditing = editingCustomItemId === customItem.id;
     const isDragging = draggingCustomItemId === customItem.id;
-    const canInteract = existingItemDetailsEditable && !isSorting;
+    const isDeleting = customItemDeletingItemIds.has(customItem.id);
+    const canInteract =
+      existingItemDetailsEditable && !isSorting && !isDeleting;
 
     if (isEditing && !isSorting) {
       return renderCustomItemEditRow(customItem);
     }
 
     return (
-      <div
-        key={customItem.id}
-        data-custom-item-id={customItem.id}
-        data-custom-item-category={customItem.category}
-        role={canInteract ? "button" : undefined}
-        tabIndex={canInteract ? 0 : undefined}
-        onClick={() => {
-          if (canInteract) {
-            startCustomItemEditing(customItem);
+      <div key={customItem.id} className="contents">
+        <div
+          data-custom-item-id={customItem.id}
+          data-custom-item-category={customItem.category}
+          role={canInteract ? "button" : undefined}
+          tabIndex={canInteract ? 0 : undefined}
+          onClick={() => {
+            if (canInteract) {
+              startCustomItemEditing(customItem);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (canInteract && (event.key === "Enter" || event.key === " ")) {
+              event.preventDefault();
+              startCustomItemEditing(customItem);
+            }
+          }}
+          onPointerDown={(event) =>
+            scheduleCustomItemDrag(event, customItem, isSorting)
           }
-        }}
-        onKeyDown={(event) => {
-          if (canInteract && (event.key === "Enter" || event.key === " ")) {
-            event.preventDefault();
-            startCustomItemEditing(customItem);
-          }
-        }}
-        onPointerDown={(event) =>
-          scheduleCustomItemDrag(event, customItem, isSorting)
-        }
-        onPointerMove={(event) => updateCustomItemDrag(event, customItem)}
-        onPointerUp={finishCustomItemDrag}
-        onPointerCancel={finishCustomItemDrag}
-        className={`grid h-14 items-center gap-[6px] border-b border-[#edf3ef] px-0 text-number font-normal transition-[transform,background-color,box-shadow] duration-200 ease-out will-change-transform ${customItemRowColumns(
-          customItem.category,
-          isSorting ? "sort" : "view",
-        )} ${
-          isSorting
-            ? "touch-none cursor-grab active:cursor-grabbing"
-            : canInteract
-              ? "cursor-pointer"
-              : "cursor-default"
-        } ${
-          isDragging
-            ? "bg-card-today/60 text-transparent ring-1 ring-danger/20 [&_*]:opacity-0"
-            : "bg-transparent"
-        }`}
-      >
-        <span className="min-w-[80px] truncate text-hoiku-ink">
-          {customItem.name}
-        </span>
-        <span className="whitespace-nowrap text-center text-text-secondary">
-          {customItem.count}
-        </span>
-        {isSpotItem ? (
-          <span className="whitespace-nowrap text-center text-caption font-normal text-text-secondary">
-            {formatItemSettingsWeekdays(customItem.weekdays ?? [])}
+          onPointerMove={(event) => updateCustomItemDrag(event, customItem)}
+          onPointerUp={finishCustomItemDrag}
+          onPointerCancel={finishCustomItemDrag}
+          className={`grid h-14 items-center gap-[6px] border-b border-[#edf3ef] px-0 text-number font-normal transition-[transform,background-color,box-shadow] duration-200 ease-out will-change-transform ${customItemRowColumns(
+            customItem.category,
+            isSorting ? "sort" : "view",
+          )} ${
+            isSorting
+              ? "touch-none cursor-grab active:cursor-grabbing"
+              : canInteract
+                ? "cursor-pointer"
+                : "cursor-default"
+          } ${
+            isDragging
+              ? "bg-card-today/60 text-transparent ring-1 ring-danger/20 [&_*]:opacity-0"
+              : "bg-transparent"
+          }`}
+        >
+          <span className="min-w-[80px] truncate text-hoiku-ink">
+            {customItem.name}
           </span>
-        ) : null}
-        {isRoughItem ? (
-          <span className="min-w-0 text-center text-text-secondary">
-            <HomeItemUnitText unit={customItem.unit} />
+          <span className="whitespace-nowrap text-center text-text-secondary">
+            {customItem.count}
           </span>
-        ) : null}
-        {isSorting ? (
-          <span
-            aria-hidden="true"
-            className="grid h-9 w-9 touch-none place-items-center text-icon-today"
-          >
-            <GripVertical size={18} strokeWidth={2} />
-          </span>
-        ) : durableItemsDeletable ? (
-          renderFlatActionButton({
+          {isSpotItem ? (
+            <span className="whitespace-nowrap text-center text-caption font-normal text-text-secondary">
+              {formatItemSettingsWeekdays(customItem.weekdays ?? [])}
+            </span>
+          ) : null}
+          {isRoughItem ? (
+            <span className="min-w-0 text-center text-text-secondary">
+              <HomeItemUnitText unit={customItem.unit} />
+            </span>
+          ) : null}
+          {isSorting ? (
+            <span
+              aria-hidden="true"
+              className="grid h-9 w-9 touch-none place-items-center text-icon-today"
+            >
+              <GripVertical size={18} strokeWidth={2} />
+            </span>
+          ) : durableItemsDeletable ? (
+            renderFlatActionButton({
               label: "削除",
               tone: "danger",
-              onClick: () => deleteCustomItem(customItem.id),
+              onClick: () => requestCustomItemDelete(customItem.id),
+              disabled: isDeleting,
               children: <Trash2 size={18} strokeWidth={2.2} />,
             })
-        ) : (
-          <span className="h-9 w-9" aria-hidden="true" />
-        )}
+          ) : (
+            <span className="h-9 w-9" aria-hidden="true" />
+          )}
+        </div>
+        {customItemDeleteError?.itemId === customItem.id ? (
+          <p className="px-1 py-2 text-status font-normal text-danger">
+            {customItemDeleteError.message}
+          </p>
+        ) : null}
       </div>
     );
   };
@@ -2984,6 +3104,35 @@ function HomeClientContent({
                 className="h-11 rounded-button bg-primary text-number font-normal text-surface shadow-button transition active:scale-95"
               >
                 破棄する
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {customItemDeleteConfirmItemId ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-6">
+          <div className="w-full max-w-[340px] rounded-card bg-surface p-5 shadow-floating ring-1 ring-border-soft">
+            <h3 className="text-list-item font-medium text-text-primary">
+              この項目を削除しますか？
+            </h3>
+            <p className="mt-2 text-number font-normal leading-relaxed text-text-secondary">
+              家族の画面からも削除されます。
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setCustomItemDeleteConfirmItemId(null)}
+                className="h-11 rounded-button bg-card-today text-number font-normal text-text-secondary ring-1 ring-border-soft transition active:scale-95"
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                onClick={confirmCustomItemDelete}
+                className="h-11 rounded-button bg-primary text-number font-normal text-surface shadow-button transition active:scale-95"
+              >
+                削除する
               </button>
             </div>
           </div>

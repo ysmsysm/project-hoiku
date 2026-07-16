@@ -6,6 +6,7 @@ import {
 import type {
   SaveSharedItemTemplateAddInput,
   SaveSharedItemTemplateAddResult,
+  SaveSharedItemTemplateDeleteInput,
   SaveSharedItemTemplateEditInput,
   SaveSharedRoughStateInput,
 } from "./family-sharing/save-item-template";
@@ -41,6 +42,13 @@ type SaveHomeCustomItemEditDependencies = {
   saveLocalCustomItems: (items: CustomizableItem[]) => void;
   saveSharedItemTemplateEdit: (
     input: SaveSharedItemTemplateEditInput,
+  ) => Promise<void>;
+};
+
+type SaveHomeCustomItemDeleteDependencies = {
+  saveLocalCustomItems: (items: CustomizableItem[]) => void;
+  saveSharedItemTemplateDelete: (
+    input: SaveSharedItemTemplateDeleteInput,
   ) => Promise<void>;
 };
 
@@ -168,6 +176,23 @@ export async function saveHomeCustomItemEdit(
 
   dependencies.saveLocalCustomItems(nextItems);
   dependencies.applyCustomItems(nextItems);
+}
+
+export function saveHomeCustomItemDelete(
+  dataSource: Exclude<HomeDataSource, { mode: "shared-error" }>,
+  itemId: string,
+  nextItems: CustomizableItem[],
+  dependencies: SaveHomeCustomItemDeleteDependencies,
+) {
+  if (dataSource.mode === "shared") {
+    return dependencies.saveSharedItemTemplateDelete({
+      familyId: dataSource.familyId,
+      childId: dataSource.initialData.childId,
+      itemId,
+    });
+  }
+
+  dependencies.saveLocalCustomItems(nextItems);
 }
 
 export async function saveHomeRoughState<RoughState extends string>(

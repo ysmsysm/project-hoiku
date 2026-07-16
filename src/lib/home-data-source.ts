@@ -84,7 +84,7 @@ export function canAddHomeDurableItem(
 }
 
 export function canDeleteHomeDurableItems(dataSource: HomeDataSource) {
-  return dataSource.mode === "local";
+  return dataSource.mode === "local" || dataSource.mode === "shared";
 }
 
 export function canEditHomeItemWeekdays(dataSource: HomeDataSource) {
