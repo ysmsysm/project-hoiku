@@ -197,7 +197,7 @@ test("rejects invalid quantity and weekdays", () => {
   assertIssue(invalidRegularQuantity, "invalid_item_count");
 
   const invalidSpotQuantity = baseRows();
-  invalidSpotQuantity.itemTemplates[1].default_quantity = 0;
+  invalidSpotQuantity.itemTemplates[1].default_quantity = 6;
   assertIssue(invalidSpotQuantity, "invalid_item_count");
 
   const invalidWeekday = baseRows();
@@ -207,6 +207,28 @@ test("rejects invalid quantity and weekdays", () => {
   const duplicateWeekday = baseRows();
   duplicateWeekday.itemTemplateWeekdays[1].weekday = 5;
   assertIssue(duplicateWeekday, "duplicate_item_weekday");
+});
+
+test("maps a zero-quantity spot with zero to seven weekdays", () => {
+  for (const weekdays of [[], [3], [0, 6], [0, 1, 2, 3, 4, 5, 6]]) {
+    const rows = baseRows();
+    rows.itemTemplates[1].default_quantity = 0;
+    rows.itemTemplateWeekdays = weekdays.map((weekday) => ({
+      item_template_id: "template-spot",
+      family_id: familyId,
+      weekday,
+    }));
+
+    const result = mapSharedSettingsRowsToAppData(rows);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      const spot = result.data.customItems.find(
+        (item) => item.id === "template-spot",
+      );
+      assert.equal(spot?.count, 0);
+      assert.deepEqual(spot?.weekdays, weekdays);
+    }
+  }
 });
 
 test("rejects rough state inconsistencies", () => {

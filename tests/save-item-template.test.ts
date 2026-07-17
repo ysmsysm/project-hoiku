@@ -15,6 +15,7 @@ import {
 const regularUuid = "11111111-1111-4111-8111-111111111111";
 const roughUuid = "22222222-2222-4222-8222-222222222222";
 const anotherUuid = "33333333-3333-4333-8333-333333333333";
+const spotUuid = "44444444-4444-4444-8444-444444444444";
 
 test("adds a regular item template after the current maximum sort order", async () => {
   const calls: unknown[] = [];
@@ -97,6 +98,124 @@ test("adds a rough item with enough state and starts sort order at zero", async 
         call[1].current_rough_state === "enough" &&
         call[1].sort_order === 0,
     ),
+  );
+});
+
+test("adds a spot item through the atomic RPC and returns its database UUID", async () => {
+  const calls: unknown[] = [];
+  const client = createSpotAddMockClient(calls, {
+    data: [{ id: spotUuid, sort_order: 9 }],
+    error: null,
+  });
+
+  const result = await saveSharedItemTemplateAdd(client, {
+    familyId: "family-1",
+    childId: "child-1",
+    kind: "spot",
+    name: " Water bottle ",
+    defaultQuantity: 0,
+    unit: "個",
+    currentRoughState: null,
+    weekdays: [0, 6],
+  });
+
+  assert.deepEqual(result, { id: spotUuid, sortOrder: 9 });
+  assert.deepEqual(calls, [
+    [
+      "rpc",
+      "add_family_spot_item_template",
+      {
+        p_family_id: "family-1",
+        p_child_id: "child-1",
+        p_name: "Water bottle",
+        p_default_quantity: 0,
+        p_weekdays: [0, 6],
+      },
+    ],
+  ]);
+});
+
+test("spot add accepts zero to seven weekdays and quantities zero through five", async () => {
+  for (const defaultQuantity of [0, 1, 5]) {
+    for (const weekdays of [[], [1], [1, 5], [0, 1, 2, 3, 4, 5, 6]]) {
+      const result = await saveSharedItemTemplateAdd(
+        createSpotAddMockClient([], {
+          data: [{ id: spotUuid, sort_order: 0 }],
+          error: null,
+        }),
+        {
+          ...spotAddInput(),
+          defaultQuantity,
+          weekdays,
+        },
+      );
+      assert.equal(result.id, spotUuid);
+    }
+  }
+});
+
+test("spot add rejects invalid quantity, weekdays, unit, and rough state before RPC", async () => {
+  const invalidInputs: SaveSharedItemTemplateAddInput[] = [
+    { ...spotAddInput(), defaultQuantity: -1 },
+    { ...spotAddInput(), defaultQuantity: 6 },
+    { ...spotAddInput(), weekdays: [0, 1, 2, 3, 4, 5, 6, 0] },
+    { ...spotAddInput(), weekdays: [-1] },
+    { ...spotAddInput(), weekdays: [7] },
+    { ...spotAddInput(), weekdays: [1, 1] },
+    { ...spotAddInput(), unit: "枚" },
+    { ...spotAddInput(), currentRoughState: "enough" },
+  ];
+
+  for (const input of invalidInputs) {
+    const calls: unknown[] = [];
+    await assert.rejects(
+      saveSharedItemTemplateAdd(
+        createSpotAddMockClient(calls, {
+          data: [{ id: spotUuid, sort_order: 0 }],
+          error: null,
+        }),
+        input,
+      ),
+    );
+    assert.deepEqual(calls, []);
+  }
+});
+
+test("spot RPC failure is returned without a direct item_templates insert", async () => {
+  const calls: unknown[] = [];
+  const error = new Error("weekday insert failed");
+  await assert.rejects(
+    saveSharedItemTemplateAdd(
+      createSpotAddMockClient(calls, { data: null, error }),
+      spotAddInput(),
+    ),
+    error,
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(hasInsertCall(calls), false);
+});
+
+test("spot RPC preserves PostgREST error fields in a loggable Error", async () => {
+  const postgrestError = {
+    code: "42702",
+    message: "column reference is ambiguous",
+    details: "It could refer to a variable or a table column.",
+    hint: "Qualify the reference.",
+  };
+
+  await assert.rejects(
+    saveSharedItemTemplateAdd(
+      createSpotAddMockClient([], { data: null, error: postgrestError }),
+      spotAddInput(),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /code=42702/);
+      assert.match(error.message, /message=column reference is ambiguous/);
+      assert.match(error.message, /details=It could refer to a variable or a table column\./);
+      assert.match(error.message, /hint=Qualify the reference\./);
+      return true;
+    },
   );
 });
 
@@ -760,6 +879,19 @@ function regularAddInput() {
   };
 }
 
+function spotAddInput(): SaveSharedItemTemplateAddInput {
+  return {
+    familyId: "family-1",
+    childId: "child-1",
+    kind: "spot",
+    name: "Water bottle",
+    defaultQuantity: 1,
+    unit: "個",
+    currentRoughState: null,
+    weekdays: [],
+  };
+}
+
 async function assertAddRejectedBeforeQuery(
   overrides: Partial<SaveSharedItemTemplateAddInput>,
   expectedError: RegExp,
@@ -838,6 +970,24 @@ function createAddMockClient(
           };
         },
       };
+    },
+  } as unknown as SharedItemTemplateAddClient;
+}
+
+function createSpotAddMockClient(
+  calls: unknown[],
+  result: {
+    data: { id: string; sort_order: number }[] | null;
+    error: unknown;
+  },
+): SharedItemTemplateAddClient {
+  return {
+    from() {
+      throw new Error("spot add must not query item_templates directly");
+    },
+    rpc(functionName, args) {
+      calls.push(["rpc", functionName, args]);
+      return Promise.resolve(result);
     },
   } as unknown as SharedItemTemplateAddClient;
 }

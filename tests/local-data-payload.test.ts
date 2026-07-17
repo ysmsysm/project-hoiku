@@ -36,7 +36,7 @@ const validRawStorage = (): FamilySharingRawStorage => ({
       unit: "枚",
       count: 1,
       category: "スポット追加",
-      weekdays: [1, 5],
+      weekdays: [0, 1, 2, 3, 4, 5, 6],
     },
     {
       id: "rough-diaper",
@@ -130,7 +130,7 @@ test("builds a start_family_data_sharing payload from durable local settings", (
         unit: "枚",
         count: 1,
         category: "スポット追加",
-        weekdays: [1, 5],
+        weekdays: [0, 1, 2, 3, 4, 5, 6],
       },
       {
         id: "rough-diaper",
@@ -190,7 +190,7 @@ test("builds a start_family_data_sharing payload from durable local settings", (
         category: "スポット追加",
         count: 1,
         unit: "枚",
-        weekdays: [1, 5],
+        weekdays: [0, 1, 2, 3, 4, 5, 6],
         sortOrder: 1,
         roughState: null,
       },
@@ -252,6 +252,9 @@ test("reads saved local data and prepares the displayed child name", () => {
 
   if (prepared.ok) {
     assert.equal(prepared.payload.child.name, prepared.childName);
+    assert.deepEqual(prepared.payload.items[1].weekdays, [
+      0, 1, 2, 3, 4, 5, 6,
+    ]);
     assert.deepEqual(validateStartFamilyDataSharingPayload(prepared.payload), {
       ok: true,
     });
@@ -385,6 +388,13 @@ test("detects invalid weekdays", () => {
     weekdays: [7],
   };
   assertInvalidPayload(invalidWeekdayPayload, "invalid_item_weekday");
+
+  const tooManyWeekdaysPayload = validPayload();
+  tooManyWeekdaysPayload.items[1] = {
+    ...tooManyWeekdaysPayload.items[1],
+    weekdays: [0, 1, 2, 3, 4, 5, 6, 0],
+  };
+  assertInvalidPayload(tooManyWeekdaysPayload, "invalid_item_weekdays");
 
   const duplicateWeekdayPayload = validPayload();
   duplicateWeekdayPayload.items[1] = {

@@ -307,7 +307,7 @@ function validateItemTemplate(
     addIssue(issues, `${path}.default_quantity`, "invalid_item_count");
   } else if (
     item.kind === "spot"
-      ? item.default_quantity < 1 || item.default_quantity > 99
+      ? item.default_quantity < 0 || item.default_quantity > 5
       : item.default_quantity < 0 || item.default_quantity > 999
   ) {
     addIssue(issues, `${path}.default_quantity`, "invalid_item_count");
@@ -326,7 +326,7 @@ function validateItemTemplate(
     addIssue(issues, `${path}.weekdays`, "invalid_item_weekdays");
   }
 
-  if (item.kind === "spot" && weekdays.length > 2) {
+  if (item.kind === "spot" && weekdays.length > 7) {
     addIssue(issues, `${path}.weekdays`, "invalid_item_weekdays");
   }
 

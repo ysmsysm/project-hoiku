@@ -304,7 +304,7 @@ function validateItemWeekdays(
     addIssue(issues, path, "invalid_item_weekdays");
   }
 
-  if (category === "スポット追加" && weekdays.length > 2) {
+  if (category === "スポット追加" && weekdays.length > 7) {
     addIssue(issues, path, "invalid_item_weekdays");
   }
 

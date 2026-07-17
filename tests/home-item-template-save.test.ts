@@ -197,15 +197,15 @@ test("local rough and spot adds keep rough state and spot weekdays storage", asy
       count: 1,
       unit: "個",
       category: "スポット追加",
-      weekdays: [1, 5],
+      weekdays: [0, 1, 2, 3, 4, 5, 6],
     },
     "十分",
     dependencies,
   );
-  assert.deepEqual(spotResult.item.weekdays, [1, 5]);
+  assert.deepEqual(spotResult.item.weekdays, [0, 1, 2, 3, 4, 5, 6]);
   assert.deepEqual(
     savedItems[1].find((item) => item.id === "custom-2")?.weekdays,
-    [1, 5],
+    [0, 1, 2, 3, 4, 5, 6],
   );
 });
 
@@ -360,6 +360,57 @@ test("shared rough add saves enough in the same insert and prepares both states 
   assert.equal(calls.length, 1);
 });
 
+test("shared spot add sends weekdays and uses the RPC UUID without local persistence", async () => {
+  const calls: string[] = [];
+  const spotUuid = "44444444-4444-4444-8444-444444444444";
+
+  const result = await saveHomeCustomItemAdd(
+    sharedDataSource(),
+    customItems,
+    { "existing-rough": "少ない" },
+    {
+      name: "Water bottle",
+      count: 0,
+      unit: "個",
+      category: "スポット追加",
+      weekdays: [0, 1, 2, 3, 4, 5, 6],
+    },
+    "十分",
+    {
+      createLocalItemId: () => "unexpected-local-id",
+      saveLocalCustomItems: () => calls.push("local-items"),
+      saveLocalRoughStates: () => calls.push("local-rough"),
+      saveSharedItemTemplateAdd: async (input) => {
+        calls.push(JSON.stringify(input));
+        return { id: spotUuid, sortOrder: 11 };
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    item: {
+      id: spotUuid,
+      name: "Water bottle",
+      unit: "個",
+      count: 0,
+      category: "スポット追加",
+      weekdays: [0, 1, 2, 3, 4, 5, 6],
+    },
+    initialRoughState: null,
+  });
+  assert.deepEqual(JSON.parse(calls[0]), {
+    familyId: "family-1",
+    childId: "child-1",
+    kind: "spot",
+    name: "Water bottle",
+    defaultQuantity: 0,
+    unit: "個",
+    currentRoughState: null,
+    weekdays: [0, 1, 2, 3, 4, 5, 6],
+  });
+  assert.equal(calls.length, 1);
+});
+
 test("shared item add does not use local storage or return success when Supabase fails", async () => {
   const calls: string[] = [];
   const error = new Error("insert failed");
@@ -385,6 +436,49 @@ test("shared item add does not use local storage or return success when Supabase
   );
 
   assert.deepEqual(calls, ["shared"]);
+});
+
+test("shared spot add with seven weekdays does not fall back to local storage when Supabase fails", async () => {
+  const calls: string[] = [];
+  const error = new Error("spot insert failed");
+
+  await assert.rejects(
+    saveHomeCustomItemAdd(
+      sharedDataSource(),
+      customItems,
+      {},
+      {
+        name: "Water bottle",
+        count: 0,
+        unit: "個",
+        category: "スポット追加",
+        weekdays: [0, 1, 2, 3, 4, 5, 6],
+      },
+      "十分",
+      {
+        createLocalItemId: () => "unexpected-local-id",
+        saveLocalCustomItems: () => calls.push("local-items"),
+        saveLocalRoughStates: () => calls.push("local-rough"),
+        saveSharedItemTemplateAdd: async (input) => {
+          calls.push(JSON.stringify(input));
+          throw error;
+        },
+      },
+    ),
+    error,
+  );
+
+  assert.deepEqual(JSON.parse(calls[0]), {
+    familyId: "family-1",
+    childId: "child-1",
+    kind: "spot",
+    name: "Water bottle",
+    defaultQuantity: 0,
+    unit: "個",
+    currentRoughState: null,
+    weekdays: [0, 1, 2, 3, 4, 5, 6],
+  });
+  assert.equal(calls.length, 1);
 });
 
 test("local item edit save uses existing local storage path and then applies state", async () => {

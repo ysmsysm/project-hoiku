@@ -25,11 +25,12 @@ export type SaveSharedRoughStateInput = {
 export type SaveSharedItemTemplateAddInput = {
   familyId: string;
   childId: string;
-  kind: "regular" | "rough";
+  kind: "regular" | "spot" | "rough";
   name: string;
   defaultQuantity: number;
   unit: string;
   currentRoughState: "enough" | null;
+  weekdays?: number[];
 };
 
 export type SaveSharedItemTemplateAddResult = {
@@ -106,6 +107,19 @@ export type SharedItemTemplateAddClient = {
       };
     };
   };
+  rpc?: (
+    functionName: "add_family_spot_item_template",
+    args: {
+      p_family_id: string;
+      p_child_id: string;
+      p_name: string;
+      p_default_quantity: number;
+      p_weekdays: number[];
+    },
+  ) => PromiseLike<{
+    data: { id: string; sort_order: number }[] | null;
+    error: unknown;
+  }>;
 };
 
 const dbRoughStateByAppValue = {
@@ -156,6 +170,39 @@ export async function saveSharedItemTemplateAdd(
 
   assertValidHomeItemQuantity(input.defaultQuantity);
   assertValidHomeRoughUnit(input.unit);
+
+  if (input.kind === "spot") {
+    if (input.unit !== "個" || input.currentRoughState !== null) {
+      throw new Error("invalid_spot_item_template");
+    }
+
+    const weekdays = validateSpotWeekdays(input.weekdays);
+    if (!supabase.rpc) {
+      throw new Error("missing_spot_item_template_rpc");
+    }
+
+    const { data, error } = await supabase.rpc(
+      "add_family_spot_item_template",
+      {
+        p_family_id: input.familyId,
+        p_child_id: input.childId,
+        p_name: name,
+        p_default_quantity: input.defaultQuantity,
+        p_weekdays: weekdays,
+      },
+    );
+
+    if (error) {
+      throw toSharedItemTemplateSaveError(error);
+    }
+
+    const saved = data?.[0];
+    if (data?.length !== 1 || !isValidItemTemplateAddResult(saved)) {
+      throw new Error("shared_item_template_add_result_invalid");
+    }
+
+    return { id: saved.id, sortOrder: saved.sort_order };
+  }
 
   if (
     (input.kind === "rough" && input.currentRoughState !== "enough") ||
@@ -212,15 +259,7 @@ export async function saveSharedItemTemplateAdd(
     throw error;
   }
 
-  if (
-    !data ||
-    typeof data.id !== "string" ||
-    !uuidPattern.test(data.id) ||
-    typeof data.sort_order !== "number" ||
-    !Number.isInteger(data.sort_order) ||
-    data.sort_order < 0 ||
-    data.sort_order > maxItemSortOrder
-  ) {
+  if (!isValidItemTemplateAddResult(data)) {
     throw new Error("shared_item_template_add_result_invalid");
   }
 
@@ -324,6 +363,68 @@ function isAllowedRoughState(value: string): value is RoughState {
 
 function charLength(value: string) {
   return Array.from(value).length;
+}
+
+function validateSpotWeekdays(weekdays: number[] | undefined) {
+  if (!Array.isArray(weekdays) || weekdays.length > 7) {
+    throw new Error("invalid_spot_item_weekdays");
+  }
+
+  const uniqueWeekdays = new Set<number>();
+  for (const weekday of weekdays) {
+    if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
+      throw new Error("invalid_spot_item_weekday");
+    }
+    if (uniqueWeekdays.has(weekday)) {
+      throw new Error("duplicate_spot_item_weekday");
+    }
+    uniqueWeekdays.add(weekday);
+  }
+
+  return [...weekdays];
+}
+
+function isValidItemTemplateAddResult(
+  value: { id: string; sort_order: number } | null | undefined,
+): value is { id: string; sort_order: number } {
+  return Boolean(
+    value &&
+      typeof value.id === "string" &&
+      uuidPattern.test(value.id) &&
+      typeof value.sort_order === "number" &&
+      Number.isInteger(value.sort_order) &&
+      value.sort_order >= 0 &&
+      value.sort_order <= maxItemSortOrder,
+  );
+}
+
+function toSharedItemTemplateSaveError(error: unknown) {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const postgrestError = error as {
+      code?: unknown;
+      message?: unknown;
+      details?: unknown;
+      hint?: unknown;
+    };
+    const fields = [
+      ["code", postgrestError.code],
+      ["message", postgrestError.message],
+      ["details", postgrestError.details],
+      ["hint", postgrestError.hint],
+    ]
+      .filter((field): field is [string, string] => typeof field[1] === "string")
+      .map(([label, value]) => `${label}=${value}`);
+
+    if (fields.length > 0) {
+      return new Error(`shared_item_template_save_failed: ${fields.join("; ")}`);
+    }
+  }
+
+  return new Error(`shared_item_template_save_failed: ${String(error)}`);
 }
 
 function assertNonEmptyId(value: string, label: string) {

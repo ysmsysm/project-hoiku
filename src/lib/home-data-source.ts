@@ -77,10 +77,18 @@ export function canAddHomeDurableItem(
   dataSource: HomeDataSource,
   category: CustomItemCategory,
 ) {
+  const isDurableCategory =
+    category === "持ち物" ||
+    category === "スポット追加" ||
+    category === "ざっくり管理";
   return (
-    dataSource.mode === "local" ||
-    (dataSource.mode === "shared" && category !== "スポット追加")
+    isDurableCategory &&
+    (dataSource.mode === "local" || dataSource.mode === "shared")
   );
+}
+
+export function canSelectHomeNewItemWeekdays(dataSource: HomeDataSource) {
+  return dataSource.mode === "local" || dataSource.mode === "shared";
 }
 
 export function canDeleteHomeDurableItems(dataSource: HomeDataSource) {

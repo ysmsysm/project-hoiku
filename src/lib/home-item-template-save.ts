@@ -104,19 +104,21 @@ export async function saveHomeCustomItemAdd<RoughState extends string>(
   let itemId: string;
 
   if (dataSource.mode === "shared") {
-    if (input.category === "スポット追加") {
-      throw new Error("shared_spot_item_add_not_available");
-    }
-
     const saved = await dependencies.saveSharedItemTemplateAdd({
       familyId: dataSource.familyId,
       childId: dataSource.initialData.childId,
-      kind: input.category === "ざっくり管理" ? "rough" : "regular",
+      kind:
+        input.category === "ざっくり管理"
+          ? "rough"
+          : input.category === "スポット追加"
+            ? "spot"
+            : "regular",
       name: input.name,
       defaultQuantity: input.count,
       unit: input.unit,
       currentRoughState:
         input.category === "ざっくり管理" ? "enough" : null,
+      weekdays: input.category === "スポット追加" ? input.weekdays : undefined,
     });
     itemId = saved.id;
   } else {

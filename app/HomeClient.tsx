@@ -54,6 +54,7 @@ import {
 } from "../src/lib/preparation-status";
 import {
   canAddHomeDurableItem,
+  canSelectHomeNewItemWeekdays,
   canDeleteHomeDurableItems,
   canEditHomeChildProfile,
   canEditHomeDurableSettings,
@@ -490,6 +491,8 @@ function HomeClientContent({
   const roughStateEditable = canToggleHomeRoughState(dataSource);
   const durableItemsDeletable = canDeleteHomeDurableItems(dataSource);
   const itemWeekdaysEditable = canEditHomeItemWeekdays(dataSource);
+  const newItemWeekdaysSelectable =
+    canSelectHomeNewItemWeekdays(dataSource);
   const durableItemsSortable = canSortHomeDurableItems(dataSource);
   const localStorageLoadPlan = getHomeLocalStorageLoadPlan(dataSource);
   const shouldLoadDurableSettings = localStorageLoadPlan.durableSettings;
@@ -1638,7 +1641,7 @@ function HomeClientContent({
   };
 
   const toggleNewCustomItemWeekday = (weekday: number) => {
-    if (!itemWeekdaysEditable) {
+    if (!newItemWeekdaysSelectable) {
       return;
     }
 
@@ -1646,7 +1649,7 @@ function HomeClientContent({
     setNewCustomItemDraft((current) => {
       const nextWeekdays = current.weekdays.includes(weekday)
         ? current.weekdays.filter((day) => day !== weekday)
-        : current.weekdays.length >= 2
+        : current.weekdays.length >= 7
           ? current.weekdays
         : [...current.weekdays, weekday].sort((a, b) => a - b);
 
@@ -1667,7 +1670,7 @@ function HomeClientContent({
 
     const nextWeekdays = draft.weekdays.includes(weekday)
       ? draft.weekdays.filter((day) => day !== weekday)
-      : draft.weekdays.length >= 2
+      : draft.weekdays.length >= 7
         ? draft.weekdays
         : [...draft.weekdays, weekday].sort((a, b) => a - b);
 
@@ -2100,10 +2103,10 @@ function HomeClientContent({
       }
 
       if (mode === "sort") {
-        return "grid-cols-[minmax(80px,1fr)_40px_64px_36px]";
+        return "grid-cols-[minmax(72px,1fr)_40px_minmax(72px,88px)_36px]";
       }
 
-      return "grid-cols-[minmax(80px,1fr)_40px_64px_36px]";
+      return "grid-cols-[minmax(72px,1fr)_40px_minmax(72px,88px)_36px]";
     }
 
     if (category === "ざっくり管理") {
@@ -2173,7 +2176,7 @@ function HomeClientContent({
     selectedWeekdays: number[];
     onToggle: (weekday: number) => void;
   }) => (
-    <div className="absolute right-0 top-10 z-30 w-56 rounded-section bg-surface p-2 shadow-floating ring-1 ring-danger/20">
+    <div className="absolute left-1/2 top-11 z-30 w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2 rounded-section bg-surface p-2 shadow-floating ring-1 ring-danger/20">
       <div className="grid grid-cols-7 gap-1">
         {itemSettingsWeekdayOptions.map((weekday) => {
           const isSelected = selectedWeekdays.includes(weekday.value);
@@ -2186,7 +2189,7 @@ function HomeClientContent({
                 event.stopPropagation();
                 onToggle(weekday.value);
               }}
-              className={`grid h-8 place-items-center rounded-full text-caption font-normal ring-1 transition active:scale-95 ${
+              className={`grid h-10 min-w-0 place-items-center rounded-button text-caption font-normal ring-1 transition active:scale-95 ${
                 isSelected
                   ? "bg-card-today text-danger ring-danger/30"
                   : "bg-surface text-text-tertiary ring-border-soft"
@@ -2223,13 +2226,17 @@ function HomeClientContent({
             event.stopPropagation();
             setExpandedWeekdayItemId((current) => (current === id ? null : id));
           }}
-          className={`h-9 w-16 rounded-button px-1 text-caption font-normal transition active:scale-95 ${
+          className={`h-9 w-16 overflow-hidden rounded-button px-1 text-caption font-normal transition active:scale-95 ${
             isOpen || label
               ? "bg-card-today text-danger ring-1 ring-danger/30"
               : "bg-surface text-text-tertiary ring-1 ring-border-soft"
           }`}
         >
-          <span className="block whitespace-nowrap text-center">
+          <span
+            className={`block truncate whitespace-nowrap text-center ${
+              label.length >= 6 ? "text-[10px]" : ""
+            }`}
+          >
             {label || placeholder}
           </span>
         </button>
@@ -2492,7 +2499,7 @@ function HomeClientContent({
             {customItem.count}
           </span>
           {isSpotItem ? (
-            <span className="whitespace-nowrap text-center text-caption font-normal text-text-secondary">
+            <span className="min-w-0 whitespace-normal break-words text-center text-caption font-normal leading-tight text-text-secondary">
               {formatItemSettingsWeekdays(customItem.weekdays ?? [])}
             </span>
           ) : null}

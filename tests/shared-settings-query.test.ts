@@ -22,6 +22,17 @@ test("loads only active templates and filters weekdays before mapping", async ()
     ],
     item_templates: [
       {
+        id: "active-spot",
+        family_id: familyId,
+        child_id: childId,
+        kind: "spot",
+        name: "Water bottle",
+        default_quantity: 0,
+        unit: "個",
+        sort_order: 0,
+        current_rough_state: null,
+      },
+      {
         id: "active-rough",
         family_id: familyId,
         child_id: childId,
@@ -34,6 +45,16 @@ test("loads only active templates and filters weekdays before mapping", async ()
       },
     ],
     item_template_weekdays: [
+      {
+        item_template_id: "active-spot",
+        family_id: familyId,
+        weekday: 0,
+      },
+      {
+        item_template_id: "active-spot",
+        family_id: familyId,
+        weekday: 6,
+      },
       {
         item_template_id: "inactive-spot",
         family_id: familyId,
@@ -59,8 +80,16 @@ test("loads only active templates and filters weekdays before mapping", async ()
   if (result.ok) {
     assert.deepEqual(
       result.data.customItems.map((item) => item.id),
-      ["active-rough"],
+      ["active-spot", "active-rough"],
     );
+    assert.deepEqual(result.data.customItems[0], {
+      id: "active-spot",
+      name: "Water bottle",
+      unit: "個",
+      count: 0,
+      category: "スポット追加",
+      weekdays: [0, 6],
+    });
     assert.deepEqual(result.data.roughStates, {
       "active-rough": defaultRoughStates["rough-tissue"],
     });

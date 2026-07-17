@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canAddHomeDurableItem,
+  canSelectHomeNewItemWeekdays,
   canDeleteHomeDurableItems,
   canEditHomeChildProfile,
   canEditHomeDurableSettings,
@@ -66,6 +67,7 @@ test("local mode keeps existing localStorage loading and durable settings editin
   assert.equal(canAddHomeDurableItem(dataSource, "持ち物"), true);
   assert.equal(canAddHomeDurableItem(dataSource, "スポット追加"), true);
   assert.equal(canAddHomeDurableItem(dataSource, "ざっくり管理"), true);
+  assert.equal(canSelectHomeNewItemWeekdays(dataSource), true);
   assert.equal(canDeleteHomeDurableItems(dataSource), true);
   assert.equal(canEditHomeItemWeekdays(dataSource), true);
   assert.equal(canSortHomeDurableItems(dataSource), true);
@@ -118,7 +120,8 @@ test("shared mode separates durable item editing permissions by operation", () =
   assert.equal(canToggleHomeRoughState(dataSource), true);
   assert.equal(canAddHomeDurableItem(dataSource, "持ち物"), true);
   assert.equal(canAddHomeDurableItem(dataSource, "ざっくり管理"), true);
-  assert.equal(canAddHomeDurableItem(dataSource, "スポット追加"), false);
+  assert.equal(canAddHomeDurableItem(dataSource, "スポット追加"), true);
+  assert.equal(canSelectHomeNewItemWeekdays(dataSource), true);
   assert.equal(canDeleteHomeDurableItems(dataSource), true);
   assert.equal(canEditHomeItemWeekdays(dataSource), false);
   assert.equal(canSortHomeDurableItems(dataSource), false);
