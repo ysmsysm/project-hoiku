@@ -2172,47 +2172,60 @@ function HomeClientContent({
   const renderWeekdayPicker = ({
     selectedWeekdays,
     onToggle,
+    placement = "center",
   }: {
     selectedWeekdays: number[];
     onToggle: (weekday: number) => void;
-  }) => (
-    <div className="absolute left-1/2 top-11 z-30 w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2 rounded-section bg-surface p-2 shadow-floating ring-1 ring-danger/20">
-      <div className="grid grid-cols-7 gap-1">
-        {itemSettingsWeekdayOptions.map((weekday) => {
-          const isSelected = selectedWeekdays.includes(weekday.value);
+    placement?: "center" | "add-row";
+  }) => {
+    const pickerPositionClass =
+      placement === "add-row"
+        ? "right-[-2.75rem] w-[min(17.5rem,calc(100vw-2rem))]"
+        : "left-1/2 w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2";
 
-          return (
-            <button
-              key={weekday.value}
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onToggle(weekday.value);
-              }}
-              className={`grid h-10 min-w-0 place-items-center rounded-button text-caption font-normal ring-1 transition active:scale-95 ${
-                isSelected
-                  ? "bg-card-today text-danger ring-danger/30"
-                  : "bg-surface text-text-tertiary ring-border-soft"
-              }`}
-            >
-              {weekday.label}
-            </button>
-          );
-        })}
+    return (
+      <div
+        className={`absolute top-11 z-30 rounded-section bg-surface p-1.5 shadow-floating ring-1 ring-danger/20 sm:p-2 ${pickerPositionClass}`}
+      >
+        <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
+          {itemSettingsWeekdayOptions.map((weekday) => {
+            const isSelected = selectedWeekdays.includes(weekday.value);
+
+            return (
+              <button
+                key={weekday.value}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggle(weekday.value);
+                }}
+                className={`grid h-10 min-w-0 place-items-center rounded-button text-caption font-normal ring-1 transition active:scale-95 ${
+                  isSelected
+                    ? "bg-card-today text-danger ring-danger/30"
+                    : "bg-surface text-text-tertiary ring-border-soft"
+                }`}
+              >
+                {weekday.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderWeekdayField = ({
     id,
     weekdays,
     placeholder,
     onToggle,
+    pickerPlacement,
   }: {
     id: string;
     weekdays: number[];
     placeholder: string;
     onToggle: (weekday: number) => void;
+    pickerPlacement?: "center" | "add-row";
   }) => {
     const label = formatItemSettingsWeekdays(weekdays);
     const isOpen = expandedWeekdayItemId === id;
@@ -2240,7 +2253,13 @@ function HomeClientContent({
             {label || placeholder}
           </span>
         </button>
-        {isOpen ? renderWeekdayPicker({ selectedWeekdays: weekdays, onToggle }) : null}
+        {isOpen
+          ? renderWeekdayPicker({
+              selectedWeekdays: weekdays,
+              onToggle,
+              placement: pickerPlacement,
+            })
+          : null}
       </div>
     );
   };
@@ -2312,6 +2331,7 @@ function HomeClientContent({
               weekdays: newCustomItemDraft.weekdays,
               placeholder: "曜日",
               onToggle: toggleNewCustomItemWeekday,
+              pickerPlacement: "add-row",
             })
           : null}
         {isRoughCategory
