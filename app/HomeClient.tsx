@@ -63,10 +63,9 @@ import {
   canEditHomeRoughItemUnit,
   canSortHomeDurableItems,
   canToggleHomeRoughState,
+  getHomeSharedErrorCopy,
   getHomeLocalStorageLoadPlan,
   getSharedInitialDurableSettings,
-  sharedSettingsLoadErrorBody,
-  sharedSettingsLoadErrorTitle,
   sharedSettingsReadonlyMessage,
   type HomeDataSource,
 } from "../src/lib/home-data-source";
@@ -429,13 +428,19 @@ export default function HomeClient({
   dataSource = { mode: "local" },
 }: HomeClientProps) {
   if (dataSource.mode === "shared-error") {
-    return <SharedErrorScreen />;
+    return <SharedErrorScreen reason={dataSource.reason} />;
   }
 
   return <HomeClientContent dataSource={dataSource} />;
 }
 
-function SharedErrorScreen() {
+function SharedErrorScreen({
+  reason,
+}: {
+  reason: Extract<HomeDataSource, { mode: "shared-error" }>["reason"];
+}) {
+  const errorCopy = getHomeSharedErrorCopy(reason);
+
   return (
     <main className="min-h-dvh bg-background px-5 py-8 text-hoiku-ink">
       <div className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-[430px] items-center">
@@ -443,10 +448,10 @@ function SharedErrorScreen() {
           <div className="space-y-4">
             <div>
               <h1 className="text-card-title font-semibold text-text-primary">
-                {sharedSettingsLoadErrorTitle}
+                {errorCopy.title}
               </h1>
               <p className="mt-2 text-status font-normal leading-relaxed text-text-secondary">
-                {sharedSettingsLoadErrorBody}
+                {errorCopy.body}
               </p>
             </div>
             <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
@@ -1758,6 +1763,9 @@ function HomeClientContent({
       count: nextCount,
       ...(item.category === "ざっくり管理" && roughItemUnitEditable
         ? { unit: customItemEditDraft.unit }
+        : {}),
+      ...(item.category === defaultCustomItems[6].category && itemWeekdaysEditable
+        ? { weekdays: customItemEditDraft.weekdays }
         : {}),
     };
 

@@ -12,6 +12,7 @@ export type SaveSharedItemTemplateEditInput = {
     name?: string;
     count?: number;
     unit?: string;
+    weekdays?: number[];
   };
 };
 
@@ -79,6 +80,20 @@ export type SharedItemTemplateClient = {
   from: (table: "item_templates") => {
     update: (value: ItemTemplatesUpdate) => ItemTemplatesUpdateQuery;
   };
+  rpc?: (
+    functionName: "update_family_spot_item_template_weekdays",
+    args: {
+      p_family_id: string;
+      p_child_id: string;
+      p_item_template_id: string;
+      p_weekdays: number[];
+      p_name?: string | null;
+      p_default_quantity?: number | null;
+    },
+  ) => PromiseLike<{
+    data: unknown;
+    error: unknown;
+  }>;
 };
 
 type ItemTemplateMaxSortOrderQuery = {
@@ -279,6 +294,31 @@ export async function saveSharedItemTemplateEdit(
   if (input.changes.unit !== undefined) {
     assertValidHomeRoughUnit(input.changes.unit);
   }
+  if (input.changes.weekdays !== undefined) {
+    const weekdays = validateSpotWeekdays(input.changes.weekdays);
+    if (!supabase.rpc) {
+      throw new Error("missing_spot_item_template_weekdays_rpc");
+    }
+
+    const { error } = await supabase.rpc(
+      "update_family_spot_item_template_weekdays",
+      {
+        p_family_id: input.familyId,
+        p_child_id: input.childId,
+        p_item_template_id: input.itemId,
+        p_weekdays: weekdays,
+        p_name: input.changes.name ?? null,
+        p_default_quantity: input.changes.count ?? null,
+      },
+    );
+
+    if (error) {
+      throw toSharedItemTemplateSaveError(error);
+    }
+
+    return;
+  }
+
   const update = toItemTemplateEditUpdate(input.changes);
 
   if (Object.keys(update).length === 0) {

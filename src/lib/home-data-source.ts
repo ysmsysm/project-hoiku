@@ -2,6 +2,7 @@ import type { SharedSettingsAppData } from "./family-sharing/shared-settings";
 import type { CustomItemCategory } from "../types/preparation";
 
 export type HomeSharedErrorReason =
+  | "auth-check-failed"
   | "membership-query-failed"
   | "settings-query-failed"
   | "shared-data-missing"
@@ -43,6 +44,26 @@ export const sharedSettingsLoadErrorTitle =
   "家族共有データを読み込めませんでした。";
 
 export const sharedSettingsLoadErrorBody = "ページを再読み込みしてください。";
+
+export const authCheckErrorTitle =
+  "ログイン状態を確認できませんでした";
+
+export const authCheckErrorBody =
+  "通信状態を確認して再読み込みしてください。";
+
+export function getHomeSharedErrorCopy(reason: HomeSharedErrorReason) {
+  if (reason === "auth-check-failed") {
+    return {
+      title: authCheckErrorTitle,
+      body: authCheckErrorBody,
+    };
+  }
+
+  return {
+    title: sharedSettingsLoadErrorTitle,
+    body: sharedSettingsLoadErrorBody,
+  };
+}
 
 export function getHomeLocalStorageLoadPlan(
   dataSource: HomeDataSource,
@@ -96,7 +117,7 @@ export function canDeleteHomeDurableItems(dataSource: HomeDataSource) {
 }
 
 export function canEditHomeItemWeekdays(dataSource: HomeDataSource) {
-  return dataSource.mode === "local";
+  return dataSource.mode === "local" || dataSource.mode === "shared";
 }
 
 export function canSortHomeDurableItems(dataSource: HomeDataSource) {

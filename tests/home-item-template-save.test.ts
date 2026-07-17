@@ -587,6 +587,104 @@ test("shared item edit save does not apply state or local fallback when Supabase
   assert.deepEqual(calls, ["shared"]);
 });
 
+test("local item edit preserves weekday changes through the local storage path", async () => {
+  const calls: string[] = [];
+  const nextItemsWithWeekdays: CustomizableItem[] = [
+    {
+      id: "template-spot",
+      name: "Bottle",
+      unit: "count",
+      count: 1,
+      category: customItems[0].category,
+      weekdays: [1, 3],
+    },
+  ];
+
+  await saveHomeCustomItemEdit(
+    { mode: "local" },
+    "template-spot",
+    nextItemsWithWeekdays,
+    { name: "Bottle", count: 1, weekdays: [1, 3] },
+    {
+      applyCustomItems: (items) => calls.push(`apply:${items[0].weekdays?.join(",")}`),
+      saveLocalCustomItems: (items) =>
+        calls.push(`local:${items[0].weekdays?.join(",")}`),
+      saveSharedItemTemplateEdit: async () => {
+        calls.push("shared");
+      },
+    },
+  );
+
+  assert.deepEqual(calls, ["local:1,3", "apply:1,3"]);
+});
+
+test("shared item edit passes weekday changes to Supabase before applying state", async () => {
+  const calls: string[] = [];
+  const nextItemsWithWeekdays: CustomizableItem[] = [
+    {
+      id: "template-spot",
+      name: "Bottle",
+      unit: "count",
+      count: 2,
+      category: customItems[0].category,
+      weekdays: [0, 1, 2, 3, 4, 5, 6],
+    },
+  ];
+
+  await saveHomeCustomItemEdit(
+    sharedDataSource(),
+    "template-spot",
+    nextItemsWithWeekdays,
+    { name: "Bottle", count: 2, weekdays: [0, 1, 2, 3, 4, 5, 6] },
+    {
+      applyCustomItems: (items) => calls.push(`apply:${items[0].weekdays?.length}`),
+      saveLocalCustomItems: () => calls.push("local"),
+      saveSharedItemTemplateEdit: async (input) => {
+        calls.push(
+          `${input.familyId}:${input.childId}:${input.itemId}:${input.changes.weekdays?.length}`,
+        );
+      },
+    },
+  );
+
+  assert.deepEqual(calls, ["family-1:child-1:template-spot:7", "apply:7"]);
+});
+
+test("shared weekday edit failure keeps state unapplied and skips local fallback", async () => {
+  const calls: string[] = [];
+  const error = new Error("weekday save failed");
+  const nextItemsWithWeekdays: CustomizableItem[] = [
+    {
+      id: "template-spot",
+      name: "Bottle",
+      unit: "count",
+      count: 1,
+      category: customItems[0].category,
+      weekdays: [],
+    },
+  ];
+
+  await assert.rejects(
+    saveHomeCustomItemEdit(
+      sharedDataSource(),
+      "template-spot",
+      nextItemsWithWeekdays,
+      { name: "Bottle", count: 1, weekdays: [] },
+      {
+        applyCustomItems: () => calls.push("apply"),
+        saveLocalCustomItems: () => calls.push("local"),
+        saveSharedItemTemplateEdit: async () => {
+          calls.push("shared");
+          throw error;
+        },
+      },
+    ),
+    error,
+  );
+
+  assert.deepEqual(calls, ["shared"]);
+});
+
 test("local item delete uses the existing local durable settings path", () => {
   const calls: string[] = [];
 

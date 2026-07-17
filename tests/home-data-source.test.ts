@@ -11,8 +11,11 @@ import {
   canEditHomeRoughItemUnit,
   canSortHomeDurableItems,
   canToggleHomeRoughState,
+  getHomeSharedErrorCopy,
   getHomeLocalStorageLoadPlan,
   getSharedInitialDurableSettings,
+  authCheckErrorBody,
+  authCheckErrorTitle,
   sharedSettingsLoadErrorBody,
   sharedSettingsLoadErrorTitle,
   toHomeSharedErrorReason,
@@ -123,7 +126,7 @@ test("shared mode separates durable item editing permissions by operation", () =
   assert.equal(canAddHomeDurableItem(dataSource, "スポット追加"), true);
   assert.equal(canSelectHomeNewItemWeekdays(dataSource), true);
   assert.equal(canDeleteHomeDurableItems(dataSource), true);
-  assert.equal(canEditHomeItemWeekdays(dataSource), false);
+  assert.equal(canEditHomeItemWeekdays(dataSource), true);
   assert.equal(canSortHomeDurableItems(dataSource), false);
 });
 
@@ -140,6 +143,42 @@ test("shared-error does not fall back to localStorage and has error copy", () =>
   assert.equal(getSharedInitialDurableSettings(dataSource), null);
   assert.equal(sharedSettingsLoadErrorTitle, "家族共有データを読み込めませんでした。");
   assert.equal(sharedSettingsLoadErrorBody, "ページを再読み込みしてください。");
+  assert.deepEqual(getHomeSharedErrorCopy(dataSource.reason), {
+    title: sharedSettingsLoadErrorTitle,
+    body: sharedSettingsLoadErrorBody,
+  });
+});
+
+test("auth-check shared-error disables local behavior and has auth error copy", () => {
+  const dataSource: HomeDataSource = {
+    mode: "shared-error",
+    reason: "auth-check-failed",
+  };
+
+  assert.deepEqual(getHomeLocalStorageLoadPlan(dataSource), {
+    durableSettings: false,
+    dailyData: false,
+  });
+  assert.equal(getSharedInitialDurableSettings(dataSource), null);
+  assert.equal(canEditHomeChildProfile(dataSource), false);
+  assert.equal(canEditHomeDurableSettings(dataSource), false);
+  assert.equal(canEditHomeExistingItemDetails(dataSource), false);
+  assert.equal(canEditHomeRoughItemUnit(dataSource), false);
+  assert.equal(canToggleHomeRoughState(dataSource), false);
+  assert.equal(canAddHomeDurableItem(dataSource, "持ち物"), false);
+  assert.equal(canSelectHomeNewItemWeekdays(dataSource), false);
+  assert.equal(canDeleteHomeDurableItems(dataSource), false);
+  assert.equal(canEditHomeItemWeekdays(dataSource), false);
+  assert.equal(canSortHomeDurableItems(dataSource), false);
+  assert.equal(authCheckErrorTitle, "ログイン状態を確認できませんでした");
+  assert.equal(
+    authCheckErrorBody,
+    "通信状態を確認して再読み込みしてください。",
+  );
+  assert.deepEqual(getHomeSharedErrorCopy(dataSource.reason), {
+    title: authCheckErrorTitle,
+    body: authCheckErrorBody,
+  });
 });
 
 test("shared settings errors map to safe home error reasons", () => {

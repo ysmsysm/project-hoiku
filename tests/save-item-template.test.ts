@@ -8,6 +8,7 @@ import {
   toDbRoughState,
   toItemTemplateEditUpdate,
   type SaveSharedItemTemplateAddInput,
+  type SaveSharedItemTemplateEditInput,
   type SharedItemTemplateAddClient,
   type SharedItemTemplateClient,
 } from "../src/lib/family-sharing/save-item-template";
@@ -434,6 +435,7 @@ test("maps item edit changes to item_templates update columns only", () => {
       name: "Diaper",
       count: 3,
       unit: "pack",
+      weekdays: [1, 3],
     }),
     {
       name: "Diaper",
@@ -441,6 +443,149 @@ test("maps item edit changes to item_templates update columns only", () => {
       unit: "pack",
     },
   );
+});
+
+test("updates shared spot fields and weekdays through the atomic weekday RPC", async () => {
+  const calls: unknown[] = [];
+
+  await saveSharedItemTemplateEdit(
+    createSpotWeekdayEditMockClient(calls, { data: null, error: null }),
+    {
+      familyId: "family-1",
+      childId: "child-1",
+      itemId: "template-spot",
+      changes: {
+        name: " Water bottle ",
+        count: 0,
+        weekdays: [0, 6],
+      },
+    },
+  );
+
+  assert.deepEqual(calls, [
+    [
+      "rpc",
+      "update_family_spot_item_template_weekdays",
+      {
+        p_family_id: "family-1",
+        p_child_id: "child-1",
+        p_item_template_id: "template-spot",
+        p_weekdays: [0, 6],
+        p_name: " Water bottle ",
+        p_default_quantity: 0,
+      },
+    ],
+  ]);
+});
+
+test("shared spot name-only and quantity-only edits still use the atomic weekday RPC", async () => {
+  const cases: Array<{
+    changes: SaveSharedItemTemplateEditInput["changes"];
+    expectedName: string | null;
+    expectedQuantity: number | null;
+  }> = [
+    {
+      changes: { name: "Water bottle", weekdays: [1, 3] },
+      expectedName: "Water bottle",
+      expectedQuantity: null,
+    },
+    {
+      changes: { count: 0, weekdays: [1, 3] },
+      expectedName: null,
+      expectedQuantity: 0,
+    },
+  ];
+
+  for (const testCase of cases) {
+    const calls: unknown[] = [];
+    await saveSharedItemTemplateEdit(
+      createSpotWeekdayEditMockClient(calls, { data: null, error: null }),
+      {
+        familyId: "family-1",
+        childId: "child-1",
+        itemId: "template-spot",
+        changes: testCase.changes,
+      },
+    );
+
+    assert.deepEqual(calls, [
+      [
+        "rpc",
+        "update_family_spot_item_template_weekdays",
+        {
+          p_family_id: "family-1",
+          p_child_id: "child-1",
+          p_item_template_id: "template-spot",
+          p_weekdays: [1, 3],
+          p_name: testCase.expectedName,
+          p_default_quantity: testCase.expectedQuantity,
+        },
+      ],
+    ]);
+  }
+});
+
+test("spot weekday edit accepts zero to seven weekdays", async () => {
+  for (const weekdays of [[], [1], [1, 5], [0, 1, 2, 3, 4, 5, 6]]) {
+    const calls: unknown[] = [];
+    await saveSharedItemTemplateEdit(
+      createSpotWeekdayEditMockClient(calls, { data: null, error: null }),
+      {
+        familyId: "family-1",
+        childId: "child-1",
+        itemId: "template-spot",
+        changes: { weekdays },
+      },
+    );
+
+    assert.equal(calls.length, 1);
+  }
+});
+
+test("spot weekday edit rejects invalid weekdays before RPC", async () => {
+  const invalidChanges: SaveSharedItemTemplateEditInput["changes"][] = [
+    { weekdays: [0, 1, 2, 3, 4, 5, 6, 0] },
+    { weekdays: [-1] },
+    { weekdays: [7] },
+    { weekdays: [1, 1] },
+  ];
+
+  for (const changes of invalidChanges) {
+    const calls: unknown[] = [];
+    await assert.rejects(
+      saveSharedItemTemplateEdit(
+        createSpotWeekdayEditMockClient(calls, { data: null, error: null }),
+        {
+          familyId: "family-1",
+          childId: "child-1",
+          itemId: "template-spot",
+          changes,
+        },
+      ),
+    );
+    assert.deepEqual(calls, []);
+  }
+});
+
+test("spot weekday edit does not fall back to item_templates update when RPC fails", async () => {
+  const calls: unknown[] = [];
+  const error = new Error("weekday update failed");
+
+  await assert.rejects(
+    saveSharedItemTemplateEdit(
+      createSpotWeekdayEditMockClient(calls, { data: null, error }),
+      {
+        familyId: "family-1",
+        childId: "child-1",
+        itemId: "template-spot",
+        changes: { name: "Water bottle", count: 2, weekdays: [2] },
+      },
+    ),
+    error,
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(hasUpdateCall(calls), false);
 });
 
 test("updates shared item template edit with item, family, and child filters", async () => {
@@ -914,6 +1059,10 @@ function hasInsertCall(calls: unknown[]) {
   return calls.some((call) => Array.isArray(call) && call[0] === "insert");
 }
 
+function hasUpdateCall(calls: unknown[]) {
+  return calls.some((call) => Array.isArray(call) && call[0] === "update");
+}
+
 function createAddMockClient(
   calls: unknown[],
   results: {
@@ -990,4 +1139,22 @@ function createSpotAddMockClient(
       return Promise.resolve(result);
     },
   } as unknown as SharedItemTemplateAddClient;
+}
+
+function createSpotWeekdayEditMockClient(
+  calls: unknown[],
+  result: {
+    data: unknown;
+    error: unknown;
+  },
+): SharedItemTemplateClient {
+  return {
+    from() {
+      throw new Error("spot weekday edit must use the atomic RPC");
+    },
+    rpc(functionName, args) {
+      calls.push(["rpc", functionName, args]);
+      return Promise.resolve(result);
+    },
+  } as unknown as SharedItemTemplateClient;
 }
