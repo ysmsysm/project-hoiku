@@ -3,17 +3,24 @@ import test from "node:test";
 import {
   applyHomeRoughStateChange,
   appendHomeCustomItemToCategory,
+  canInterruptHomeCustomItemSorting,
+  reorderHomeCustomItemsInCategory,
   saveHomeCustomItemAdd,
   saveHomeCustomItemDelete,
   saveHomeCustomItemEdit,
+  saveHomeCustomItemSortOrder,
   saveHomeRoughState,
 } from "../src/lib/home-item-template-save";
+import { defaultCustomItems } from "../src/data/defaultCustomItems";
 import type { HomeDataSource } from "../src/lib/home-data-source";
 import type { SharedSettingsAppData } from "../src/lib/family-sharing/shared-settings";
 import type { CustomizableItem } from "../src/types/preparation";
 
 const regularUuid = "11111111-1111-4111-8111-111111111111";
 const roughUuid = "22222222-2222-4222-8222-222222222222";
+const regularCategory = defaultCustomItems[0].category;
+const spotCategory = defaultCustomItems[6].category;
+const roughCategory = defaultCustomItems[9].category;
 
 const customItems: CustomizableItem[] = [
   {
@@ -101,6 +108,51 @@ test("appends only the saved item to the latest items without reverting concurre
     ...latestItems,
     savedItem,
   ]);
+});
+
+test("reorders only items in the selected category", () => {
+  const items: CustomizableItem[] = [
+    { id: "regular-1", name: "A", unit: "unit", count: 1, category: regularCategory },
+    { id: "regular-2", name: "B", unit: "unit", count: 1, category: regularCategory },
+    { id: "spot-1", name: "C", unit: "unit", count: 1, category: spotCategory },
+    { id: "spot-2", name: "D", unit: "unit", count: 1, category: spotCategory },
+    { id: "rough-1", name: "E", unit: "pack", count: 1, category: roughCategory },
+  ];
+
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      items,
+      spotCategory,
+      "spot-2",
+      0,
+    ).map((item) => item.id),
+    ["regular-1", "regular-2", "spot-2", "spot-1", "rough-1"],
+  );
+  assert.equal(
+    reorderHomeCustomItemsInCategory(
+      items,
+      spotCategory,
+      "regular-1",
+      0,
+    ),
+    items,
+  );
+});
+
+test("blocks sort-discarding item settings actions while sort order is saving", () => {
+  const guardedActions = [
+    "back",
+    "close-settings",
+    "toggle-child-settings",
+    "start-other-category",
+    "start-other-sort",
+    "start-editing",
+  ];
+
+  assert.equal(canInterruptHomeCustomItemSorting(false), true);
+  guardedActions.forEach(() => {
+    assert.equal(canInterruptHomeCustomItemSorting(true), false);
+  });
 });
 
 test("adds a rough state key without replacing existing state changes", () => {
@@ -734,6 +786,90 @@ test("shared item delete does not fall back to local storage when Supabase fails
       {
         saveLocalCustomItems: () => calls.push("local"),
         saveSharedItemTemplateDelete: async () => {
+          calls.push("shared");
+          throw error;
+        },
+      },
+    ),
+    error,
+  );
+
+  assert.deepEqual(calls, ["shared"]);
+});
+
+test("local sort order save keeps the existing local storage path and then applies state", async () => {
+  const calls: string[] = [];
+  const nextItems: CustomizableItem[] = [
+    { ...customItems[0], id: regularUuid },
+    {
+      id: roughUuid,
+      name: "Diaper",
+      unit: "pack",
+      count: 1,
+      category: roughCategory,
+    },
+  ];
+
+  await saveHomeCustomItemSortOrder({ mode: "local" }, nextItems, {
+    applyCustomItems: () => calls.push("apply"),
+    saveLocalCustomItems: () => calls.push("local"),
+    saveSharedItemTemplateSortOrders: async () => {
+      calls.push("shared");
+    },
+  });
+
+  assert.deepEqual(calls, ["local", "apply"]);
+});
+
+test("shared sort order save sends every active item with unique consecutive orders before applying state", async () => {
+  const calls: unknown[] = [];
+  const nextItems: CustomizableItem[] = [
+    { ...customItems[0], id: regularUuid },
+    {
+      id: roughUuid,
+      name: "Diaper",
+      unit: "pack",
+      count: 1,
+      category: roughCategory,
+    },
+  ];
+
+  await saveHomeCustomItemSortOrder(sharedDataSource(), nextItems, {
+    applyCustomItems: (items) => calls.push(["apply", items.map((item) => item.id)]),
+    saveLocalCustomItems: () => calls.push(["local"]),
+    saveSharedItemTemplateSortOrders: async (input) => {
+      calls.push(["shared", input]);
+    },
+  });
+
+  assert.deepEqual(calls, [
+    [
+      "shared",
+      {
+        familyId: "family-1",
+        childId: "child-1",
+        items: [
+          { id: regularUuid, sortOrder: 0 },
+          { id: roughUuid, sortOrder: 1 },
+        ],
+      },
+    ],
+    ["apply", [regularUuid, roughUuid]],
+  ]);
+});
+
+test("shared sort order failure keeps state unapplied and skips local fallback", async () => {
+  const calls: string[] = [];
+  const error = new Error("sort save failed");
+
+  await assert.rejects(
+    saveHomeCustomItemSortOrder(
+      sharedDataSource(),
+      [{ ...customItems[0], id: regularUuid }],
+      {
+        applyCustomItems: () => calls.push("apply"),
+        saveLocalCustomItems: () => calls.push("local"),
+        saveSharedItemTemplateSortOrders: async () => {
           calls.push("shared");
           throw error;
         },

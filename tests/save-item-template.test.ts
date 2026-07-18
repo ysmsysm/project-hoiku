@@ -4,6 +4,7 @@ import {
   saveSharedItemTemplateAdd,
   saveSharedItemTemplateDelete,
   saveSharedItemTemplateEdit,
+  saveSharedItemTemplateSortOrders,
   saveSharedRoughState,
   toDbRoughState,
   toItemTemplateEditUpdate,
@@ -11,6 +12,7 @@ import {
   type SaveSharedItemTemplateEditInput,
   type SharedItemTemplateAddClient,
   type SharedItemTemplateClient,
+  type SharedItemTemplateSortOrderClient,
 } from "../src/lib/family-sharing/save-item-template";
 
 const regularUuid = "11111111-1111-4111-8111-111111111111";
@@ -579,6 +581,95 @@ test("spot weekday edit does not fall back to item_templates update when RPC fai
         childId: "child-1",
         itemId: "template-spot",
         changes: { name: "Water bottle", count: 2, weekdays: [2] },
+      },
+    ),
+    error,
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(hasUpdateCall(calls), false);
+});
+
+test("updates shared item template sort orders through the atomic RPC", async () => {
+  const calls: unknown[] = [];
+
+  await saveSharedItemTemplateSortOrders(
+    createSortOrderMockClient(calls, { data: null, error: null }),
+    {
+      familyId: "family-1",
+      childId: "child-1",
+      items: [
+        { id: regularUuid, sortOrder: 0 },
+        { id: spotUuid, sortOrder: 1 },
+        { id: roughUuid, sortOrder: 2 },
+      ],
+    },
+  );
+
+  assert.deepEqual(calls, [
+    [
+      "rpc",
+      "update_family_item_template_sort_orders",
+      {
+        p_family_id: "family-1",
+        p_child_id: "child-1",
+        p_items: [
+          { id: regularUuid, sortOrder: 0 },
+          { id: spotUuid, sortOrder: 1 },
+          { id: roughUuid, sortOrder: 2 },
+        ],
+      },
+    ],
+  ]);
+});
+
+test("shared sort order save rejects invalid input before RPC", async () => {
+  for (const items of [
+    [{ id: "not-a-uuid", sortOrder: 0 }],
+    [
+      { id: regularUuid, sortOrder: 0 },
+      { id: regularUuid, sortOrder: 1 },
+    ],
+    [{ id: regularUuid, sortOrder: -1 }],
+    [{ id: regularUuid, sortOrder: 1.5 }],
+    [
+      { id: regularUuid, sortOrder: 0 },
+      { id: spotUuid, sortOrder: 0 },
+    ],
+    [
+      { id: regularUuid, sortOrder: 0 },
+      { id: spotUuid, sortOrder: 2 },
+    ],
+  ]) {
+    const calls: unknown[] = [];
+
+    await assert.rejects(
+      saveSharedItemTemplateSortOrders(
+        createSortOrderMockClient(calls, { data: null, error: null }),
+        {
+          familyId: "family-1",
+          childId: "child-1",
+          items,
+        },
+      ),
+      /item_template/,
+    );
+
+    assert.deepEqual(calls, []);
+  }
+});
+
+test("shared sort order RPC failure does not fall back to item_templates update", async () => {
+  const calls: unknown[] = [];
+  const error = new Error("sort order update failed");
+
+  await assert.rejects(
+    saveSharedItemTemplateSortOrders(
+      createSortOrderMockClient(calls, { data: null, error }),
+      {
+        familyId: "family-1",
+        childId: "child-1",
+        items: [{ id: regularUuid, sortOrder: 0 }],
       },
     ),
     error,
@@ -1157,4 +1248,19 @@ function createSpotWeekdayEditMockClient(
       return Promise.resolve(result);
     },
   } as unknown as SharedItemTemplateClient;
+}
+
+function createSortOrderMockClient(
+  calls: unknown[],
+  result: {
+    data: unknown;
+    error: unknown;
+  },
+): SharedItemTemplateSortOrderClient {
+  return {
+    rpc(functionName, args) {
+      calls.push(["rpc", functionName, args]);
+      return Promise.resolve(result);
+    },
+  };
 }

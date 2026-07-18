@@ -121,7 +121,7 @@ export function canEditHomeItemWeekdays(dataSource: HomeDataSource) {
 }
 
 export function canSortHomeDurableItems(dataSource: HomeDataSource) {
-  return dataSource.mode === "local";
+  return dataSource.mode === "local" || dataSource.mode === "shared";
 }
 
 export function canEditHomeChildProfile(dataSource: HomeDataSource) {

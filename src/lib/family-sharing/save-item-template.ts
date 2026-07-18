@@ -45,6 +45,15 @@ export type SaveSharedItemTemplateDeleteInput = {
   itemId: string;
 };
 
+export type SaveSharedItemTemplateSortOrderInput = {
+  familyId: string;
+  childId: string;
+  items: {
+    id: string;
+    sortOrder: number;
+  }[];
+};
+
 type ItemTemplateInsert = {
   family_id: string;
   child_id: string;
@@ -133,6 +142,23 @@ export type SharedItemTemplateAddClient = {
     },
   ) => PromiseLike<{
     data: { id: string; sort_order: number }[] | null;
+    error: unknown;
+  }>;
+};
+
+export type SharedItemTemplateSortOrderClient = {
+  rpc?: (
+    functionName: "update_family_item_template_sort_orders",
+    args: {
+      p_family_id: string;
+      p_child_id: string;
+      p_items: {
+        id: string;
+        sortOrder: number;
+      }[];
+    },
+  ) => PromiseLike<{
+    data: unknown;
     error: unknown;
   }>;
 };
@@ -340,6 +366,69 @@ export async function saveSharedItemTemplateEdit(
 
   if (!data) {
     throw new Error("shared_item_template_not_found");
+  }
+}
+
+export async function saveSharedItemTemplateSortOrders(
+  supabase: SharedItemTemplateSortOrderClient,
+  input: SaveSharedItemTemplateSortOrderInput,
+) {
+  assertNonEmptyId(input.familyId, "familyId");
+  assertNonEmptyId(input.childId, "childId");
+  if (!Array.isArray(input.items) || input.items.length > 200) {
+    throw new Error("invalid_item_template_sort_orders");
+  }
+
+  const itemIds = new Set<string>();
+  const sortOrders = new Set<number>();
+  const items = input.items.map((item) => {
+    if (!uuidPattern.test(item.id)) {
+      throw new Error("invalid_item_template_id");
+    }
+    if (itemIds.has(item.id)) {
+      throw new Error("duplicate_item_template_id");
+    }
+    itemIds.add(item.id);
+
+    if (
+      !Number.isInteger(item.sortOrder) ||
+      item.sortOrder < 0 ||
+      item.sortOrder > maxItemSortOrder
+    ) {
+      throw new Error("invalid_item_template_sort_order");
+    }
+    if (sortOrders.has(item.sortOrder)) {
+      throw new Error("duplicate_item_template_sort_order");
+    }
+    sortOrders.add(item.sortOrder);
+
+    return {
+      id: item.id,
+      sortOrder: item.sortOrder,
+    };
+  });
+
+  for (let sortOrder = 0; sortOrder < items.length; sortOrder += 1) {
+    if (!sortOrders.has(sortOrder)) {
+      throw new Error("invalid_item_template_sort_order_sequence");
+    }
+  }
+
+  if (!supabase.rpc) {
+    throw new Error("missing_item_template_sort_order_rpc");
+  }
+
+  const { error } = await supabase.rpc(
+    "update_family_item_template_sort_orders",
+    {
+      p_family_id: input.familyId,
+      p_child_id: input.childId,
+      p_items: items,
+    },
+  );
+
+  if (error) {
+    throw toSharedItemTemplateSaveError(error);
   }
 }
 

@@ -127,7 +127,7 @@ test("shared mode separates durable item editing permissions by operation", () =
   assert.equal(canSelectHomeNewItemWeekdays(dataSource), true);
   assert.equal(canDeleteHomeDurableItems(dataSource), true);
   assert.equal(canEditHomeItemWeekdays(dataSource), true);
-  assert.equal(canSortHomeDurableItems(dataSource), false);
+  assert.equal(canSortHomeDurableItems(dataSource), true);
 });
 
 test("shared-error does not fall back to localStorage and has error copy", () => {

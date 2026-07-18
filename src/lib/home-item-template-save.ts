@@ -8,6 +8,7 @@ import type {
   SaveSharedItemTemplateAddResult,
   SaveSharedItemTemplateDeleteInput,
   SaveSharedItemTemplateEditInput,
+  SaveSharedItemTemplateSortOrderInput,
   SaveSharedRoughStateInput,
 } from "./family-sharing/save-item-template";
 import type {
@@ -52,6 +53,14 @@ type SaveHomeCustomItemDeleteDependencies = {
   ) => Promise<void>;
 };
 
+type SaveHomeCustomItemSortOrderDependencies = {
+  applyCustomItems: (items: CustomizableItem[]) => void;
+  saveLocalCustomItems: (items: CustomizableItem[]) => void;
+  saveSharedItemTemplateSortOrders: (
+    input: SaveSharedItemTemplateSortOrderInput,
+  ) => Promise<void>;
+};
+
 type SaveHomeRoughStateDependencies<RoughState extends string> = {
   applyRoughStates: (states: Record<string, RoughState>) => void;
   saveLocalRoughStates: (states: Record<string, RoughState>) => void;
@@ -86,6 +95,41 @@ export function appendHomeCustomItemToCategory(
     item,
     ...items.slice(lastCategoryIndex + 1),
   ];
+}
+
+export function reorderHomeCustomItemsInCategory(
+  items: CustomizableItem[],
+  category: CustomItemCategory,
+  activeItemId: string,
+  targetIndex: number,
+) {
+  const categoryItems = items.filter((item) => item.category === category);
+  const activeIndex = categoryItems.findIndex(
+    (item) => item.id === activeItemId,
+  );
+
+  if (activeIndex === -1) {
+    return items;
+  }
+
+  const nextCategoryItems = [...categoryItems];
+  const [movedItem] = nextCategoryItems.splice(activeIndex, 1);
+  const nextIndex = Math.min(Math.max(targetIndex, 0), nextCategoryItems.length);
+
+  if (nextIndex === activeIndex) {
+    return items;
+  }
+
+  nextCategoryItems.splice(nextIndex, 0, movedItem);
+  let replacementIndex = 0;
+
+  return items.map((item) =>
+    item.category === category ? nextCategoryItems[replacementIndex++] : item,
+  );
+}
+
+export function canInterruptHomeCustomItemSorting(isSavingSortOrder: boolean) {
+  return !isSavingSortOrder;
 }
 
 export async function saveHomeCustomItemAdd<RoughState extends string>(
@@ -195,6 +239,28 @@ export function saveHomeCustomItemDelete(
   }
 
   dependencies.saveLocalCustomItems(nextItems);
+}
+
+export async function saveHomeCustomItemSortOrder(
+  dataSource: Exclude<HomeDataSource, { mode: "shared-error" }>,
+  nextItems: CustomizableItem[],
+  dependencies: SaveHomeCustomItemSortOrderDependencies,
+) {
+  if (dataSource.mode === "shared") {
+    await dependencies.saveSharedItemTemplateSortOrders({
+      familyId: dataSource.familyId,
+      childId: dataSource.initialData.childId,
+      items: nextItems.map((item, index) => ({
+        id: item.id,
+        sortOrder: index,
+      })),
+    });
+    dependencies.applyCustomItems(nextItems);
+    return;
+  }
+
+  dependencies.saveLocalCustomItems(nextItems);
+  dependencies.applyCustomItems(nextItems);
 }
 
 export async function saveHomeRoughState<RoughState extends string>(

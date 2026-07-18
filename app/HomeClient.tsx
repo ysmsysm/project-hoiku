@@ -74,9 +74,12 @@ import { saveSharedChildProfile } from "../src/lib/family-sharing/save-child-pro
 import {
   applyHomeRoughStateChange,
   appendHomeCustomItemToCategory,
+  canInterruptHomeCustomItemSorting,
+  reorderHomeCustomItemsInCategory,
   saveHomeCustomItemAdd,
   saveHomeCustomItemDelete,
   saveHomeCustomItemEdit,
+  saveHomeCustomItemSortOrder,
   saveHomeRoughState,
 } from "../src/lib/home-item-template-save";
 import { homeItemQuantityMax } from "../src/lib/home-item-template-constraints";
@@ -84,8 +87,10 @@ import {
   saveSharedItemTemplateAdd,
   saveSharedItemTemplateDelete,
   saveSharedItemTemplateEdit,
+  saveSharedItemTemplateSortOrders,
   saveSharedRoughState,
   type SharedItemTemplateAddClient,
+  type SharedItemTemplateSortOrderClient,
 } from "../src/lib/family-sharing/save-item-template";
 import { clampSpotQuantity, formatSpotItemName } from "../src/lib/spotQuantity";
 import { createClient as createSupabaseClient } from "../src/lib/supabase/client";
@@ -580,6 +585,10 @@ function HomeClientContent({
   const [sortingDraftItems, setSortingDraftItems] = useState<
     CustomizableItem[] | null
   >(null);
+  const [isSavingCustomItemSortOrder, setIsSavingCustomItemSortOrder] =
+    useState(false);
+  const [customItemSortOrderError, setCustomItemSortOrderError] =
+    useState<string | null>(null);
   const [addingCategory, setAddingCategory] =
     useState<CustomItemCategory | null>(null);
   const [newCustomItemDraft, setNewCustomItemDraft] = useState<CustomItemDraft>({
@@ -645,9 +654,15 @@ function HomeClientContent({
   const previousActiveTabRef = useRef<AppTab>(activeTab);
   const customItemSaveInFlightRef = useRef(false);
   const customItemAddInFlightRef = useRef(false);
+  const customItemSortOrderSaveInFlightRef = useRef(false);
   const customItemDeleteInFlightItemIdsRef = useRef(new Set<string>());
   const roughStateSaveInFlightItemIdsRef = useRef(new Set<string>());
   const roughStatesRef = useRef(initialRoughStates);
+
+  const canInterruptCustomItemSorting = () =>
+    canInterruptHomeCustomItemSorting(
+      customItemSortOrderSaveInFlightRef.current,
+    );
 
   useEffect(() => {
     if (!sharedInitialData) {
@@ -1350,15 +1365,6 @@ function HomeClientContent({
     });
   };
 
-  const updateCustomItems = (nextItems: CustomizableItem[]) => {
-    if (!durableItemsEditable) {
-      return;
-    }
-
-    setCustomItems(nextItems);
-    appRepository.saveCustomItems(nextItems);
-  };
-
   const showZeroQuantityToast = () => {
     setIsZeroQuantityToastVisible(true);
 
@@ -1699,7 +1705,7 @@ function HomeClientContent({
   });
 
   const startCustomItemEditing = (item: CustomizableItem) => {
-    if (!existingItemDetailsEditable) {
+    if (!existingItemDetailsEditable || !canInterruptCustomItemSorting()) {
       return;
     }
 
@@ -1800,42 +1806,20 @@ function HomeClientContent({
     activeItemId: string,
     targetIndex: number,
   ) => {
-    if (!durableItemsSortable) {
+    if (!durableItemsSortable || customItemSortOrderSaveInFlightRef.current) {
       return;
     }
 
     setSortingDraftItems((currentItems) => {
       const sourceItems = currentItems ?? customItems;
-      const categoryItems = sourceItems.filter(
-        (item) => item.category === category,
-      );
-      const activeIndex = categoryItems.findIndex(
-        (item) => item.id === activeItemId,
-      );
-
-      if (activeIndex === -1) {
-        return currentItems;
-      }
-
-      const nextCategoryItems = [...categoryItems];
-      const [movedItem] = nextCategoryItems.splice(activeIndex, 1);
-      const nextIndex = Math.min(
-        Math.max(targetIndex, 0),
-        nextCategoryItems.length,
+      const nextItems = reorderHomeCustomItemsInCategory(
+        sourceItems,
+        category,
+        activeItemId,
+        targetIndex,
       );
 
-      if (nextIndex === activeIndex) {
-        return currentItems;
-      }
-
-      nextCategoryItems.splice(nextIndex, 0, movedItem);
-      let replacementIndex = 0;
-
-      return sourceItems.map((item) =>
-        item.category === category
-          ? nextCategoryItems[replacementIndex++]
-          : item,
-      );
+      return nextItems === sourceItems ? currentItems : nextItems;
     });
   };
 
@@ -1892,7 +1876,7 @@ function HomeClientContent({
     item: CustomizableItem,
     isSorting: boolean,
   ) => {
-    if (!durableItemsSortable) {
+    if (!durableItemsSortable || customItemSortOrderSaveInFlightRef.current) {
       return;
     }
 
@@ -1919,7 +1903,7 @@ function HomeClientContent({
     event: PointerEvent<HTMLElement>,
     item: CustomizableItem,
   ) => {
-    if (!durableItemsSortable) {
+    if (!durableItemsSortable || customItemSortOrderSaveInFlightRef.current) {
       return;
     }
 
@@ -1960,12 +1944,13 @@ function HomeClientContent({
   };
 
   const startCustomItemSorting = (category: CustomItemCategory) => {
-    if (!durableItemsSortable) {
+    if (!durableItemsSortable || !canInterruptCustomItemSorting()) {
       return;
     }
 
     setAddingCategory(null);
     setCustomItemAddError(null);
+    setCustomItemSortOrderError(null);
     cancelCustomItemEditing();
     setSortingCategory(category);
     setSortingDraftItems(customItems);
@@ -1973,25 +1958,56 @@ function HomeClientContent({
     setCustomItemDragState(null);
   };
 
-  const finishCustomItemSorting = () => {
-    if (!durableItemsSortable) {
+  const finishCustomItemSorting = async () => {
+    if (!durableItemsSortable || customItemSortOrderSaveInFlightRef.current) {
       return;
     }
 
     finishCustomItemDrag();
 
-    if (sortingDraftItems) {
-      updateCustomItems(sortingDraftItems);
+    const nextItems = sortingDraftItems;
+
+    if (!nextItems) {
+      setSortingCategory(null);
+      setSortingDraftItems(null);
+      setDraggingCustomItemId(null);
+      setCustomItemDragState(null);
+      return;
     }
 
-    setSortingCategory(null);
-    setSortingDraftItems(null);
-    setDraggingCustomItemId(null);
-    setCustomItemDragState(null);
+    customItemSortOrderSaveInFlightRef.current = true;
+    setIsSavingCustomItemSortOrder(true);
+    setCustomItemSortOrderError(null);
+
+    try {
+      await saveHomeCustomItemSortOrder(dataSource, nextItems, {
+        applyCustomItems: setCustomItems,
+        saveLocalCustomItems: appRepository.saveCustomItems,
+        saveSharedItemTemplateSortOrders: (input) =>
+          saveSharedItemTemplateSortOrders(
+            createSupabaseClient() as unknown as SharedItemTemplateSortOrderClient,
+            input,
+          ),
+      });
+
+      setSortingCategory(null);
+      setSortingDraftItems(null);
+      setDraggingCustomItemId(null);
+      setCustomItemDragState(null);
+    } catch (error) {
+      console.error("Failed to save custom item sort order", error);
+      setCustomItemSortOrderError("保存できませんでした。もう一度お試しください");
+    } finally {
+      customItemSortOrderSaveInFlightRef.current = false;
+      setIsSavingCustomItemSortOrder(false);
+    }
   };
 
   const startCustomItemAdding = (category: CustomItemCategory) => {
-    if (!canAddHomeDurableItem(dataSource, category)) {
+    if (
+      !canAddHomeDurableItem(dataSource, category) ||
+      !canInterruptCustomItemSorting()
+    ) {
       return;
     }
 
@@ -2000,6 +2016,7 @@ function HomeClientContent({
     }
 
     setCustomItemAddError(null);
+    setCustomItemSortOrderError(null);
     setSortingCategory(null);
     cancelCustomItemEditing();
     setAddingCategory(category);
@@ -2047,6 +2064,10 @@ function HomeClientContent({
   };
 
   const closeItemSettings = () => {
+    if (!canInterruptCustomItemSorting()) {
+      return;
+    }
+
     if (
       isChildSettingsOpen &&
       childNameEditor.state.mode === "edit" &&
@@ -2062,6 +2083,7 @@ function HomeClientContent({
     setActiveEditingSectionId(null);
     setSelectedItemSettingsCategory(null);
     setCustomItemAddError(null);
+    setCustomItemSortOrderError(null);
     setSortingCategory(null);
     setSortingDraftItems(null);
     setAddingCategory(null);
@@ -2071,6 +2093,10 @@ function HomeClientContent({
   };
 
   const toggleChildSettings = () => {
+    if (!canInterruptCustomItemSorting()) {
+      return;
+    }
+
     if (isChildSettingsOpen) {
       requestCloseChildSettings();
       return;
@@ -2080,6 +2106,7 @@ function HomeClientContent({
     setIsItemSettingsOpen(false);
     setSelectedItemSettingsCategory(null);
     setCustomItemAddError(null);
+    setCustomItemSortOrderError(null);
     setSortingCategory(null);
     setSortingDraftItems(null);
     setAddingCategory(null);
@@ -2091,8 +2118,13 @@ function HomeClientContent({
   };
 
   const closeCustomItemEdit = () => {
+    if (!canInterruptCustomItemSorting()) {
+      return;
+    }
+
     setSelectedItemSettingsCategory(null);
     setCustomItemAddError(null);
+    setCustomItemSortOrderError(null);
     setSortingCategory(null);
     setSortingDraftItems(null);
     setAddingCategory(null);
@@ -2570,7 +2602,8 @@ function HomeClientContent({
         type="button"
         aria-label="戻る"
         onClick={closeCustomItemEdit}
-        className="grid h-10 w-10 shrink-0 place-items-center rounded-button bg-surface text-text-tertiary transition active:scale-95"
+        disabled={isSavingCustomItemSortOrder}
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-button bg-surface text-text-tertiary transition active:scale-95 disabled:opacity-50"
       >
         <ChevronRight size={20} strokeWidth={2.2} className="rotate-180" />
       </button>
@@ -2647,6 +2680,7 @@ function HomeClientContent({
               <button
                 type="button"
                 onClick={finishCustomItemSorting}
+                disabled={isSavingCustomItemSortOrder}
                 className="h-10 px-1 text-number font-normal text-danger transition active:scale-95"
               >
                 完了
@@ -2687,6 +2721,11 @@ function HomeClientContent({
           {isAdding && customItemAddError ? (
             <p className="px-1 py-2 text-status font-normal text-danger">
               {customItemAddError}
+            </p>
+          ) : null}
+          {isSorting && customItemSortOrderError ? (
+            <p className="px-1 py-2 text-status font-normal text-danger">
+              {customItemSortOrderError}
             </p>
           ) : null}
           {categoryItems.map((customItem) =>
@@ -2898,7 +2937,7 @@ function HomeClientContent({
                   <div key={item.id}>
                     <button
                       type="button"
-                      disabled={!item.enabled}
+                      disabled={!item.enabled || isSavingCustomItemSortOrder}
                       onClick={() => {
                         if (item.id === "child") {
                           toggleChildSettings();
@@ -3037,9 +3076,15 @@ function HomeClientContent({
                                 key={category}
                                 type="button"
                                 aria-label={`${category}を編集`}
+                                disabled={isSavingCustomItemSortOrder}
                                 onClick={() => {
+                                  if (!canInterruptCustomItemSorting()) {
+                                    return;
+                                  }
+
                                   setSelectedItemSettingsCategory(category);
                                   setCustomItemAddError(null);
+                                  setCustomItemSortOrderError(null);
                                   setSortingCategory(null);
                                   setAddingCategory(null);
                                   setExpandedWeekdayItemId(null);
