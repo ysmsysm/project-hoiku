@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   applyHomeRoughStateChange,
   appendHomeCustomItemToCategory,
   canInterruptHomeCustomItemSorting,
+  canUpdateHomeCustomItemDragPointer,
+  getHomeCustomItemDragCenterY,
+  getHomeCustomItemDragTargetIndex,
   reorderHomeCustomItemsInCategory,
   saveHomeCustomItemAdd,
   saveHomeCustomItemDelete,
@@ -21,6 +25,20 @@ const roughUuid = "22222222-2222-4222-8222-222222222222";
 const regularCategory = defaultCustomItems[0].category;
 const spotCategory = defaultCustomItems[6].category;
 const roughCategory = defaultCustomItems[9].category;
+const dragRowRects = [
+  { top: 0, height: 56 },
+  { top: 56, height: 56 },
+  { top: 112, height: 56 },
+  { top: 168, height: 56 },
+];
+const fiveDragItems: CustomizableItem[] = [
+  { id: "A", name: "A", unit: "unit", count: 1, category: regularCategory },
+  { id: "B", name: "B", unit: "unit", count: 1, category: regularCategory },
+  { id: "C", name: "C", unit: "unit", count: 1, category: regularCategory },
+  { id: "D", name: "D", unit: "unit", count: 1, category: regularCategory },
+  { id: "E", name: "E", unit: "unit", count: 1, category: regularCategory },
+];
+const homeClientSource = readFileSync("app/HomeClient.tsx", "utf8");
 
 const customItems: CustomizableItem[] = [
   {
@@ -137,6 +155,383 @@ test("reorders only items in the selected category", () => {
     ),
     items,
   );
+});
+
+test("calculates one-step drag insertion targets", () => {
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 86,
+      rowRects: dragRowRects,
+      currentTargetIndex: 1,
+      lastMoveDirection: null,
+    }),
+    2,
+  );
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 82,
+      rowRects: dragRowRects,
+      currentTargetIndex: 2,
+      lastMoveDirection: null,
+    }),
+    1,
+  );
+});
+
+test("calculates multi-step drag insertion targets without limiting jumps", () => {
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 210,
+      rowRects: dragRowRects,
+      currentTargetIndex: 1,
+      lastMoveDirection: null,
+    }),
+    4,
+  );
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 20,
+      rowRects: dragRowRects,
+      currentTargetIndex: 3,
+      lastMoveDirection: null,
+    }),
+    0,
+  );
+});
+
+test("calculates first, last, and unchanged drag insertion targets", () => {
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: -20,
+      rowRects: dragRowRects,
+      currentTargetIndex: 2,
+      lastMoveDirection: null,
+    }),
+    0,
+  );
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 260,
+      rowRects: dragRowRects,
+      currentTargetIndex: 2,
+      lastMoveDirection: null,
+    }),
+    4,
+  );
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 80,
+      rowRects: dragRowRects,
+      currentTargetIndex: 1,
+      lastMoveDirection: null,
+    }),
+    1,
+  );
+});
+
+test("keeps drag insertion targets inside the available range", () => {
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 260,
+      rowRects: dragRowRects,
+      currentTargetIndex: 99,
+      lastMoveDirection: null,
+    }),
+    4,
+  );
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: -20,
+      rowRects: dragRowRects,
+      currentTargetIndex: -10,
+      lastMoveDirection: null,
+    }),
+    0,
+  );
+});
+
+test("keeps a drag target from reversing on small upward jitter after moving down", () => {
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 80,
+      rowRects: dragRowRects,
+      currentTargetIndex: 2,
+      lastMoveDirection: "down",
+    }),
+    2,
+  );
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 77,
+      rowRects: dragRowRects,
+      currentTargetIndex: 2,
+      lastMoveDirection: "down",
+    }),
+    1,
+  );
+});
+
+test("keeps a drag target from reversing on small downward jitter after moving up", () => {
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 88,
+      rowRects: dragRowRects,
+      currentTargetIndex: 1,
+      lastMoveDirection: "up",
+    }),
+    1,
+  );
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: 91,
+      rowRects: dragRowRects,
+      currentTargetIndex: 1,
+      lastMoveDirection: "up",
+    }),
+    2,
+  );
+});
+
+test("uses the dragged row center so downward movement works from an upper grab point", () => {
+  const rowRectsWithoutB = [
+    { top: 0, height: 56 },
+    { top: 112, height: 56 },
+    { top: 168, height: 56 },
+    { top: 224, height: 56 },
+  ];
+  const pointerOffsetY = 4;
+  const rowHeight = 56;
+  const belowCGrabY = 117;
+  const belowCIndex = getHomeCustomItemDragTargetIndex({
+    pointerY: getHomeCustomItemDragCenterY({
+      pointerY: belowCGrabY,
+      pointerOffsetY,
+      rowHeight,
+    }),
+    rowRects: rowRectsWithoutB,
+    currentTargetIndex: 1,
+    lastMoveDirection: null,
+  });
+
+  assert.equal(
+    getHomeCustomItemDragTargetIndex({
+      pointerY: belowCGrabY,
+      rowRects: rowRectsWithoutB,
+      currentTargetIndex: 1,
+      lastMoveDirection: null,
+    }),
+    1,
+  );
+  assert.equal(belowCIndex, 2);
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "B",
+      belowCIndex,
+    ).map((item) => item.id),
+    ["A", "C", "B", "D", "E"],
+  );
+});
+
+test("calculates downward insertion targets against the actual DOM row positions", () => {
+  const rowRectsWithoutB = [
+    { top: 0, height: 56 },
+    { top: 112, height: 56 },
+    { top: 168, height: 56 },
+    { top: 224, height: 56 },
+  ];
+  const pointerOffsetY = 4;
+  const rowHeight = 56;
+  const dragCenterY = (pointerY: number) =>
+    getHomeCustomItemDragCenterY({ pointerY, pointerOffsetY, rowHeight });
+
+  const belowCIndex = getHomeCustomItemDragTargetIndex({
+    pointerY: dragCenterY(117),
+    rowRects: rowRectsWithoutB,
+    currentTargetIndex: 1,
+    lastMoveDirection: null,
+  });
+  const belowDIndex = getHomeCustomItemDragTargetIndex({
+    pointerY: dragCenterY(173),
+    rowRects: rowRectsWithoutB,
+    currentTargetIndex: belowCIndex,
+    lastMoveDirection: "down",
+  });
+  const belowEIndex = getHomeCustomItemDragTargetIndex({
+    pointerY: dragCenterY(229),
+    rowRects: rowRectsWithoutB,
+    currentTargetIndex: belowDIndex,
+    lastMoveDirection: "down",
+  });
+
+  assert.equal(belowCIndex, 2);
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "B",
+      belowCIndex,
+    ).map((item) => item.id),
+    ["A", "C", "B", "D", "E"],
+  );
+  assert.equal(belowDIndex, 3);
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "B",
+      belowDIndex,
+    ).map((item) => item.id),
+    ["A", "C", "D", "B", "E"],
+  );
+  assert.equal(belowEIndex, 4);
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "B",
+      belowEIndex,
+    ).map((item) => item.id),
+    ["A", "C", "D", "E", "B"],
+  );
+});
+
+test("continues the same downward drag when pointer moves arrive from another row after reordering", () => {
+  const rowRectsWithoutB = [
+    { top: 0, height: 56 },
+    { top: 112, height: 56 },
+    { top: 168, height: 56 },
+    { top: 224, height: 56 },
+  ];
+  const pointerOffsetY = 4;
+  const rowHeight = 56;
+  let previousTargetIndex = 1;
+  let lastMoveDirection: "down" | "up" | null = null;
+  let items = fiveDragItems;
+
+  assert.equal(
+    canUpdateHomeCustomItemDragPointer({
+      activeCategory: regularCategory,
+      activePointerId: 7,
+      eventCategory: regularCategory,
+      eventPointerId: 7,
+    }),
+    true,
+  );
+  assert.equal(
+    canUpdateHomeCustomItemDragPointer({
+      activeCategory: regularCategory,
+      activePointerId: 7,
+      eventCategory: spotCategory,
+      eventPointerId: 7,
+    }),
+    false,
+  );
+
+  [117, 173, 229].forEach((pointerY) => {
+    const nextTargetIndex = getHomeCustomItemDragTargetIndex({
+      pointerY: getHomeCustomItemDragCenterY({
+        pointerY,
+        pointerOffsetY,
+        rowHeight,
+      }),
+      rowRects: rowRectsWithoutB,
+      currentTargetIndex: previousTargetIndex,
+      lastMoveDirection,
+    });
+
+    assert.equal(nextTargetIndex > previousTargetIndex, true);
+    lastMoveDirection = nextTargetIndex > previousTargetIndex ? "down" : "up";
+    previousTargetIndex = nextTargetIndex;
+    items = reorderHomeCustomItemsInCategory(
+      items,
+      regularCategory,
+      "B",
+      nextTargetIndex,
+    );
+  });
+
+  assert.equal(previousTargetIndex, 4);
+  assert.equal(lastMoveDirection, "down");
+  assert.deepEqual(
+    items.map((item) => item.id),
+    ["A", "C", "D", "E", "B"],
+  );
+});
+
+test("reorders five items through one-step, multi-row, and edge insert indexes", () => {
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "D",
+      2,
+    ).map((item) => item.id),
+    ["A", "B", "D", "C", "E"],
+  );
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "D",
+      1,
+    ).map((item) => item.id),
+    ["A", "D", "B", "C", "E"],
+  );
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "A",
+      3,
+    ).map((item) => item.id),
+    ["B", "C", "D", "A", "E"],
+  );
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "B",
+      4,
+    ).map((item) => item.id),
+    ["A", "C", "D", "E", "B"],
+  );
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "D",
+      0,
+    ).map((item) => item.id),
+    ["D", "A", "B", "C", "E"],
+  );
+  assert.deepEqual(
+    reorderHomeCustomItemsInCategory(
+      fiveDragItems,
+      regularCategory,
+      "E",
+      0,
+    ).map((item) => item.id),
+    ["E", "A", "B", "C", "D"],
+  );
+});
+
+test("home client uses stable item tracking and RAF for custom item dragging", () => {
+  assert.match(homeClientSource, /getHomeCustomItemDragTargetIndex\(\{/);
+  assert.match(homeClientSource, /canUpdateHomeCustomItemDragPointer\(\{/);
+  assert.match(homeClientSource, /activeCustomItemDragTargetRef/);
+  assert.match(homeClientSource, /activeCategory: dragTarget\.category/);
+  assert.match(homeClientSource, /eventCategory: item\.category/);
+  assert.match(homeClientSource, /window\.requestAnimationFrame/);
+});
+
+test("home client clears custom item drag state on pointer up and cancel", () => {
+  assert.match(homeClientSource, /onPointerUp=\{finishCustomItemDrag\}/);
+  assert.match(homeClientSource, /onPointerCancel=\{finishCustomItemDrag\}/);
+  assert.match(homeClientSource, /window\.cancelAnimationFrame/);
+  assert.match(homeClientSource, /activeCustomItemDragTargetRef\.current = null/);
+  assert.match(homeClientSource, /setCustomItemDragState\(null\)/);
 });
 
 test("blocks sort-discarding item settings actions while sort order is saving", () => {

@@ -67,6 +67,107 @@ type SaveHomeRoughStateDependencies<RoughState extends string> = {
   saveSharedRoughState: (input: SaveSharedRoughStateInput) => Promise<void>;
 };
 
+export const homeCustomItemDragReverseDeadZonePx = 6;
+
+export type HomeCustomItemDragMoveDirection = "up" | "down";
+
+export type HomeCustomItemDragRowRect = {
+  top: number;
+  height: number;
+};
+
+export type GetHomeCustomItemDragCenterYInput = {
+  pointerY: number;
+  pointerOffsetY: number;
+  rowHeight: number;
+};
+
+export type GetHomeCustomItemDragTargetIndexInput = {
+  pointerY: number;
+  rowRects: HomeCustomItemDragRowRect[];
+  currentTargetIndex: number;
+  lastMoveDirection: HomeCustomItemDragMoveDirection | null;
+  reverseDeadZonePx?: number;
+};
+
+export type CanUpdateHomeCustomItemDragPointerInput = {
+  activeCategory: CustomItemCategory;
+  activePointerId: number;
+  eventCategory: CustomItemCategory;
+  eventPointerId: number;
+};
+
+const clampHomeCustomItemDragTargetIndex = (index: number, maxIndex: number) =>
+  Math.min(Math.max(index, 0), maxIndex);
+
+export function getHomeCustomItemDragCenterY({
+  pointerY,
+  pointerOffsetY,
+  rowHeight,
+}: GetHomeCustomItemDragCenterYInput) {
+  return pointerY - pointerOffsetY + rowHeight / 2;
+}
+
+export function getHomeCustomItemDragTargetIndex({
+  pointerY,
+  rowRects,
+  currentTargetIndex,
+  lastMoveDirection,
+  reverseDeadZonePx = homeCustomItemDragReverseDeadZonePx,
+}: GetHomeCustomItemDragTargetIndexInput) {
+  const maxIndex = rowRects.length;
+  const clampedCurrentIndex = clampHomeCustomItemDragTargetIndex(
+    currentTargetIndex,
+    maxIndex,
+  );
+  const rawTargetIndex = rowRects.reduce((index, rect) => {
+    const midpoint = rect.top + rect.height / 2;
+
+    return pointerY > midpoint ? index + 1 : index;
+  }, 0);
+  const nextTargetIndex = clampHomeCustomItemDragTargetIndex(
+    rawTargetIndex,
+    maxIndex,
+  );
+
+  if (nextTargetIndex === clampedCurrentIndex) {
+    return clampedCurrentIndex;
+  }
+
+  if (lastMoveDirection === "down" && nextTargetIndex < clampedCurrentIndex) {
+    const returnBoundary = rowRects[clampedCurrentIndex - 1];
+
+    if (
+      returnBoundary &&
+      pointerY > returnBoundary.top + returnBoundary.height / 2 - reverseDeadZonePx
+    ) {
+      return clampedCurrentIndex;
+    }
+  }
+
+  if (lastMoveDirection === "up" && nextTargetIndex > clampedCurrentIndex) {
+    const returnBoundary = rowRects[clampedCurrentIndex];
+
+    if (
+      returnBoundary &&
+      pointerY < returnBoundary.top + returnBoundary.height / 2 + reverseDeadZonePx
+    ) {
+      return clampedCurrentIndex;
+    }
+  }
+
+  return nextTargetIndex;
+}
+
+export function canUpdateHomeCustomItemDragPointer({
+  activeCategory,
+  activePointerId,
+  eventCategory,
+  eventPointerId,
+}: CanUpdateHomeCustomItemDragPointerInput) {
+  return activeCategory === eventCategory && activePointerId === eventPointerId;
+}
+
 export function applyHomeRoughStateChange<RoughState extends string>(
   currentStates: Record<string, RoughState>,
   itemId: string,

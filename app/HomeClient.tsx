@@ -74,13 +74,17 @@ import { saveSharedChildProfile } from "../src/lib/family-sharing/save-child-pro
 import {
   applyHomeRoughStateChange,
   appendHomeCustomItemToCategory,
+  canUpdateHomeCustomItemDragPointer,
   canInterruptHomeCustomItemSorting,
+  getHomeCustomItemDragCenterY,
+  getHomeCustomItemDragTargetIndex,
   reorderHomeCustomItemsInCategory,
   saveHomeCustomItemAdd,
   saveHomeCustomItemDelete,
   saveHomeCustomItemEdit,
   saveHomeCustomItemSortOrder,
   saveHomeRoughState,
+  type HomeCustomItemDragMoveDirection,
 } from "../src/lib/home-item-template-save";
 import { homeItemQuantityMax } from "../src/lib/home-item-template-constraints";
 import {
@@ -650,7 +654,18 @@ function HomeClientContent({
     clientY: number;
     element: HTMLElement;
   } | null>(null);
+  const activeCustomItemDragTargetRef = useRef<{
+    itemId: string;
+    category: CustomItemCategory;
+    pointerId: number;
+    targetIndex: number;
+    lastMoveDirection: HomeCustomItemDragMoveDirection | null;
+    latestClientY: number;
+    pointerOffsetY: number;
+    rowHeight: number;
+  } | null>(null);
   const customItemDragStartTimeoutRef = useRef<number | null>(null);
+  const customItemDragFrameRef = useRef<number | null>(null);
   const previousActiveTabRef = useRef<AppTab>(activeTab);
   const customItemSaveInFlightRef = useRef(false);
   const customItemAddInFlightRef = useRef(false);
@@ -663,6 +678,13 @@ function HomeClientContent({
     canInterruptHomeCustomItemSorting(
       customItemSortOrderSaveInFlightRef.current,
     );
+
+  const cancelCustomItemDragFrame = () => {
+    if (customItemDragFrameRef.current !== null) {
+      window.cancelAnimationFrame(customItemDragFrameRef.current);
+      customItemDragFrameRef.current = null;
+    }
+  };
 
   useEffect(() => {
     if (!sharedInitialData) {
@@ -800,6 +822,8 @@ function HomeClientContent({
         window.clearTimeout(customItemDragStartTimeoutRef.current);
       }
 
+      cancelCustomItemDragFrame();
+      activeCustomItemDragTargetRef.current = null;
     },
     [],
   );
@@ -1826,20 +1850,86 @@ function HomeClientContent({
   const moveCustomItemByPointer = (
     category: CustomItemCategory,
     activeItemId: string,
+    pointerId: number,
     clientY: number,
   ) => {
+    const dragTarget = activeCustomItemDragTargetRef.current;
+
+    if (
+      !dragTarget ||
+      dragTarget.itemId !== activeItemId ||
+      dragTarget.category !== category ||
+      dragTarget.pointerId !== pointerId
+    ) {
+      return;
+    }
+
     const rowElements = Array.from(
       document.querySelectorAll<HTMLElement>(
         `[data-custom-item-category="${category}"][data-custom-item-id]`,
       ),
-    ).filter((element) => element.dataset.customItemId !== activeItemId);
-    const targetIndex = rowElements.reduce((index, element) => {
-      const rect = element.getBoundingClientRect();
+    ).filter(
+      (element) => element.dataset.customItemId !== activeItemId,
+    );
+    const dragCenterY = getHomeCustomItemDragCenterY({
+      pointerY: clientY,
+      pointerOffsetY: dragTarget.pointerOffsetY,
+      rowHeight: dragTarget.rowHeight,
+    });
+    const targetIndex = getHomeCustomItemDragTargetIndex({
+      pointerY: dragCenterY,
+      rowRects: rowElements.map((element) => element.getBoundingClientRect()),
+      currentTargetIndex: dragTarget.targetIndex,
+      lastMoveDirection: dragTarget.lastMoveDirection,
+    });
 
-      return clientY > rect.top + rect.height / 2 ? index + 1 : index;
-    }, 0);
+    if (targetIndex === dragTarget.targetIndex) {
+      return;
+    }
 
+    dragTarget.lastMoveDirection =
+      targetIndex > dragTarget.targetIndex ? "down" : "up";
+    dragTarget.targetIndex = targetIndex;
     reorderDraftCustomItemsInCategory(category, activeItemId, targetIndex);
+  };
+
+  const scheduleCustomItemDragFrame = () => {
+    if (customItemDragFrameRef.current !== null) {
+      return;
+    }
+
+    customItemDragFrameRef.current = window.requestAnimationFrame(() => {
+      customItemDragFrameRef.current = null;
+
+      if (
+        !durableItemsSortable ||
+        customItemSortOrderSaveInFlightRef.current
+      ) {
+        return;
+      }
+
+      const dragTarget = activeCustomItemDragTargetRef.current;
+
+      if (!dragTarget) {
+        return;
+      }
+
+      const clientY = dragTarget.latestClientY;
+
+      setCustomItemDragState((current) =>
+        current &&
+        current.itemId === dragTarget.itemId &&
+        current.pointerId === dragTarget.pointerId
+          ? { ...current, currentY: clientY }
+          : current,
+      );
+      moveCustomItemByPointer(
+        dragTarget.category,
+        dragTarget.itemId,
+        dragTarget.pointerId,
+        clientY,
+      );
+    });
   };
 
   const clearPendingCustomItemDrag = () => {
@@ -1858,6 +1948,15 @@ function HomeClientContent({
       return;
     }
 
+    const sourceItems = sortingDraftItems ?? customItems;
+    const activeIndex = sourceItems
+      .filter((item) => item.category === pendingDrag.category)
+      .findIndex((item) => item.id === pendingDrag.itemId);
+
+    if (activeIndex === -1) {
+      return;
+    }
+
     const rect = pendingDrag.element.getBoundingClientRect();
     setDraggingCustomItemId(pendingDrag.itemId);
     setCustomItemDragState({
@@ -1868,6 +1967,16 @@ function HomeClientContent({
       left: rect.left,
       width: rect.width,
     });
+    activeCustomItemDragTargetRef.current = {
+      itemId: pendingDrag.itemId,
+      category: pendingDrag.category,
+      pointerId: pendingDrag.pointerId,
+      targetIndex: activeIndex,
+      lastMoveDirection: null,
+      latestClientY: pendingDrag.clientY,
+      pointerOffsetY: pendingDrag.clientY - rect.top,
+      rowHeight: rect.height,
+    };
     customItemDragStartTimeoutRef.current = null;
   };
 
@@ -1917,20 +2026,22 @@ function HomeClientContent({
       }
     }
 
+    const dragTarget = activeCustomItemDragTargetRef.current;
+
     if (
-      !customItemDragState ||
-      customItemDragState.itemId !== item.id ||
-      customItemDragState.pointerId !== event.pointerId
+      !dragTarget ||
+      !canUpdateHomeCustomItemDragPointer({
+        activeCategory: dragTarget.category,
+        activePointerId: dragTarget.pointerId,
+        eventCategory: item.category,
+        eventPointerId: event.pointerId,
+      })
     ) {
       return;
     }
 
-    setCustomItemDragState((current) =>
-      current && current.itemId === item.id
-        ? { ...current, currentY: event.clientY }
-        : current,
-    );
-    moveCustomItemByPointer(item.category, item.id, event.clientY);
+    dragTarget.latestClientY = event.clientY;
+    scheduleCustomItemDragFrame();
   };
 
   const finishCustomItemDrag = (event?: PointerEvent<HTMLElement>) => {
@@ -1938,7 +2049,9 @@ function HomeClientContent({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
 
+    cancelCustomItemDragFrame();
     clearPendingCustomItemDrag();
+    activeCustomItemDragTargetRef.current = null;
     setDraggingCustomItemId(null);
     setCustomItemDragState(null);
   };
@@ -1954,6 +2067,8 @@ function HomeClientContent({
     cancelCustomItemEditing();
     setSortingCategory(category);
     setSortingDraftItems(customItems);
+    cancelCustomItemDragFrame();
+    activeCustomItemDragTargetRef.current = null;
     setDraggingCustomItemId(null);
     setCustomItemDragState(null);
   };
