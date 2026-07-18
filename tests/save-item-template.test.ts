@@ -20,14 +20,11 @@ const roughUuid = "22222222-2222-4222-8222-222222222222";
 const anotherUuid = "33333333-3333-4333-8333-333333333333";
 const spotUuid = "44444444-4444-4444-8444-444444444444";
 
-test("adds a regular item template after the current maximum sort order", async () => {
+test("adds a regular item template through the atomic RPC", async () => {
   const calls: unknown[] = [];
-  const client = createAddMockClient(calls, {
-    maxResult: { data: { sort_order: 7 }, error: null },
-    insertResult: {
-      data: { id: regularUuid, sort_order: 8 },
-      error: null,
-    },
+  const client = createItemAddMockClient(calls, {
+    data: [{ id: regularUuid, sort_order: 8 }],
+    error: null,
   });
 
   const result = await saveSharedItemTemplateAdd(client, {
@@ -42,44 +39,29 @@ test("adds a regular item template after the current maximum sort order", async 
 
   assert.deepEqual(result, { id: regularUuid, sortOrder: 8 });
   assert.deepEqual(calls, [
-    ["from", "item_templates"],
-    ["select-max", "sort_order"],
-    ["eq-max", "family_id", "family-1"],
-    ["eq-max", "child_id", "child-1"],
-    ["order", "sort_order", { ascending: false }],
-    ["limit", 1],
-    ["maybeSingle"],
-    ["from", "item_templates"],
     [
-      "insert",
+      "rpc",
+      "add_family_item_template",
       {
-        family_id: "family-1",
-        child_id: "child-1",
-        kind: "regular",
-        name: "Towel",
-        default_quantity: 2,
-        unit: "枚",
-        weekday: null,
-        sort_order: 8,
-        current_rough_state: null,
-        is_active: true,
+        p_family_id: "family-1",
+        p_child_id: "child-1",
+        p_kind: "regular",
+        p_name: "Towel",
+        p_default_quantity: 2,
+        p_unit: "枚",
+        p_current_rough_state: null,
       },
     ],
-    ["select-insert", "id, sort_order"],
-    ["single"],
   ]);
-  const insert = calls.find((call) => Array.isArray(call) && call[0] === "insert");
-  assert.equal(Object.hasOwn((insert as [string, Record<string, unknown>])[1], "id"), false);
+  assert.equal(hasFromCall(calls), false);
+  assert.equal(hasInsertCall(calls), false);
 });
 
-test("adds a rough item with enough state and starts sort order at zero", async () => {
+test("adds a rough item through the atomic RPC with enough state", async () => {
   const calls: unknown[] = [];
-  const client = createAddMockClient(calls, {
-    maxResult: { data: null, error: null },
-    insertResult: {
-      data: { id: roughUuid, sort_order: 0 },
-      error: null,
-    },
+  const client = createItemAddMockClient(calls, {
+    data: [{ id: roughUuid, sort_order: 0 }],
+    error: null,
   });
 
   const result = await saveSharedItemTemplateAdd(client, {
@@ -93,15 +75,23 @@ test("adds a rough item with enough state and starts sort order at zero", async 
   });
 
   assert.deepEqual(result, { id: roughUuid, sortOrder: 0 });
-  assert.ok(
-    calls.some(
-      (call) =>
-        Array.isArray(call) &&
-        call[0] === "insert" &&
-        call[1].current_rough_state === "enough" &&
-        call[1].sort_order === 0,
-    ),
-  );
+  assert.deepEqual(calls, [
+    [
+      "rpc",
+      "add_family_item_template",
+      {
+        p_family_id: "family-1",
+        p_child_id: "child-1",
+        p_kind: "rough",
+        p_name: "Diapers",
+        p_default_quantity: 1,
+        p_unit: "pack",
+        p_current_rough_state: "enough",
+      },
+    ],
+  ]);
+  assert.equal(hasFromCall(calls), false);
+  assert.equal(hasInsertCall(calls), false);
 });
 
 test("adds a spot item through the atomic RPC and returns its database UUID", async () => {
@@ -224,9 +214,9 @@ test("spot RPC preserves PostgREST error fields in a loggable Error", async () =
 
 test("accepts shared item input values at the durable write limits", async () => {
   const regular = await saveSharedItemTemplateAdd(
-    createAddMockClient([], {
-      maxResult: { data: null, error: null },
-      insertResult: { data: { id: regularUuid, sort_order: 0 }, error: null },
+    createItemAddMockClient([], {
+      data: [{ id: regularUuid, sort_order: 0 }],
+      error: null,
     }),
     {
       ...regularAddInput(),
@@ -237,9 +227,9 @@ test("accepts shared item input values at the durable write limits", async () =>
   assert.equal(regular.id, regularUuid);
 
   const rough = await saveSharedItemTemplateAdd(
-    createAddMockClient([], {
-      maxResult: { data: null, error: null },
-      insertResult: { data: { id: roughUuid, sort_order: 0 }, error: null },
+    createItemAddMockClient([], {
+      data: [{ id: roughUuid, sort_order: 0 }],
+      error: null,
     }),
     {
       ...regularAddInput(),
@@ -299,104 +289,26 @@ test("rejects invalid shared item input before any Supabase query", async () => 
   );
 });
 
-test("rejects invalid maximum sort orders without inserting", async () => {
-  for (const invalidSortOrder of [null, "4", Number.NaN, -1, 1.5, 100001]) {
-    const calls: unknown[] = [];
-    await assert.rejects(
-      saveSharedItemTemplateAdd(
-        createAddMockClient(calls, {
-          maxResult: {
-            data: { sort_order: invalidSortOrder },
-            error: null,
-          },
-          insertResult: {
-            data: { id: regularUuid, sort_order: 0 },
-            error: null,
-          },
-        }),
-        regularAddInput(),
-      ),
-      /invalid_item_template_sort_order/,
-    );
-    assert.equal(hasInsertCall(calls), false);
-  }
-});
-
-test("rejects a maximum sort order whose successor exceeds the allowed range", async () => {
-  const calls: unknown[] = [];
+test("propagates item template add RPC failures", async () => {
+  const insertError = { code: "P0001", message: "insert failed" };
   await assert.rejects(
     saveSharedItemTemplateAdd(
-      createAddMockClient(calls, {
-        maxResult: { data: { sort_order: 100000 }, error: null },
-        insertResult: {
-          data: { id: regularUuid, sort_order: 100001 },
-          error: null,
-        },
+      createItemAddMockClient([], {
+        data: null,
+        error: insertError,
       }),
       regularAddInput(),
     ),
-    /invalid_item_template_sort_order/,
-  );
-  assert.equal(hasInsertCall(calls), false);
-});
-
-test("includes inactive rows when finding the maximum sort order", async () => {
-  const calls: unknown[] = [];
-  const client = createAddMockClient(calls, {
-    maxResult: { data: { sort_order: 4 }, error: null },
-    insertResult: { data: { id: anotherUuid, sort_order: 5 }, error: null },
-  });
-
-  await saveSharedItemTemplateAdd(client, {
-    familyId: "family-1",
-    childId: "child-1",
-    kind: "regular",
-    name: "Cup",
-    defaultQuantity: 1,
-    unit: "個",
-    currentRoughState: null,
-  });
-
-  assert.equal(
-    calls.some(
-      (call) => Array.isArray(call) && call[1] === "is_active",
-    ),
-    false,
+    /shared_item_template_save_failed/,
   );
 });
 
-test("propagates item template max query and insert failures", async () => {
-  const queryError = new Error("max query failed");
+test("rejects missing or invalid item template add RPC results", async () => {
   await assert.rejects(
     saveSharedItemTemplateAdd(
-      createAddMockClient([], {
-        maxResult: { data: null, error: queryError },
-        insertResult: { data: null, error: null },
-      }),
-      regularAddInput(),
-    ),
-    queryError,
-  );
-
-  const insertError = new Error("insert failed");
-  await assert.rejects(
-    saveSharedItemTemplateAdd(
-      createAddMockClient([], {
-        maxResult: { data: null, error: null },
-        insertResult: { data: null, error: insertError },
-      }),
-      regularAddInput(),
-    ),
-    insertError,
-  );
-});
-
-test("rejects missing or invalid item template insert results", async () => {
-  await assert.rejects(
-    saveSharedItemTemplateAdd(
-      createAddMockClient([], {
-        maxResult: { data: null, error: null },
-        insertResult: { data: null, error: null },
+      createItemAddMockClient([], {
+        data: null,
+        error: null,
       }),
       regularAddInput(),
     ),
@@ -405,12 +317,9 @@ test("rejects missing or invalid item template insert results", async () => {
 
   await assert.rejects(
     saveSharedItemTemplateAdd(
-      createAddMockClient([], {
-        maxResult: { data: null, error: null },
-        insertResult: {
-          data: { id: anotherUuid, sort_order: Number.NaN },
-          error: null,
-        },
+      createItemAddMockClient([], {
+        data: [{ id: anotherUuid, sort_order: Number.NaN }],
+        error: null,
       }),
       regularAddInput(),
     ),
@@ -420,9 +329,9 @@ test("rejects missing or invalid item template insert results", async () => {
   for (const invalidId of ["", "not-a-uuid"]) {
     await assert.rejects(
       saveSharedItemTemplateAdd(
-        createAddMockClient([], {
-          maxResult: { data: null, error: null },
-          insertResult: { data: { id: invalidId, sort_order: 0 }, error: null },
+        createItemAddMockClient([], {
+          data: [{ id: invalidId, sort_order: 0 }],
+          error: null,
         }),
         regularAddInput(),
       ),
@@ -1135,9 +1044,9 @@ async function assertAddRejectedBeforeQuery(
   const calls: unknown[] = [];
   await assert.rejects(
     saveSharedItemTemplateAdd(
-      createAddMockClient(calls, {
-        maxResult: { data: null, error: null },
-        insertResult: { data: { id: regularUuid, sort_order: 0 }, error: null },
+      createItemAddMockClient(calls, {
+        data: [{ id: regularUuid, sort_order: 0 }],
+        error: null,
       }),
       { ...regularAddInput(), ...overrides },
     ),
@@ -1150,66 +1059,28 @@ function hasInsertCall(calls: unknown[]) {
   return calls.some((call) => Array.isArray(call) && call[0] === "insert");
 }
 
+function hasFromCall(calls: unknown[]) {
+  return calls.some((call) => Array.isArray(call) && call[0] === "from");
+}
+
 function hasUpdateCall(calls: unknown[]) {
   return calls.some((call) => Array.isArray(call) && call[0] === "update");
 }
 
-function createAddMockClient(
+function createItemAddMockClient(
   calls: unknown[],
-  results: {
-    maxResult: {
-      data: { sort_order: unknown } | null;
-      error: Error | null;
-    };
-    insertResult: {
-      data: { id: string; sort_order: number } | null;
-      error: Error | null;
-    };
+  result: {
+    data: { id: string; sort_order: number }[] | null;
+    error: unknown;
   },
 ): SharedItemTemplateAddClient {
-  const maxQuery = {
-    eq(column: string, value: string) {
-      calls.push(["eq-max", column, value]);
-      return this;
-    },
-    order(column: string, options: { ascending: false }) {
-      calls.push(["order", column, options]);
-      return this;
-    },
-    limit(count: number) {
-      calls.push(["limit", count]);
-      return {
-        maybeSingle: () => {
-          calls.push(["maybeSingle"]);
-          return Promise.resolve(results.maxResult);
-        },
-      };
-    },
-  };
-
   return {
-    from(table: "item_templates") {
-      calls.push(["from", table]);
-      return {
-        select(columns: "sort_order") {
-          calls.push(["select-max", columns]);
-          return maxQuery;
-        },
-        insert(value) {
-          calls.push(["insert", value]);
-          return {
-            select(columns: "id, sort_order") {
-              calls.push(["select-insert", columns]);
-              return {
-                single() {
-                  calls.push(["single"]);
-                  return Promise.resolve(results.insertResult);
-                },
-              };
-            },
-          };
-        },
-      };
+    from() {
+      throw new Error("regular and rough add must use the atomic RPC");
+    },
+    rpc(functionName, args) {
+      calls.push(["rpc", functionName, args]);
+      return Promise.resolve(result);
     },
   } as unknown as SharedItemTemplateAddClient;
 }

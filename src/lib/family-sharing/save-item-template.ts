@@ -54,19 +54,6 @@ export type SaveSharedItemTemplateSortOrderInput = {
   }[];
 };
 
-type ItemTemplateInsert = {
-  family_id: string;
-  child_id: string;
-  kind: "regular" | "rough";
-  name: string;
-  default_quantity: number;
-  unit: string;
-  weekday: null;
-  sort_order: number;
-  current_rough_state: "enough" | null;
-  is_active: true;
-};
-
 type ItemTemplatesUpdate = {
   name?: string;
   default_quantity?: number;
@@ -105,41 +92,26 @@ export type SharedItemTemplateClient = {
   }>;
 };
 
-type ItemTemplateMaxSortOrderQuery = {
-  eq: (column: string, value: string) => ItemTemplateMaxSortOrderQuery;
-  order: (
-    column: "sort_order",
-    options: { ascending: false },
-  ) => ItemTemplateMaxSortOrderQuery;
-  limit: (count: 1) => {
-    maybeSingle: () => PromiseLike<{
-      data: { sort_order: number } | null;
-      error: unknown;
-    }>;
-  };
-};
-
 export type SharedItemTemplateAddClient = {
-  from: (table: "item_templates") => {
-    select: (columns: "sort_order") => ItemTemplateMaxSortOrderQuery;
-    insert: (value: ItemTemplateInsert) => {
-      select: (columns: "id, sort_order") => {
-        single: () => PromiseLike<{
-          data: { id: string; sort_order: number } | null;
-          error: unknown;
-        }>;
-      };
-    };
-  };
   rpc?: (
-    functionName: "add_family_spot_item_template",
-    args: {
-      p_family_id: string;
-      p_child_id: string;
-      p_name: string;
-      p_default_quantity: number;
-      p_weekdays: number[];
-    },
+    functionName: "add_family_spot_item_template" | "add_family_item_template",
+    args:
+      | {
+          p_family_id: string;
+          p_child_id: string;
+          p_name: string;
+          p_default_quantity: number;
+          p_weekdays: number[];
+        }
+      | {
+          p_family_id: string;
+          p_child_id: string;
+          p_kind: "regular" | "rough";
+          p_name: string;
+          p_default_quantity: number;
+          p_unit: string;
+          p_current_rough_state: "enough" | null;
+        },
   ) => PromiseLike<{
     data: { id: string; sort_order: number }[] | null;
     error: unknown;
@@ -252,59 +224,30 @@ export async function saveSharedItemTemplateAdd(
     throw new Error("invalid_item_template_rough_state");
   }
 
-  const { data: maxSortOrderRow, error: maxSortOrderError } = await supabase
-    .from("item_templates")
-    .select("sort_order")
-    .eq("family_id", input.familyId)
-    .eq("child_id", input.childId)
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (maxSortOrderError) {
-    throw maxSortOrderError;
+  if (!supabase.rpc) {
+    throw new Error("missing_item_template_add_rpc");
   }
 
-  let sortOrder = 0;
-  if (maxSortOrderRow !== null) {
-    const maxSortOrder = maxSortOrderRow.sort_order;
-    if (
-      typeof maxSortOrder !== "number" ||
-      !Number.isInteger(maxSortOrder) ||
-      maxSortOrder < 0 ||
-      maxSortOrder >= maxItemSortOrder
-    ) {
-      throw new Error("invalid_item_template_sort_order");
-    }
-    sortOrder = maxSortOrder + 1;
-  }
-
-  const { data, error } = await supabase
-    .from("item_templates")
-    .insert({
-      family_id: input.familyId,
-      child_id: input.childId,
-      kind: input.kind,
-      name,
-      default_quantity: input.defaultQuantity,
-      unit: input.unit,
-      weekday: null,
-      sort_order: sortOrder,
-      current_rough_state: input.currentRoughState,
-      is_active: true,
-    })
-    .select("id, sort_order")
-    .single();
+  const { data, error } = await supabase.rpc("add_family_item_template", {
+    p_family_id: input.familyId,
+    p_child_id: input.childId,
+    p_kind: input.kind,
+    p_name: name,
+    p_default_quantity: input.defaultQuantity,
+    p_unit: input.unit,
+    p_current_rough_state: input.currentRoughState,
+  });
 
   if (error) {
-    throw error;
+    throw toSharedItemTemplateSaveError(error);
   }
 
-  if (!isValidItemTemplateAddResult(data)) {
+  const saved = data?.[0];
+  if (data?.length !== 1 || !isValidItemTemplateAddResult(saved)) {
     throw new Error("shared_item_template_add_result_invalid");
   }
 
-  return { id: data.id, sortOrder: data.sort_order };
+  return { id: saved.id, sortOrder: saved.sort_order };
 }
 
 export async function saveSharedItemTemplateEdit(
