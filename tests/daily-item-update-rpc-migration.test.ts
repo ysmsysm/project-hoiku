@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
 const migrationPath =
-  "supabase/migrations/20260719000400_add_update_daily_item_rpc.sql";
+  "supabase/migrations/20260726000100_add_complete_daily_preparation_rpc.sql";
 const sql = readFileSync(migrationPath, "utf8");
 
 const getFunctionSql = () => {
@@ -23,7 +23,11 @@ test("daily item update RPC migration is present with expected signature and sec
     file.endsWith(".sql"),
   );
 
-  assert.ok(migrations.includes("20260719000400_add_update_daily_item_rpc.sql"));
+  assert.ok(
+    migrations.includes(
+      "20260726000100_add_complete_daily_preparation_rpc.sql",
+    ),
+  );
   assert.match(
     sql,
     /create or replace function public\.update_daily_item\(\s*p_family_id uuid,\s*p_child_id uuid,\s*p_session_date date,\s*p_daily_item_id uuid,\s*p_expected_version integer,\s*p_action text,\s*p_value jsonb\s*\)/i,
@@ -73,6 +77,37 @@ test("daily item update RPC checks auth, membership, operator snapshot, child, s
   assert.match(
     functionSql,
     /from public\.daily_items[\s\S]*daily_items\.id = p_daily_item_id[\s\S]*daily_items\.family_id = p_family_id[\s\S]*daily_items\.daily_session_id = target_session_id[\s\S]*daily_items\.deleted_at is null/i,
+  );
+});
+
+test("daily item update RPC locks session before item and rejects every item action after preparation completion", () => {
+  const functionSql = getFunctionSql();
+  const sessionLockIndex = functionSql.search(
+    /from public\.daily_sessions[\s\S]*?for update;/i,
+  );
+  const itemLockIndex = functionSql.search(
+    /from public\.daily_items[\s\S]*?for update;/i,
+  );
+  const preparedGuardIndex = functionSql.search(
+    /if target_session_prepared_at is not null then[\s\S]*?'reason', 'session_prepared'/i,
+  );
+
+  assert.ok(sessionLockIndex >= 0);
+  assert.ok(preparedGuardIndex > sessionLockIndex);
+  assert.ok(itemLockIndex > preparedGuardIndex);
+  assert.match(
+    functionSql,
+    /if target_session_prepared_at is not null then[\s\S]*'status', 'invalid_state'[\s\S]*'session', session_payload/i,
+  );
+  assert.ok(
+    preparedGuardIndex <
+      functionSql.indexOf("if p_action = 'set_observed_quantity'"),
+  );
+  assert.ok(
+    preparedGuardIndex < functionSql.indexOf("elsif p_action = 'set_prepared'"),
+  );
+  assert.ok(
+    preparedGuardIndex < functionSql.indexOf("elsif p_action = 'set_deferred'"),
   );
 });
 
@@ -195,7 +230,7 @@ test("daily item update RPC does not update sessions, insert, delete, checked, r
 
   assert.doesNotMatch(functionSql, /\binsert\s+into\b|\bdelete\s+from\b/i);
   assert.doesNotMatch(functionSql, /update public\.daily_sessions/i);
-  assert.doesNotMatch(functionSql, /checked_at|checked_by_|prepared_at|prepared_by_|thanks_/i);
+  assert.doesNotMatch(functionSql, /checked_at\s*=|checked_by_\w+\s*=|prepared_at\s*=|prepared_by_\w+\s*=|thanks_\w+\s*=/i);
   assert.doesNotMatch(functionSql, /set_checked|set_rough_state/i);
   assert.doesNotMatch(functionSql, /is_checked\s*=|rough_state\s*=|is_carryover\s*=|carryover_pending_shortage_count\s*=|carryover_resolved_at\s*=/i);
 });

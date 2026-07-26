@@ -6,14 +6,20 @@ const migrationPath =
   "supabase/migrations/20260719000700_add_process_daily_carryovers_rpc.sql";
 const fixMigrationPath =
   "supabase/migrations/20260724000100_fix_process_daily_carryovers_rpc_qualification.sql";
+const completionSafetyMigrationPath =
+  "supabase/migrations/20260726000200_fix_daily_carryover_completion_safety.sql";
 const migrationBytes = readFileSync(migrationPath);
 const fixMigrationBytes = readFileSync(fixMigrationPath);
+const completionSafetyMigrationBytes = readFileSync(
+  completionSafetyMigrationPath,
+);
 const sql = migrationBytes.toString("utf8");
 const fixSql = fixMigrationBytes.toString("utf8");
+const completionSafetySql = completionSafetyMigrationBytes.toString("utf8");
 const expectedFirstLine =
   "create or replace function public.process_daily_carryovers(";
 
-const getFunctionSql = (sourceSql = sql) => {
+const getFunctionSql = (sourceSql = completionSafetySql) => {
   const functionStart = sourceSql.indexOf(
     "create or replace function public.process_daily_carryovers",
   );
@@ -110,19 +116,26 @@ test("daily carryovers process RPC migration is present with expected signature 
       "20260724000100_fix_process_daily_carryovers_rpc_qualification.sql",
     ),
   );
+  assert.ok(
+    migrations.includes(
+      "20260726000200_fix_daily_carryover_completion_safety.sql",
+    ),
+  );
   assert.match(
-    sql,
+    completionSafetySql,
     /create or replace function public\.process_daily_carryovers\(\s*p_family_id uuid,\s*p_child_id uuid,\s*p_to_session_date date\s*\)/i,
   );
-  assert.match(sql, /returns jsonb/i);
-  assert.match(sql, /security invoker/i);
-  assert.match(sql, /set search_path = ''/i);
+  assert.match(completionSafetySql, /returns jsonb/i);
+  assert.match(completionSafetySql, /security invoker/i);
+  assert.match(completionSafetySql, /set search_path = ''/i);
+  assert.doesNotMatch(completionSafetySql, /drop function/i);
 });
 
 test("daily carryovers process RPC migrations are saved without UTF-8 BOM", () => {
   for (const [path, bytes] of [
     [migrationPath, migrationBytes],
     [fixMigrationPath, fixMigrationBytes],
+    [completionSafetyMigrationPath, completionSafetyMigrationBytes],
   ] as const) {
     assert.notDeepEqual(
       [...bytes.subarray(0, 3)],
@@ -135,33 +148,39 @@ test("daily carryovers process RPC migrations are saved without UTF-8 BOM", () =
 });
 
 test("daily carryovers process RPC fix migration redefines the same secured function", () => {
-  assert.match(
-    fixSql,
-    /create or replace function public\.process_daily_carryovers\(\s*p_family_id uuid,\s*p_child_id uuid,\s*p_to_session_date date\s*\)/i,
-  );
-  assert.match(fixSql, /returns jsonb/i);
-  assert.match(fixSql, /security invoker/i);
-  assert.match(fixSql, /set search_path = ''/i);
-  assert.match(
-    fixSql,
-    /revoke all on function public\.process_daily_carryovers\(\s*uuid,\s*uuid,\s*date\s*\)\s+from public;/i,
-  );
-  assert.match(
-    fixSql,
-    /revoke all on function public\.process_daily_carryovers\(\s*uuid,\s*uuid,\s*date\s*\)\s+from anon;/i,
-  );
-  assert.match(
-    fixSql,
-    /revoke all on function public\.process_daily_carryovers\(\s*uuid,\s*uuid,\s*date\s*\)\s+from authenticated;/i,
-  );
-  assert.match(
-    fixSql,
-    /grant execute on function public\.process_daily_carryovers\(\s*uuid,\s*uuid,\s*date\s*\)\s+to authenticated;/i,
-  );
+  for (const migrationSql of [fixSql, completionSafetySql]) {
+    assert.match(
+      migrationSql,
+      /create or replace function public\.process_daily_carryovers\(\s*p_family_id uuid,\s*p_child_id uuid,\s*p_to_session_date date\s*\)/i,
+    );
+    assert.match(migrationSql, /returns jsonb/i);
+    assert.match(migrationSql, /security invoker/i);
+    assert.match(migrationSql, /set search_path = ''/i);
+    assert.match(
+      migrationSql,
+      /revoke all on function public\.process_daily_carryovers\(\s*uuid,\s*uuid,\s*date\s*\)\s+from public;/i,
+    );
+    assert.match(
+      migrationSql,
+      /revoke all on function public\.process_daily_carryovers\(\s*uuid,\s*uuid,\s*date\s*\)\s+from anon;/i,
+    );
+    assert.match(
+      migrationSql,
+      /revoke all on function public\.process_daily_carryovers\(\s*uuid,\s*uuid,\s*date\s*\)\s+from authenticated;/i,
+    );
+    assert.match(
+      migrationSql,
+      /grant execute on function public\.process_daily_carryovers\(\s*uuid,\s*uuid,\s*date\s*\)\s+to authenticated;/i,
+    );
+  }
 });
 
 test("daily carryovers process RPC uses unqualified SQL conditional functions", () => {
-  for (const functionSql of [getFunctionSql(), getFunctionSql(fixSql)]) {
+  for (const functionSql of [
+    getFunctionSql(sql),
+    getFunctionSql(fixSql),
+    getFunctionSql(),
+  ]) {
     assert.doesNotMatch(functionSql, /pg_catalog\.coalesce\s*\(/i);
     assert.doesNotMatch(functionSql, /pg_catalog\.greatest\s*\(/i);
     assert.doesNotMatch(functionSql, /pg_catalog\.least\s*\(/i);
@@ -172,7 +191,7 @@ test("daily carryovers process RPC uses unqualified SQL conditional functions", 
 });
 
 test("daily carryovers process RPC original and fix migration bodies match", () => {
-  assert.equal(getFunctionSql(fixSql), getFunctionSql());
+  assert.equal(getFunctionSql(fixSql), getFunctionSql(sql));
 });
 
 test("daily carryovers process RPC execute access is limited to authenticated", () => {
@@ -228,19 +247,40 @@ test("daily carryovers process RPC checks auth, family member row, and child own
   );
 });
 
-test("daily carryovers process RPC uses an existing destination session and returns not_found without creating it", () => {
+test("daily carryovers process RPC locks an existing unprepared destination session before item work", () => {
   const functionSql = getFunctionSql();
+  const sessionLockIndex = functionSql.search(
+    /select\s+daily_sessions\.id,\s*daily_sessions\.prepared_at[\s\S]*?for update;/i,
+  );
+  const preparedGuardIndex = functionSql.search(
+    /if destination_session_prepared_at is not null then/i,
+  );
+  const sourceLockIndex = functionSql.search(
+    /for update of source_items skip locked;/i,
+  );
+  const destinationItemIndex = functionSql.search(
+    /from public\.daily_items as destination_items/i,
+  );
 
   assert.match(
     functionSql,
-    /select daily_sessions\.id[\s\S]*into destination_session_id[\s\S]*from public\.daily_sessions[\s\S]*daily_sessions\.family_id = p_family_id[\s\S]*daily_sessions\.child_id = p_child_id[\s\S]*daily_sessions\.session_date = p_to_session_date/i,
+    /select\s+daily_sessions\.id,\s*daily_sessions\.prepared_at[\s\S]*into\s+destination_session_id,\s*destination_session_prepared_at[\s\S]*from public\.daily_sessions[\s\S]*daily_sessions\.family_id = p_family_id[\s\S]*daily_sessions\.child_id = p_child_id[\s\S]*daily_sessions\.session_date = p_to_session_date[\s\S]*for update;/i,
   );
   assert.match(
     functionSql,
     /if destination_session_id is null then[\s\S]*'status', 'not_found'/i,
   );
+  assert.match(
+    functionSql,
+    /if destination_session_prepared_at is not null then[\s\S]*'status', 'invalid_state'[\s\S]*'created_count', 0[\s\S]*'updated_count', 0[\s\S]*'processed_count', 0[\s\S]*'skipped_count', 0/i,
+  );
+  assert.ok(sessionLockIndex >= 0);
+  assert.ok(preparedGuardIndex > sessionLockIndex);
+  assert.ok(sourceLockIndex > preparedGuardIndex);
+  assert.ok(destinationItemIndex > sourceLockIndex);
   assert.doesNotMatch(functionSql, /insert into public\.daily_sessions/i);
   assert.doesNotMatch(functionSql, /update public\.daily_sessions/i);
+  assert.doesNotMatch(functionSql, /prepared_by_|daily_sessions\.version\s*=/i);
 });
 
 test("daily carryovers process RPC claims only eligible past source items with row locking", () => {
@@ -303,35 +343,53 @@ test("template carryovers choose a stable latest representative source id", () =
   assert.match(functionSql, /carried_from_daily_item_id/i);
 });
 
-test("spot template carryovers merge due_date to the earliest non-null value", () => {
+test("spot template carryovers preserve the greatest required quantity and merge due_date", () => {
+  const functionSql = getFunctionSql();
   const spotUpdate = getUpdateStatements().find((statement) =>
     /spot_groups/i.test(statement),
   );
 
   assert.ok(spotUpdate);
+  assert.match(
+    functionSql,
+    /with spot_groups as \([\s\S]*pg_catalog\.max\(claimed\.required_quantity\) as source_required_quantity/i,
+  );
   assert.match(spotUpdate, /destination_items\.kind = 'spot'/i);
+  assert.match(
+    spotUpdate,
+    /required_quantity = greatest\(\s*destination_items\.required_quantity,\s*spot_groups\.source_required_quantity\s*\)/i,
+  );
   assert.match(
     spotUpdate,
     /select pg_catalog\.min\(due_values\.due_date\)[\s\S]*values\s*\(\s*destination_items\.due_date\s*\),\s*\(\s*spot_groups\.earliest_source_due_date\s*\)[\s\S]*where due_values\.due_date is not null/i,
   );
   assert.doesNotMatch(
     spotUpdate,
-    /name\s*=|unit\s*=|quantity\s*=|required_quantity\s*=|carryover_pending_shortage_count\s*=/i,
+    /name\s*=|unit\s*=|carryover_pending_shortage_count\s*=/i,
   );
 });
 
-test("rough template carryovers only mark carryover metadata and never overwrite rough_state", () => {
+test("rough template carryovers preserve the greatest required quantity without changing rough_state", () => {
+  const functionSql = getFunctionSql();
   const roughUpdate = getUpdateStatements().find((statement) =>
     /rough_groups/i.test(statement),
   );
 
   assert.ok(roughUpdate);
+  assert.match(
+    functionSql,
+    /with rough_groups as \([\s\S]*pg_catalog\.max\(claimed\.required_quantity\) as source_required_quantity/i,
+  );
   assert.match(roughUpdate, /destination_items\.kind = 'rough'/i);
   assert.match(roughUpdate, /is_carryover = true/i);
   assert.match(roughUpdate, /carried_from_daily_item_id = rough_groups\.carried_from_daily_item_id/i);
+  assert.match(
+    roughUpdate,
+    /required_quantity = greatest\(\s*destination_items\.required_quantity,\s*rough_groups\.source_required_quantity\s*\)/i,
+  );
   assert.doesNotMatch(
     roughUpdate,
-    /rough_state\s*=|required_quantity\s*=|observed_quantity\s*=|shortage_count\s*=|carryover_pending_shortage_count\s*=|is_checked\s*=|is_prepared\s*=|is_deferred\s*=/i,
+    /rough_state\s*=|observed_quantity\s*=|shortage_count\s*=|carryover_pending_shortage_count\s*=|is_checked\s*=|is_prepared\s*=|is_deferred\s*=/i,
   );
 });
 
@@ -451,6 +509,14 @@ test("template successful groups combine update returning and already satisfied 
     functionSql,
     /already_satisfied_spot[\s\S]*destination_items\.due_date is not distinct from \(\s*select pg_catalog\.min\(due_values\.due_date\)/i,
   );
+  assert.match(
+    functionSql,
+    /already_satisfied_spot[\s\S]*destination_items\.required_quantity is not distinct from greatest\(\s*destination_items\.required_quantity,\s*spot_groups\.source_required_quantity\s*\)/i,
+  );
+  assert.match(
+    functionSql,
+    /already_satisfied_rough[\s\S]*destination_items\.required_quantity is not distinct from greatest\(\s*destination_items\.required_quantity,\s*rough_groups\.source_required_quantity\s*\)/i,
+  );
   assert.doesNotMatch(
     functionSql.match(/already_satisfied_rough[\s\S]*?insert into pg_temp\.successful_rough_carryover_groups/i)?.[0] ?? "",
     /rough_state\s*=/i,
@@ -493,7 +559,7 @@ test("daily carryovers process RPC does not include unrelated daily workflows", 
 
   assert.doesNotMatch(
     functionSql,
-    /checked_at|checked_by_|prepared_at|prepared_by_|thanks_|carryover_resolved_at\s*=|set_checked|complete_daily_check|ensure_daily_session|load_daily_data/i,
+    /checked_at|checked_by_|prepared_at\s*=|prepared_by_|thanks_|carryover_resolved_at\s*=|set_checked|complete_daily_check|ensure_daily_session|load_daily_data/i,
   );
   assert.doesNotMatch(functionSql, /insert into public\.item_templates/i);
 });
