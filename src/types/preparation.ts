@@ -1,3 +1,5 @@
+import type { DailyItemKind } from "./daily";
+
 export type LockerItem = {
   id: string;
   name: string;
@@ -8,6 +10,10 @@ export type LockerItem = {
 
 export type PreparationItem = {
   id: string;
+  dailyItemId?: string;
+  itemTemplateId?: string | null;
+  dailyItemVersion?: number;
+  dailyKind?: DailyItemKind;
   name: string;
   unit: string;
   count: number;
@@ -19,6 +25,7 @@ export type PreparationItem = {
 };
 
 export type PreparationSession = {
+  date?: string;
   checkedBy: string;
   confirmedAt: string | null;
   completedAt: string | null;
