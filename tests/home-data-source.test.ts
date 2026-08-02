@@ -54,6 +54,11 @@ const sharedInitialData: SharedSettingsAppData = {
   },
 };
 
+const sharedInitialDailyData = {
+  status: "not_found" as const,
+  sessionDate: "2026-08-01",
+};
+
 test("local mode keeps existing localStorage loading and durable settings editing", () => {
   const dataSource: HomeDataSource = { mode: "local" };
 
@@ -81,6 +86,7 @@ test("shared mode uses initialData and skips durable localStorage loading", () =
     mode: "shared",
     familyId: "family-1",
     initialData: sharedInitialData,
+    initialDailyData: sharedInitialDailyData,
     childProfileEditable: true,
     durableItemsEditable: false,
   };
@@ -112,6 +118,7 @@ test("shared mode separates durable item editing permissions by operation", () =
     mode: "shared",
     familyId: "family-1",
     initialData: sharedInitialData,
+    initialDailyData: sharedInitialDailyData,
     childProfileEditable: true,
     durableItemsEditable: false,
   };

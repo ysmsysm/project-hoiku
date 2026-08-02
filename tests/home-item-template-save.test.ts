@@ -1400,6 +1400,10 @@ function sharedDataSource(): Exclude<HomeDataSource, { mode: "shared-error" }> {
     mode: "shared",
     familyId: "family-1",
     initialData: sharedInitialData,
+    initialDailyData: {
+      status: "not_found",
+      sessionDate: "2026-08-01",
+    },
     childProfileEditable: true,
     durableItemsEditable: false,
   };

@@ -1,4 +1,5 @@
 import type { SharedSettingsAppData } from "./family-sharing/shared-settings";
+import type { SharedDailyState } from "../types/shared-daily";
 import type { CustomItemCategory } from "../types/preparation";
 
 export type HomeSharedErrorReason =
@@ -16,6 +17,7 @@ export type HomeDataSource =
       mode: "shared";
       familyId: string;
       initialData: SharedSettingsAppData;
+      initialDailyData: SharedDailyState;
       childProfileEditable: true;
       durableItemsEditable: false;
     }

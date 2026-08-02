@@ -2,6 +2,8 @@ import type { User } from "@supabase/supabase-js";
 import type { CurrentUserResult } from "./auth/session";
 import type { SharedSettingsLoadResult } from "./family-sharing/shared-settings-server";
 import type { CurrentFamilyMembership } from "../types/family";
+import type { LoadDailyDataInput } from "../types/daily";
+import type { SharedDailyState } from "../types/shared-daily";
 import {
   toHomeSharedErrorReason,
   type HomeDataSource,
@@ -15,7 +17,20 @@ type HomeDataSourceDependencies = {
   loadSharedSettingsForFamily: (
     familyId: string,
   ) => Promise<SharedSettingsLoadResult>;
+  getJapanDateString: () => string;
+  loadSharedDailyDataForFamily: (
+    input: LoadDailyDataInput,
+  ) => Promise<SharedDailyState>;
 };
+
+const dailyLoadFailure = (sessionDate: string): SharedDailyState => ({
+  status: "transport_error",
+  sessionDate,
+  error: {
+    kind: "rpc_error",
+    message: "Shared daily data server load failed",
+  },
+});
 
 export async function getHomeDataSource(
   dependencies: HomeDataSourceDependencies,
@@ -61,10 +76,24 @@ export async function getHomeDataSource(
     };
   }
 
+  const sessionDate = dependencies.getJapanDateString();
+  let initialDailyData: SharedDailyState;
+
+  try {
+    initialDailyData = await dependencies.loadSharedDailyDataForFamily({
+      familyId: membership.familyId,
+      childId: sharedSettings.data.childId,
+      sessionDate,
+    });
+  } catch {
+    initialDailyData = dailyLoadFailure(sessionDate);
+  }
+
   return {
     mode: "shared",
     familyId: membership.familyId,
     initialData: sharedSettings.data,
+    initialDailyData,
     childProfileEditable: true,
     durableItemsEditable: false,
   };
