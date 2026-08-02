@@ -250,6 +250,58 @@ export type UpdateDailyPreparationItemsResult =
   | UpdateDailyPreparationItemsBusinessResult
   | DailyDataFailure;
 
+export type UpdateDailyItemInput = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  dailySessionId: string;
+  dailyItemId: string;
+  expectedVersion: number;
+  requiredQuantity: number;
+  observedQuantity: number;
+};
+
+export type UpdateDailyItemBusinessResult =
+  | {
+      status: "success";
+      item: DailyItem;
+    }
+  | {
+      status: "conflict";
+      item: DailyItem;
+    }
+  | {
+      status: "forbidden" | "not_found";
+    }
+  | {
+      status: "invalid_state";
+      reason?: "session_prepared";
+    };
+
+export type UpdateDailyItemResult =
+  | UpdateDailyItemBusinessResult
+  | DailyDataFailure;
+
+export type UpdateDailyItemClient = {
+  rpc: (
+    functionName: "update_daily_item",
+    args: {
+      p_family_id: string;
+      p_child_id: string;
+      p_session_date: string;
+      p_daily_item_id: string;
+      p_expected_version: number;
+      p_action: "set_observed_quantity";
+      p_value: {
+        observed_quantity: number;
+      };
+    },
+  ) => PromiseLike<{
+    data: unknown;
+    error: unknown;
+  }>;
+};
+
 export type DailyDataClient = {
   rpc: (
     functionName: "load_daily_data" | "update_daily_preparation_items",

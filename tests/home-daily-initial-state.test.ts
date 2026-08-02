@@ -6,11 +6,13 @@ import {
   canRenderHomeCompleteCheckAction,
   canRunHomeLocalCompleteCheck,
   canRunHomeLocalDailyMutation,
+  canRunHomeObservedQuantityMutation,
   completeHomeLocalDailyHydration,
   createHomeLockerItems,
   createHomeDailyInitialState,
   deriveHomeSharedDailyState,
   getHomeLocalDailySourceKey,
+  getHomeObservedQuantityMutationErrorView,
   getHomeSharedDailyStatusView,
   getHomeSharedDailyPropSync,
   getHomeSharedDailyStateSyncKey,
@@ -37,6 +39,10 @@ const sessionDate = "2026-08-02";
 const homeClientSource = readFileSync("app/HomeClient.tsx", "utf8");
 const progressDotsSource = readFileSync(
   "src/components/ui/ProgressDots.tsx",
+  "utf8",
+);
+const shortageInputListSource = readFileSync(
+  "src/components/ShortageInputList.tsx",
   "utf8",
 );
 const preparationChecklistSource = readFileSync(
@@ -562,6 +568,76 @@ test("only local mode permits local daily mutations", () => {
   }
 });
 
+test("observed quantity capability includes only local and shared success", () => {
+  assert.equal(canRunHomeObservedQuantityMutation("local"), true);
+  assert.equal(canRunHomeObservedQuantityMutation("shared-success"), true);
+  assert.equal(
+    canRunHomeObservedQuantityMutation("shared-non-success"),
+    false,
+  );
+  assert.equal(canRunHomeObservedQuantityMutation("shared-error"), false);
+
+  for (const state of nonSuccessStates()) {
+    const derived = deriveHomeSharedDailyState(state);
+    assert.equal(canRunHomeObservedQuantityMutation(derived.mode), false);
+    assert.equal(canRunHomeLocalDailyMutation(derived.mode), false);
+  }
+});
+
+test("observed quantity mutation errors are user-safe and reloadable when needed", () => {
+  const conflict = getHomeObservedQuantityMutationErrorView({
+    status: "conflict",
+    item: dailyItem(),
+  });
+  assert.equal(conflict.canReload, true);
+  assert.match(conflict.title, /他の端末/);
+
+  const prepared = getHomeObservedQuantityMutationErrorView({
+    status: "invalid_state",
+    reason: "session_prepared",
+  });
+  assert.match(prepared.title, /準備完了後/);
+
+  const invalidResponse = getHomeObservedQuantityMutationErrorView({
+    status: "transport_error",
+    error: {
+      kind: "invalid_response",
+      message: "internal update_daily_item failure",
+      issues: [{ path: "familyId", code: familyId }],
+    },
+  });
+  assert.equal(invalidResponse.canReload, true);
+  assert.doesNotMatch(
+    JSON.stringify(invalidResponse),
+    /update_daily_item|familyId|11111111/,
+  );
+
+  const rpcError = getHomeObservedQuantityMutationErrorView({
+    status: "transport_error",
+    error: { kind: "rpc_error", message: "internal network detail" },
+  });
+  assert.equal(rpcError.canReload, false);
+  assert.match(rpcError.title, /通信/);
+  assert.notEqual(rpcError.title, invalidResponse.title);
+
+  assert.equal(
+    getHomeObservedQuantityMutationErrorView({ status: "forbidden" })
+      .canReload,
+    false,
+  );
+  assert.equal(
+    getHomeObservedQuantityMutationErrorView({ status: "not_found" })
+      .canReload,
+    true,
+  );
+  assert.match(
+    getHomeObservedQuantityMutationErrorView({
+      status: "invalid_state",
+    }).title,
+    /現在の状態/,
+  );
+});
+
 test("shared daily status views keep all six statuses distinct and user-safe", () => {
   const views = nonSuccessStates().map((state) => {
     assert.equal(isHomeSharedDailyDisplayState(state), true);
@@ -602,6 +678,15 @@ test("daily mutation controls propagate native disabled state", () => {
     /disabled=\{disabled \|\| item\.checked\}/,
   );
   assert.match(homeClientSource, /disabled=\{!canRunLocalDailyMutation\}/);
+  assert.match(
+    homeClientSource,
+    /disabled=\{!canRunObservedQuantityMutation\}/,
+  );
+  assert.match(
+    homeClientSource,
+    /disabledItemIds=\{disabledObservedQuantityItemIds\}/,
+  );
+  assert.match(shortageInputListSource, /item\.dailyItemId \?\? item\.id/);
   assert.match(homeClientSource, /dailyMode === "shared-non-success"/);
   assert.match(homeClientSource, /router\.refresh\(\)/);
   assert.doesNotMatch(homeClientSource, /window\.location\.reload\(\)/);
@@ -610,7 +695,6 @@ test("daily mutation controls propagate native disabled state", () => {
 test("local daily save boundaries and template cleanup are mode guarded", () => {
   for (const handler of [
     "updateSession",
-    "updateShortageCount",
     "updateSpotAdditions",
     "updateSpotDeadlines",
     "updateTemporaryTodayOnlyItems",
@@ -622,6 +706,57 @@ test("local daily save boundaries and template cleanup are mode guarded", () => 
       ),
     );
   }
+
+  assert.match(
+    homeClientSource,
+    /const updateShortageCount = async[\s\S]*?dailyMode === "local"[\s\S]*?appRepository\.saveCheckCounts/,
+  );
+  assert.match(
+    homeClientSource,
+    /dailyMode !== "shared-success"[\s\S]*?updateDailyItem\(/,
+  );
+  assert.match(
+    homeClientSource,
+    /pendingObservedQuantityRequestsRef\.current\.has\(dailyItemId\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /observedQuantityMountedRef\.current = true/,
+  );
+  assert.match(
+    homeClientSource,
+    /observedQuantityScopeGenerationRef\.current !== requestScopeGeneration/,
+  );
+  assert.match(
+    homeClientSource,
+    /result\.status === "success"[\s\S]*?applyUpdatedItemToSharedDailyState/,
+  );
+  const quantityHandlerSource = homeClientSource.slice(
+    homeClientSource.indexOf("const updateShortageCount = async"),
+    homeClientSource.indexOf("const toggleRoughState = async"),
+  );
+  const sharedQuantityBranchIndex = quantityHandlerSource.indexOf(
+    'dailyMode !== "shared-success"',
+  );
+  assert.notEqual(sharedQuantityBranchIndex, -1);
+  assert.equal(
+    quantityHandlerSource.match(/appRepository\.saveCheckCounts/g)?.length,
+    1,
+  );
+  assert.ok(
+    quantityHandlerSource.indexOf("appRepository.saveCheckCounts") <
+      sharedQuantityBranchIndex,
+  );
+  assert.doesNotMatch(
+    quantityHandlerSource.slice(sharedQuantityBranchIndex),
+    /setShortageCounts|appRepository/,
+  );
+  assert.equal(quantityHandlerSource.match(/updateDailyItem\(/g)?.length, 1);
+  assert.doesNotMatch(quantityHandlerSource, /router\.refresh\(\)/);
+  assert.match(
+    homeClientSource,
+    /observedQuantityMutationError\.canReload[\s\S]*?router\.refresh\(\)/,
+  );
 
   assert.match(
     homeClientSource,

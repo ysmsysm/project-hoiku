@@ -11,6 +11,7 @@ import type {
   TodayOnlyTemporaryItem,
 } from "../types/preparation";
 import type { SpotAddition } from "../types/spot";
+import type { UpdateDailyItemResult } from "../types/daily";
 
 type SharedDailySuccessState = Extract<
   SharedDailyState,
@@ -40,6 +41,12 @@ export type HomeSharedDailyStatusView = {
   category: "business" | "transport" | "response" | "input";
   title: string;
   body: string;
+};
+
+export type HomeObservedQuantityMutationErrorView = {
+  title: string;
+  body: string;
+  canReload: boolean;
 };
 
 type HomeLocalDailyRepository = Pick<
@@ -322,6 +329,67 @@ export function canRunHomeLocalDailyMutation(
   dailyMode: HomeDailyInitialState["mode"],
 ): boolean {
   return dailyMode === "local";
+}
+
+export function canRunHomeObservedQuantityMutation(
+  dailyMode: HomeDailyInitialState["mode"],
+): boolean {
+  return dailyMode === "local" || dailyMode === "shared-success";
+}
+
+export function getHomeObservedQuantityMutationErrorView(
+  result: Exclude<UpdateDailyItemResult, { status: "success" }>,
+): HomeObservedQuantityMutationErrorView {
+  switch (result.status) {
+    case "conflict":
+      return {
+        title: "他の端末で数量が更新されています",
+        body: "最新の数量を確認するため、再読み込みしてください。",
+        canReload: true,
+      };
+    case "forbidden":
+      return {
+        title: "更新権限を確認できません",
+        body: "家族の共有設定を確認してください。",
+        canReload: false,
+      };
+    case "not_found":
+      return {
+        title: "対象のデータが見つかりません",
+        body: "最新の状態を確認するため、再読み込みしてください。",
+        canReload: true,
+      };
+    case "invalid_state":
+      return result.reason === "session_prepared"
+        ? {
+            title: "準備完了後は数量を変更できません",
+            body: "最新の状態を確認してください。",
+            canReload: true,
+          }
+        : {
+            title: "現在の状態では数量を変更できません",
+            body: "最新の状態を確認してください。",
+            canReload: true,
+          };
+    case "client_error":
+      return {
+        title: "数量を更新できませんでした",
+        body: "数量を確認して、もう一度操作してください。",
+        canReload: false,
+      };
+    case "transport_error":
+      return result.error.kind === "invalid_response"
+        ? {
+            title: "更新結果を確認できませんでした",
+            body: "最新の状態を確認するため、再読み込みしてください。",
+            canReload: true,
+          }
+        : {
+            title: "通信に失敗しました",
+            body: "通信環境を確認して、もう一度操作してください。",
+            canReload: false,
+          };
+  }
 }
 
 export function isHomeSharedDailyDisplayState(

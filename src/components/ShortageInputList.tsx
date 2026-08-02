@@ -13,12 +13,14 @@ type ShortageInputListProps = {
   items: LockerItem[];
   onChange: (itemId: string, shortageCount: number) => void;
   disabled?: boolean;
+  disabledItemIds?: ReadonlySet<string>;
 };
 
 export function ShortageInputList({
   items,
   onChange,
   disabled = false,
+  disabledItemIds,
 }: ShortageInputListProps) {
   const maxRequiredCount = Math.max(
     1,
@@ -57,7 +59,10 @@ export function ShortageInputList({
               label={item.name}
               columns={maxRequiredCount}
               onChange={(nextCount) => onChange(item.id, nextCount)}
-              disabled={disabled}
+              disabled={
+                disabled ||
+                disabledItemIds?.has(item.dailyItemId ?? item.id)
+              }
               className="w-full"
             />
           }

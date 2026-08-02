@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyUpdatedItemToSharedDailyState,
   loadSharedDailyDataForDate,
   mapLoadDailyDataResultToSharedDailyState,
 } from "../src/lib/family-sharing/shared-daily-data";
 import type {
   DailyDataClient,
+  DailyItem,
   DailySession,
 } from "../src/types/daily";
+import type { SharedDailyState } from "../src/types/shared-daily";
 
 const familyId = "11111111-1111-4111-8111-111111111111";
 const childId = "22222222-2222-4222-8222-222222222222";
@@ -240,4 +243,115 @@ test("converts unexpected view mapper failure into invalid_response", () => {
       issues: [{ path: "session", code: "view_mapping_failed" }],
     },
   });
+});
+
+test("applies one validated item to the canonical session and re-derives views", async () => {
+  const secondItemId = "66666666-6666-4666-8666-666666666666";
+  const secondTemplateId = "77777777-7777-4777-8777-777777777777";
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload(),
+      items: [
+        itemPayload(),
+        itemPayload({
+          id: secondItemId,
+          daily_item_id: secondItemId,
+          item_template_id: secondTemplateId,
+          name: "タオル",
+        }),
+      ],
+    }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  if (state.status !== "success") {
+    return;
+  }
+
+  const untouchedItem = state.session.items[1];
+  const updatedItem: DailyItem = {
+    ...state.session.items[0],
+    observedQuantity: 2,
+    shortageCount: 1,
+    version: 5,
+  };
+  const applied = applyUpdatedItemToSharedDailyState(
+    state,
+    {
+      familyId,
+      childId,
+      sessionDate,
+      dailySessionId: sessionId,
+      dailyItemId: itemId,
+      expectedVersion: 4,
+    },
+    updatedItem,
+  );
+
+  assert.notEqual(applied, state);
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") {
+    assert.equal(applied.session.items[0], updatedItem);
+    assert.equal(applied.session.items[1], untouchedItem);
+    assert.equal(applied.checkView.items[0].observedQuantity, 2);
+    assert.equal(applied.checkView.items[0].version, 5);
+    assert.equal(applied.preparationSession.items[0].count, 1);
+    assert.equal(applied.preparationSession.items[0].dailyItemVersion, 5);
+  }
+});
+
+test("does not apply stale or out-of-scope daily item results", async () => {
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload(),
+      items: [itemPayload()],
+    }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  if (state.status !== "success") {
+    return;
+  }
+  const updatedItem: DailyItem = {
+    ...state.session.items[0],
+    observedQuantity: 2,
+    shortageCount: 1,
+    version: 5,
+  };
+  const scope = {
+    familyId,
+    childId,
+    sessionDate,
+    dailySessionId: sessionId,
+    dailyItemId: itemId,
+    expectedVersion: 4,
+  };
+  const otherId = "66666666-6666-4666-8666-666666666666";
+
+  const cases: Array<[SharedDailyState, typeof scope, DailyItem]> = [
+    [{ status: "not_found", sessionDate }, scope, updatedItem],
+    [state, { ...scope, familyId: otherId }, updatedItem],
+    [state, { ...scope, childId: otherId }, updatedItem],
+    [state, { ...scope, sessionDate: "2026-08-03" }, updatedItem],
+    [state, { ...scope, dailySessionId: otherId }, updatedItem],
+    [state, { ...scope, dailyItemId: otherId }, updatedItem],
+    [state, { ...scope, expectedVersion: 3 }, updatedItem],
+    [state, scope, { ...updatedItem, familyId: otherId }],
+    [state, scope, { ...updatedItem, dailySessionId: otherId }],
+    [state, scope, { ...updatedItem, dailyItemId: otherId }],
+    [
+      state,
+      { ...scope, dailyItemId: otherId },
+      { ...updatedItem, dailyItemId: otherId },
+    ],
+  ];
+
+  for (const [current, requestScope, item] of cases) {
+    assert.equal(
+      applyUpdatedItemToSharedDailyState(current, requestScope, item),
+      current,
+    );
+  }
 });
