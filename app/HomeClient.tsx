@@ -20,6 +20,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import { AssigneeBadge } from "../src/components/AssigneeBadge";
 import { BabyHeader } from "../src/components/BabyHeader";
 import { BabyAvatar } from "../src/components/BabyAvatar";
@@ -71,6 +72,7 @@ import {
 import {
   canApplyHomeLocalDailyHydration,
   canRenderHomeCompleteCheckAction,
+  canRunHomeLocalDailyMutation,
   canRunHomeLocalCompleteCheck,
   completeHomeLocalDailyHydration,
   createHomeLockerItems,
@@ -78,9 +80,11 @@ import {
   createHomeDailyInitialState,
   deriveHomeSharedDailyState,
   getHomeLocalDailySourceKey,
+  getHomeSharedDailyStatusView,
   getHomeSharedDailyPropSync,
   getHomeSharedDailyStateSyncKey,
   initialHomeLocalDailyHydrationState,
+  isHomeSharedDailyDisplayState,
   isHomeLocalDailyHydrationReady,
   loadHomeLocalDailyInitialState,
   shouldRunHomeLocalDailyAutoEffects,
@@ -306,6 +310,7 @@ type SpotDeadlinePickerState = {
 
 type SpotDeadlineCalendarProps = {
   picker: SpotDeadlinePickerState;
+  disabled?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
   onSelectDate: (dateKey: string) => void;
@@ -316,6 +321,7 @@ const weekdayLabels = ["日", "月", "火", "水", "木", "金", "土"];
 
 function SpotDeadlineCalendar({
   picker,
+  disabled = false,
   onCancel,
   onConfirm,
   onSelectDate,
@@ -339,6 +345,7 @@ function SpotDeadlineCalendar({
         <div className="flex items-center justify-between">
           <button
             type="button"
+            disabled={disabled}
             aria-label="前の月"
             onClick={() => onShiftMonth(-1)}
             className="grid h-9 w-9 place-items-center rounded-button bg-card-today text-icon-today transition active:scale-95"
@@ -350,6 +357,7 @@ function SpotDeadlineCalendar({
           </div>
           <button
             type="button"
+            disabled={disabled}
             aria-label="次の月"
             onClick={() => onShiftMonth(1)}
             className="grid h-9 w-9 place-items-center rounded-button bg-card-today text-icon-today transition active:scale-95"
@@ -372,6 +380,7 @@ function SpotDeadlineCalendar({
               <button
                 key={day.key}
                 type="button"
+                disabled={disabled}
                 onClick={() => onSelectDate(day.key)}
                 className={`grid h-8 place-items-center rounded-full text-status font-normal transition active:scale-95 ${
                   isSelected
@@ -400,6 +409,7 @@ function SpotDeadlineCalendar({
           </button>
           <button
             type="button"
+            disabled={disabled}
             aria-label="期限を確定"
             onClick={onConfirm}
             className="grid h-10 w-10 place-items-center rounded-button bg-primary text-surface shadow-button transition active:scale-95"
@@ -458,6 +468,7 @@ function SharedErrorScreen({
 }: {
   reason: Extract<HomeDataSource, { mode: "shared-error" }>["reason"];
 }) {
+  const router = useRouter();
   const errorCopy = getHomeSharedErrorCopy(reason);
 
   return (
@@ -476,7 +487,7 @@ function SharedErrorScreen({
             <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
               <button
                 type="button"
-                onClick={() => window.location.reload()}
+                onClick={() => router.refresh()}
                 className="h-[48px] rounded-button bg-primary px-4 text-button font-bold text-surface shadow-button transition active:scale-[0.99]"
               >
                 再読み込み
@@ -500,6 +511,7 @@ function HomeClientContent({
 }: {
   dataSource: Exclude<HomeDataSource, { mode: "shared-error" }>;
 }) {
+  const router = useRouter();
   const sharedInitialData = getSharedInitialDurableSettings(dataSource);
   const initialCustomItems =
     sharedInitialData?.customItems ?? defaultCustomItems;
@@ -544,6 +556,11 @@ function HomeClientContent({
     dataSource.mode === "local"
       ? "local"
       : sharedDailyView?.mode ?? "shared-non-success";
+  const canRunLocalDailyMutation = canRunHomeLocalDailyMutation(dailyMode);
+  const sharedDailyStatusView =
+    sharedDailyState && isHomeSharedDailyDisplayState(sharedDailyState)
+      ? getHomeSharedDailyStatusView(sharedDailyState)
+      : null;
   const localDailySourceKey = getHomeLocalDailySourceKey(dataSource);
   const [localDailyHydration, setLocalDailyHydration] = useState(
     initialHomeLocalDailyHydrationState,
@@ -1055,11 +1072,19 @@ function HomeClientContent({
   const lastConfirmedDate = formatHistoryDate(session?.confirmedAt ?? null);
   const lastPreparedDate = formatHistoryDate(preparationCompletedAt);
   const updateSession = (nextSession: PreparationSession) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     setLocalSession(nextSession);
     appRepository.savePreparationSession(nextSession);
   };
 
   const updateShortageCount = (itemId: string, nextCount: number) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     setShortageCounts((current) => {
       const nextCounts = { ...current, [itemId]: nextCount };
       appRepository.saveCheckCounts(nextCounts);
@@ -1120,22 +1145,38 @@ function HomeClientContent({
   };
 
   const updateSpotAdditions = (nextAdditions: SpotAddition[]) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     setSpotAdditions(nextAdditions);
     setSelectedTodayOnlyIds(nextAdditions.map((addition) => addition.itemId));
     appRepository.saveSpotAdditions(nextAdditions);
   };
 
   const updateSpotDeadlines = (nextDeadlines: Record<string, string>) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     setSpotDeadlines(nextDeadlines);
     appRepository.saveSpotDeadlines(nextDeadlines);
   };
 
   const updateTemporaryTodayOnlyItems = (nextItems: TodayOnlyTemporaryItem[]) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     setTemporaryTodayOnlyItems(nextItems);
     appRepository.saveTodayOnlyTemporaryItems(nextItems);
   };
 
   const addSpotItem = (itemId: string, dueDate: string | null = null) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     const nextAdditions = [
       ...spotAdditions.filter((addition) => addition.itemId !== itemId),
       { itemId, dueDate },
@@ -1145,12 +1186,20 @@ function HomeClientContent({
   };
 
   const removeSpotItem = (itemId: string) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     updateSpotAdditions(
       spotAdditions.filter((addition) => addition.itemId !== itemId),
     );
   };
 
   const toggleSpotItem = (itemId: string) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     if (selectedTodayOnlyIds.includes(itemId)) {
       removeSpotItem(itemId);
       return;
@@ -1160,7 +1209,7 @@ function HomeClientContent({
   };
 
   const saveSpotDeadline = (itemId: string, dueDate: string) => {
-    if (!dueDate) {
+    if (!canRunLocalDailyMutation || !dueDate) {
       return;
     }
 
@@ -1177,6 +1226,10 @@ function HomeClientContent({
   };
 
   const clearSpotDeadline = (itemId: string) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     const nextDeadlines = { ...spotDeadlines };
     delete nextDeadlines[itemId];
     updateSpotDeadlines(nextDeadlines);
@@ -1195,6 +1248,10 @@ function HomeClientContent({
   };
 
   const openSpotDeadlinePicker = (itemId: string) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     const initialDate = spotDeadlines[itemId] ?? getTomorrowDateKey();
 
     setSpotDeadlinePicker({
@@ -1205,6 +1262,10 @@ function HomeClientContent({
   };
 
   const selectSpotDeadlineDate = (dateKey: string) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     setSpotDeadlinePicker((current) =>
       current
         ? {
@@ -1217,6 +1278,10 @@ function HomeClientContent({
   };
 
   const shiftSpotDeadlineMonth = (offset: number) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     setSpotDeadlinePicker((current) =>
       current
         ? { ...current, visibleMonth: shiftMonthKey(current.visibleMonth, offset) }
@@ -1229,7 +1294,7 @@ function HomeClientContent({
   };
 
   const confirmSpotDeadlinePicker = () => {
-    if (!spotDeadlinePicker) {
+    if (!canRunLocalDailyMutation || !spotDeadlinePicker) {
       return;
     }
 
@@ -1249,12 +1314,20 @@ function HomeClientContent({
   };
 
   const startTemporaryItemSwipe = (itemId: string, clientX: number) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     swipeStartXRef.current = clientX;
     setSwipingTodayOnlyItemId(itemId);
     setTodayOnlySwipeOffset(swipedTodayOnlyItemId === itemId ? 88 : 0);
   };
 
   const moveTemporaryItemSwipe = (itemId: string, clientX: number) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     const startX = swipeStartXRef.current;
 
     if (startX === null || swipingTodayOnlyItemId !== itemId) {
@@ -1267,6 +1340,10 @@ function HomeClientContent({
   };
 
   const endTemporaryItemSwipe = (itemId: string) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     const offset = todayOnlySwipeOffset;
     swipeStartXRef.current = null;
     setSwipingTodayOnlyItemId(null);
@@ -1276,6 +1353,10 @@ function HomeClientContent({
   };
 
   const addTemporaryTodayOnlyItem = () => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     const trimmedName = todayOnlyInputValue.trim();
 
     if (!trimmedName) {
@@ -1298,6 +1379,10 @@ function HomeClientContent({
   };
 
   const removeTemporaryTodayOnlyItem = (itemId: string) => {
+    if (!canRunLocalDailyMutation) {
+      return;
+    }
+
     const nextItems = temporaryTodayOnlyItems.filter((item) => item.id !== itemId);
     updateTemporaryTodayOnlyItems(nextItems);
     removeSpotItem(itemId);
@@ -1378,7 +1463,7 @@ function HomeClientContent({
   };
 
   const togglePreparationItem = (itemId: string) => {
-    if (!session) {
+    if (!canRunLocalDailyMutation || !session) {
       return;
     }
 
@@ -1406,7 +1491,7 @@ function HomeClientContent({
   };
 
   const checkAllPreparationItems = () => {
-    if (!session) {
+    if (!canRunLocalDailyMutation || !session) {
       return;
     }
 
@@ -1436,7 +1521,7 @@ function HomeClientContent({
   };
 
   const togglePreparationItemLater = (itemId: string) => {
-    if (!session) {
+    if (!canRunLocalDailyMutation || !session) {
       return;
     }
 
@@ -1460,7 +1545,7 @@ function HomeClientContent({
   };
 
   const completePreparation = () => {
-    if (!session) {
+    if (!canRunLocalDailyMutation || !session) {
       return;
     }
 
@@ -1549,7 +1634,7 @@ function HomeClientContent({
   };
 
   const sendThanks = () => {
-    if (!session) {
+    if (!canRunLocalDailyMutation || !session) {
       return;
     }
 
@@ -1676,7 +1761,7 @@ function HomeClientContent({
       setCustomItems((currentItems) =>
         appendHomeCustomItemToCategory(currentItems, result.item),
       );
-      if (category === "持ち物") {
+      if (dataSource.mode === "local" && category === "持ち物") {
         setShortageCounts((current) => {
           const nextCounts = { ...current, [result.item.id]: 0 };
           appRepository.saveCheckCounts(nextCounts);
@@ -1712,55 +1797,58 @@ function HomeClientContent({
 
   const applyCustomItemDeletion = (
     itemId: string,
-    saveLocalDurableSettings: boolean,
+    saveLocalDailyCleanup: boolean,
   ) => {
     setCustomItems((current) => current.filter((item) => item.id !== itemId));
-    setSelectedTodayOnlyIds((current) =>
-      current.filter((selectedId) => selectedId !== itemId),
-    );
-    setShortageCounts((current) => {
-      const nextCounts = { ...current };
-      delete nextCounts[itemId];
-      appRepository.saveCheckCounts(nextCounts);
-      return nextCounts;
-    });
     setRoughStates((current) => {
       const nextStates = { ...current };
       delete nextStates[itemId];
       roughStatesRef.current = nextStates;
-      if (saveLocalDurableSettings) {
+      if (saveLocalDailyCleanup) {
         appRepository.saveRoughStates(nextStates);
       }
       return nextStates;
     });
-    setSpotAdditions((current) => {
-      const nextAdditions = current.filter(
-        (addition) => addition.itemId !== itemId,
-      );
-      appRepository.saveSpotAdditions(nextAdditions);
-      return nextAdditions;
-    });
-    setLocalSession((current) => {
-      if (!current) {
-        return current;
-      }
 
-      const nextSession = {
-        ...current,
-        items: current.items.filter((item) => item.id !== itemId),
-      };
-      appRepository.savePreparationSession(nextSession);
-      return nextSession;
-    });
-    setSpotDeadlines((current) => {
-      const nextDeadlines = { ...current };
-      delete nextDeadlines[itemId];
-      appRepository.saveSpotDeadlines(nextDeadlines);
-      return nextDeadlines;
-    });
-    setSpotDeadlinePicker((current) =>
-      current?.itemId === itemId ? null : current,
-    );
+    if (saveLocalDailyCleanup) {
+      setSelectedTodayOnlyIds((current) =>
+        current.filter((selectedId) => selectedId !== itemId),
+      );
+      setShortageCounts((current) => {
+        const nextCounts = { ...current };
+        delete nextCounts[itemId];
+        appRepository.saveCheckCounts(nextCounts);
+        return nextCounts;
+      });
+      setSpotAdditions((current) => {
+        const nextAdditions = current.filter(
+          (addition) => addition.itemId !== itemId,
+        );
+        appRepository.saveSpotAdditions(nextAdditions);
+        return nextAdditions;
+      });
+      setLocalSession((current) => {
+        if (!current) {
+          return current;
+        }
+
+        const nextSession = {
+          ...current,
+          items: current.items.filter((item) => item.id !== itemId),
+        };
+        appRepository.savePreparationSession(nextSession);
+        return nextSession;
+      });
+      setSpotDeadlines((current) => {
+        const nextDeadlines = { ...current };
+        delete nextDeadlines[itemId];
+        appRepository.saveSpotDeadlines(nextDeadlines);
+        return nextDeadlines;
+      });
+      setSpotDeadlinePicker((current) =>
+        current?.itemId === itemId ? null : current,
+      );
+    }
     setExpandedWeekdayItemId((current) =>
       current === itemId ? null : current,
     );
@@ -3079,7 +3167,8 @@ function HomeClientContent({
               <button
                 type="button"
                 onClick={sendThanks}
-                className="rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc]"
+                disabled={!canRunLocalDailyMutation}
+                className="rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc] disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
               </button>
@@ -3087,11 +3176,32 @@ function HomeClientContent({
           }
         />
 
+        {activeTab !== "settings" &&
+        dailyMode === "shared-non-success" &&
+        sharedDailyStatusView ? (
+          <SectionCard appearance="current" className="mt-5">
+            <h2 className="text-card-title font-semibold text-text-primary">
+              {sharedDailyStatusView.title}
+            </h2>
+            <p className="mt-2 text-status font-normal leading-relaxed text-text-secondary">
+              {sharedDailyStatusView.body}
+            </p>
+            <button
+              type="button"
+              onClick={() => router.refresh()}
+              className="mt-4 h-11 rounded-button bg-primary px-5 text-button font-bold text-surface shadow-button transition active:scale-[0.99]"
+            >
+              再読み込み
+            </button>
+          </SectionCard>
+        ) : null}
+
         {activeTab === "check" && session ? (
           <div className={`${cardStackClassName} pb-24`}>
             <ShortageInputList
               items={lockerItems}
               onChange={updateShortageCount}
+              disabled={!canRunLocalDailyMutation}
             />
 
             <ReusableCard
@@ -3101,8 +3211,13 @@ function HomeClientContent({
               action={
                 <button
                   type="button"
-                  onClick={() => setIsTodayOnlySheetOpen(true)}
-                  className="inline-flex h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded-button bg-surface/80 px-4 text-status font-normal text-danger ring-1 ring-danger/20 transition active:scale-95"
+                  disabled={!canRunLocalDailyMutation}
+                  onClick={() => {
+                    if (canRunLocalDailyMutation) {
+                      setIsTodayOnlySheetOpen(true);
+                    }
+                  }}
+                  className="inline-flex h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded-button bg-surface/80 px-4 text-status font-normal text-danger ring-1 ring-danger/20 transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   ＋
                 </button>
@@ -3206,6 +3321,7 @@ function HomeClientContent({
               onCheckAll={checkAllPreparationItems}
               onToggleLater={togglePreparationItemLater}
               onComplete={completePreparation}
+              disabled={!canRunLocalDailyMutation}
             />
           </div>
         ) : null}
@@ -3575,6 +3691,7 @@ function HomeClientContent({
                           hasSavedDeadline ? (
                             <button
                               type="button"
+                              disabled={!canRunLocalDailyMutation}
                               aria-label={`${item.name}の期限を解除`}
                               onClick={() => clearSpotDeadline(item.id)}
                               className="grid h-8 w-8 place-items-center rounded-full bg-primary text-surface ring-1 ring-primary/30 transition active:scale-95"
@@ -3584,6 +3701,7 @@ function HomeClientContent({
                           ) : (
                             <button
                               type="button"
+                              disabled={!canRunLocalDailyMutation}
                               aria-label={`${item.name}の期限を設定`}
                               onClick={(event) => {
                                 event.stopPropagation();
@@ -3597,6 +3715,7 @@ function HomeClientContent({
                         ) : null}
                         <button
                           type="button"
+                          disabled={!canRunLocalDailyMutation}
                           aria-label={`${item.name}を追加`}
                           onClick={() => toggleSpotItem(item.id)}
                           className={`inline-flex h-8 w-12 shrink-0 items-center justify-center rounded-full px-3 text-number font-normal ${
@@ -3624,21 +3743,36 @@ function HomeClientContent({
                   <div
                     key={item.id}
                     className="relative mx-px overflow-hidden rounded-section"
-                    onPointerDown={(event) =>
-                      startTemporaryItemSwipe(item.id, event.clientX)
+                    onPointerDown={
+                      canRunLocalDailyMutation
+                        ? (event) =>
+                            startTemporaryItemSwipe(item.id, event.clientX)
+                        : undefined
                     }
-                    onPointerMove={(event) =>
-                      moveTemporaryItemSwipe(item.id, event.clientX)
+                    onPointerMove={
+                      canRunLocalDailyMutation
+                        ? (event) =>
+                            moveTemporaryItemSwipe(item.id, event.clientX)
+                        : undefined
                     }
-                    onPointerUp={() => endTemporaryItemSwipe(item.id)}
-                    onPointerCancel={() => {
-                      swipeStartXRef.current = null;
-                      setSwipingTodayOnlyItemId(null);
-                      setTodayOnlySwipeOffset(0);
-                    }}
+                    onPointerUp={
+                      canRunLocalDailyMutation
+                        ? () => endTemporaryItemSwipe(item.id)
+                        : undefined
+                    }
+                    onPointerCancel={
+                      canRunLocalDailyMutation
+                        ? () => {
+                            swipeStartXRef.current = null;
+                            setSwipingTodayOnlyItemId(null);
+                            setTodayOnlySwipeOffset(0);
+                          }
+                        : undefined
+                    }
                   >
                     <button
                       type="button"
+                      disabled={!canRunLocalDailyMutation}
                       aria-label="削除"
                       onClick={() => removeTemporaryTodayOnlyItem(item.id)}
                       className="absolute inset-y-0 right-0 z-10 grid w-[88px] place-items-center bg-danger text-surface transition-transform duration-200 ease-out"
@@ -3666,6 +3800,7 @@ function HomeClientContent({
                   <input
                     ref={todayOnlyInputRef}
                     type="text"
+                    disabled={!canRunLocalDailyMutation}
                     value={todayOnlyInputValue}
                     placeholder="持ち物名"
                     onChange={(event) =>
@@ -3687,9 +3822,11 @@ function HomeClientContent({
                   <SpotQuantityControl
                     value={todayOnlyInputQuantity}
                     onChange={setTodayOnlyInputQuantity}
+                    disabled={!canRunLocalDailyMutation}
                   />
                   <button
                     type="button"
+                    disabled={!canRunLocalDailyMutation}
                     aria-label="追加"
                     onClick={addTemporaryTodayOnlyItem}
                     className="grid h-11 min-w-11 shrink-0 place-items-center rounded-button bg-primary px-4 text-status font-normal text-surface"
@@ -3712,6 +3849,7 @@ function HomeClientContent({
               ) : (
                 <button
                   type="button"
+                  disabled={!canRunLocalDailyMutation}
                   onClick={() => {
                     setTodayOnlyInputQuantity(1);
                     setIsTodayOnlyInputOpen(true);
@@ -3725,6 +3863,7 @@ function HomeClientContent({
             {spotDeadlinePicker ? (
               <SpotDeadlineCalendar
                 picker={spotDeadlinePicker}
+                disabled={!canRunLocalDailyMutation}
                 onCancel={cancelSpotDeadlinePicker}
                 onConfirm={confirmSpotDeadlinePicker}
                 onSelectDate={selectSpotDeadlineDate}

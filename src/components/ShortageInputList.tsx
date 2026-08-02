@@ -12,9 +12,14 @@ import { ReusableCard } from "./ui/ReusableCard";
 type ShortageInputListProps = {
   items: LockerItem[];
   onChange: (itemId: string, shortageCount: number) => void;
+  disabled?: boolean;
 };
 
-export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
+export function ShortageInputList({
+  items,
+  onChange,
+  disabled = false,
+}: ShortageInputListProps) {
   const maxRequiredCount = Math.max(
     1,
     ...items.map((item) => item.requiredCount),
@@ -52,6 +57,7 @@ export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
               label={item.name}
               columns={maxRequiredCount}
               onChange={(nextCount) => onChange(item.id, nextCount)}
+              disabled={disabled}
               className="w-full"
             />
           }

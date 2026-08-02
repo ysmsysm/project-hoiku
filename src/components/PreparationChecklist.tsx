@@ -14,6 +14,7 @@ type PreparationChecklistProps = {
   onCheckAll: () => void;
   onToggleLater: (itemId: string) => void;
   onComplete: () => void;
+  disabled?: boolean;
 };
 
 export function PreparationChecklist({
@@ -23,16 +24,18 @@ export function PreparationChecklist({
   onCheckAll,
   onToggleLater,
   onComplete,
+  disabled = false,
 }: PreparationChecklistProps) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const isCompleted = Boolean(completedAt);
   const hasIncompleteItems = items.some((item) => !item.checked && !item.later);
   const hasDeferredItems = items.some((item) => item.later && !item.checked);
   const canCompletePreparation = !hasIncompleteItems;
-  const isCompleteButtonDisabled = isCompleted || !canCompletePreparation;
+  const isCompleteButtonDisabled =
+    disabled || isCompleted || !canCompletePreparation;
 
   const completePreparation = () => {
-    if (isCompleted || !canCompletePreparation) {
+    if (disabled || isCompleted || !canCompletePreparation) {
       return;
     }
 
@@ -45,6 +48,10 @@ export function PreparationChecklist({
   };
 
   const confirmCompletion = () => {
+    if (disabled) {
+      return;
+    }
+
     setIsConfirmOpen(false);
     onComplete();
   };
@@ -76,7 +83,8 @@ export function PreparationChecklist({
         <button
           type="button"
           onClick={onCheckAll}
-          className="h-9 shrink-0 rounded-button bg-transparent px-3 text-status font-normal text-danger ring-1 ring-danger/15 transition hover:bg-surface/60 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+          disabled={disabled}
+          className="h-9 shrink-0 rounded-button bg-transparent px-3 text-status font-normal text-danger ring-1 ring-danger/15 transition hover:bg-surface/60 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-45"
         >
           ✓全て
         </button>
@@ -128,8 +136,9 @@ export function PreparationChecklist({
                 onClick={() => {
                   onToggle(item.id);
                 }}
+                disabled={disabled}
                 aria-label={`${item.name}をチェック`}
-                className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 text-status font-normal ${
+                className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 text-status font-normal disabled:cursor-not-allowed disabled:opacity-45 ${
                   item.checked
                     ? "border-danger bg-danger text-surface"
                     : isLater
@@ -150,7 +159,7 @@ export function PreparationChecklist({
               <button
                 type="button"
                 onClick={() => onToggleLater(item.id)}
-                disabled={item.checked}
+                disabled={disabled || item.checked}
                 className={`h-8 w-16 shrink-0 whitespace-nowrap rounded-button px-2 text-[13px] font-normal leading-none transition active:scale-95 disabled:pointer-events-none ${
                   isLater
                     ? "bg-warning/45 text-text-primary ring-1 ring-warning/50"
@@ -198,7 +207,8 @@ export function PreparationChecklist({
               <button
                 type="button"
                 onClick={confirmCompletion}
-                className="h-11 rounded-button bg-primary text-number font-normal text-surface shadow-button transition active:scale-95"
+                disabled={disabled}
+                className="h-11 rounded-button bg-primary text-number font-normal text-surface shadow-button transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45"
               >
                 準備完了
               </button>

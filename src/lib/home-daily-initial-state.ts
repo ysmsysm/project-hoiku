@@ -22,6 +22,26 @@ type SharedDailyNonSuccessState = Exclude<
   { status: "success" }
 >;
 
+export type HomeSharedDailyDisplayState = Extract<
+  SharedDailyState,
+  {
+    status:
+      | "not_found"
+      | "forbidden"
+      | "invalid_state"
+      | "transport_error"
+      | "invalid_response"
+      | "invalid_input";
+  }
+>;
+
+export type HomeSharedDailyStatusView = {
+  status: HomeSharedDailyDisplayState["status"];
+  category: "business" | "transport" | "response" | "input";
+  title: string;
+  body: string;
+};
+
 type HomeLocalDailyRepository = Pick<
   AppRepository,
   | "loadCheckCounts"
@@ -291,7 +311,79 @@ export function canRunHomeLocalCompleteCheck({
   hasSession,
   localHydrationReady,
 }: HomeCompleteCheckActionState): boolean {
-  return dailyMode === "local" && hasSession && localHydrationReady;
+  return (
+    canRunHomeLocalDailyMutation(dailyMode) &&
+    hasSession &&
+    localHydrationReady
+  );
+}
+
+export function canRunHomeLocalDailyMutation(
+  dailyMode: HomeDailyInitialState["mode"],
+): boolean {
+  return dailyMode === "local";
+}
+
+export function isHomeSharedDailyDisplayState(
+  state: SharedDailyState,
+): state is HomeSharedDailyDisplayState {
+  return (
+    state.status === "not_found" ||
+    state.status === "forbidden" ||
+    state.status === "invalid_state" ||
+    state.status === "transport_error" ||
+    state.status === "invalid_response" ||
+    state.status === "invalid_input"
+  );
+}
+
+export function getHomeSharedDailyStatusView(
+  state: HomeSharedDailyDisplayState,
+): HomeSharedDailyStatusView {
+  switch (state.status) {
+    case "not_found":
+      return {
+        status: state.status,
+        category: "business",
+        title: "今日のデータはまだありません",
+        body: "別の家族が確認を始めた後に、もう一度読み込んでください。",
+      };
+    case "forbidden":
+      return {
+        status: state.status,
+        category: "business",
+        title: "共有データを確認できません",
+        body: "家族または子どもの共有設定を確認してください。",
+      };
+    case "invalid_state":
+      return {
+        status: state.status,
+        category: "business",
+        title: "今日のデータを表示できません",
+        body: "データの状態を確認してから、もう一度読み込んでください。",
+      };
+    case "transport_error":
+      return {
+        status: state.status,
+        category: "transport",
+        title: "通信に失敗しました",
+        body: "通信環境を確認して、もう一度読み込んでください。",
+      };
+    case "invalid_response":
+      return {
+        status: state.status,
+        category: "response",
+        title: "データを読み込めませんでした",
+        body: "安全に表示できるデータを取得できませんでした。",
+      };
+    case "invalid_input":
+      return {
+        status: state.status,
+        category: "input",
+        title: "読み込み条件を確認できませんでした",
+        body: "家族の設定を確認してから、もう一度読み込んでください。",
+      };
+  }
 }
 
 export function createHomeLockerItems(

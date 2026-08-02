@@ -1,18 +1,22 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   canApplyHomeLocalDailyHydration,
   canRenderHomeCompleteCheckAction,
   canRunHomeLocalCompleteCheck,
+  canRunHomeLocalDailyMutation,
   completeHomeLocalDailyHydration,
   createHomeLockerItems,
   createHomeDailyInitialState,
   deriveHomeSharedDailyState,
   getHomeLocalDailySourceKey,
+  getHomeSharedDailyStatusView,
   getHomeSharedDailyPropSync,
   getHomeSharedDailyStateSyncKey,
   initialHomeLocalDailyHydrationState,
   isHomeLocalDailyHydrationReady,
+  isHomeSharedDailyDisplayState,
   loadHomeLocalDailyInitialState,
   shouldRunHomeLocalDailyAutoEffects,
   startHomeLocalDailyHydration,
@@ -30,6 +34,15 @@ const sessionId = "33333333-3333-4333-8333-333333333333";
 const dailyItemId = "44444444-4444-4444-8444-444444444444";
 const itemTemplateId = "55555555-5555-4555-8555-555555555555";
 const sessionDate = "2026-08-02";
+const homeClientSource = readFileSync("app/HomeClient.tsx", "utf8");
+const progressDotsSource = readFileSync(
+  "src/components/ui/ProgressDots.tsx",
+  "utf8",
+);
+const preparationChecklistSource = readFileSync(
+  "src/components/PreparationChecklist.tsx",
+  "utf8",
+);
 
 const durableItems: CustomizableItem[] = [
   {
@@ -535,6 +548,93 @@ test("shared non-success has no locker fallback or complete-check action", () =>
     assert.equal(canRenderHomeCompleteCheckAction(actionState), false);
     assert.equal(canRunHomeLocalCompleteCheck(actionState), false);
   }
+});
+
+test("only local mode permits local daily mutations", () => {
+  assert.equal(canRunHomeLocalDailyMutation("local"), true);
+  assert.equal(canRunHomeLocalDailyMutation("shared-success"), false);
+  assert.equal(canRunHomeLocalDailyMutation("shared-non-success"), false);
+  assert.equal(canRunHomeLocalDailyMutation("shared-error"), false);
+
+  for (const state of nonSuccessStates()) {
+    const derived = deriveHomeSharedDailyState(state);
+    assert.equal(canRunHomeLocalDailyMutation(derived.mode), false);
+  }
+});
+
+test("shared daily status views keep all six statuses distinct and user-safe", () => {
+  const views = nonSuccessStates().map((state) => {
+    assert.equal(isHomeSharedDailyDisplayState(state), true);
+    if (!isHomeSharedDailyDisplayState(state)) {
+      assert.fail("expected a displayable shared daily state");
+    }
+
+    const view = getHomeSharedDailyStatusView(state);
+    assert.equal(view.status, state.status);
+    assert.equal("error" in view, false);
+    assert.doesNotMatch(JSON.stringify(view), /offline|familyId|invalid_uuid/);
+    return view;
+  });
+
+  assert.equal(new Set(views.map((view) => view.status)).size, 6);
+  assert.equal(new Set(views.map((view) => view.title)).size, 6);
+  assert.equal(views.find((view) => view.status === "not_found")?.category, "business");
+  assert.equal(views.find((view) => view.status === "forbidden")?.category, "business");
+  assert.equal(views.find((view) => view.status === "invalid_state")?.category, "business");
+  assert.equal(views.find((view) => view.status === "transport_error")?.category, "transport");
+  assert.equal(views.find((view) => view.status === "invalid_response")?.category, "response");
+  assert.equal(views.find((view) => view.status === "invalid_input")?.category, "input");
+});
+
+test("daily mutation controls propagate native disabled state", () => {
+  assert.match(progressDotsSource, /disabled\?: boolean/);
+  assert.equal(
+    progressDotsSource.match(/disabled=\{disabled\}/g)?.length,
+    2,
+  );
+  assert.match(preparationChecklistSource, /disabled\?: boolean/);
+  assert.match(
+    preparationChecklistSource,
+    /onClick=\{onCheckAll\}[\s\S]*?disabled=\{disabled\}/,
+  );
+  assert.match(
+    preparationChecklistSource,
+    /disabled=\{disabled \|\| item\.checked\}/,
+  );
+  assert.match(homeClientSource, /disabled=\{!canRunLocalDailyMutation\}/);
+  assert.match(homeClientSource, /dailyMode === "shared-non-success"/);
+  assert.match(homeClientSource, /router\.refresh\(\)/);
+  assert.doesNotMatch(homeClientSource, /window\.location\.reload\(\)/);
+});
+
+test("local daily save boundaries and template cleanup are mode guarded", () => {
+  for (const handler of [
+    "updateSession",
+    "updateShortageCount",
+    "updateSpotAdditions",
+    "updateSpotDeadlines",
+    "updateTemporaryTodayOnlyItems",
+  ]) {
+    assert.match(
+      homeClientSource,
+      new RegExp(
+        `const ${handler} = \\([\\s\\S]{0,160}if \\(!canRunLocalDailyMutation\\)`,
+      ),
+    );
+  }
+
+  assert.match(
+    homeClientSource,
+    /dataSource\.mode === "local" && category ===/,
+  );
+  assert.match(
+    homeClientSource,
+    /const applyCustomItemDeletion[\s\S]*?if \(saveLocalDailyCleanup\) \{[\s\S]*?saveCheckCounts[\s\S]*?saveSpotAdditions[\s\S]*?savePreparationSession[\s\S]*?saveSpotDeadlines/,
+  );
+  assert.match(
+    homeClientSource,
+    /applyCustomItemDeletion\(itemId, dataSource\.mode === "local"\)/,
+  );
 });
 
 test("shared success renders but cannot run the local complete-check action", () => {
