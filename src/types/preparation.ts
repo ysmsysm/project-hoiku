@@ -2,6 +2,10 @@ import type { DailyItemKind } from "./daily";
 
 export type LockerItem = {
   id: string;
+  dailyItemId?: string;
+  itemTemplateId?: string | null;
+  dailyItemVersion?: number;
+  isChecked?: boolean;
   name: string;
   unit: string;
   requiredCount: number;

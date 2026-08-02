@@ -72,7 +72,7 @@ export function getHomeLocalStorageLoadPlan(
 ): HomeLocalStorageLoadPlan {
   return {
     durableSettings: dataSource.mode === "local",
-    dailyData: dataSource.mode !== "shared-error",
+    dailyData: dataSource.mode === "local",
   };
 }
 

@@ -93,7 +93,7 @@ test("shared mode uses initialData and skips durable localStorage loading", () =
 
   assert.deepEqual(getHomeLocalStorageLoadPlan(dataSource), {
     durableSettings: false,
-    dailyData: true,
+    dailyData: false,
   });
   assert.equal(getSharedInitialDurableSettings(dataSource), sharedInitialData);
   assert.deepEqual(getSharedInitialDurableSettings(dataSource)?.childProfile, {

@@ -64,11 +64,29 @@ import {
   canSortHomeDurableItems,
   canToggleHomeRoughState,
   getHomeSharedErrorCopy,
-  getHomeLocalStorageLoadPlan,
   getSharedInitialDurableSettings,
   sharedSettingsReadonlyMessage,
   type HomeDataSource,
 } from "../src/lib/home-data-source";
+import {
+  canApplyHomeLocalDailyHydration,
+  canRenderHomeCompleteCheckAction,
+  canRunHomeLocalCompleteCheck,
+  completeHomeLocalDailyHydration,
+  createHomeLockerItems,
+  createDefaultHomeCheckCounts,
+  createHomeDailyInitialState,
+  deriveHomeSharedDailyState,
+  getHomeLocalDailySourceKey,
+  getHomeSharedDailyPropSync,
+  getHomeSharedDailyStateSyncKey,
+  initialHomeLocalDailyHydrationState,
+  isHomeLocalDailyHydrationReady,
+  loadHomeLocalDailyInitialState,
+  shouldRunHomeLocalDailyAutoEffects,
+  startHomeLocalDailyHydration,
+  type HomeDailyInitialState,
+} from "../src/lib/home-daily-initial-state";
 import { saveHomeChildProfile } from "../src/lib/home-child-profile-save";
 import { saveSharedChildProfile } from "../src/lib/family-sharing/save-child-profile";
 import {
@@ -101,6 +119,7 @@ import { createClient as createSupabaseClient } from "../src/lib/supabase/client
 import { useEditableSection } from "../src/hooks/useEditableSection";
 import type { ChildProfile } from "../src/types/child";
 import type { SpotAddition } from "../src/types/spot";
+import type { SharedDailyState } from "../src/types/shared-daily";
 import type {
   AppTab,
   CustomizableItem,
@@ -178,15 +197,6 @@ const validateChildName = (value: string) =>
 
 const cardStackClassName = "space-y-5";
 const settingsSectionStackClassName = "space-y-4";
-
-const createDefaultShortageCounts = (items: CustomizableItem[]) =>
-  items.reduce<Record<string, number>>((counts, item) => {
-    if (item.category === "持ち物") {
-      counts[item.id] = 0;
-    }
-
-    return counts;
-  }, {});
 
 const createDefaultRoughStates = (items: CustomizableItem[]) =>
   items.reduce<Record<string, RoughState>>((states, item) => {
@@ -440,7 +450,7 @@ export default function HomeClient({
     return <SharedErrorScreen reason={dataSource.reason} />;
   }
 
-  return <HomeClientContent dataSource={dataSource} />;
+  return <HomeClientContent key={dataSource.mode} dataSource={dataSource} />;
 }
 
 function SharedErrorScreen({
@@ -508,23 +518,72 @@ function HomeClientContent({
   const newItemWeekdaysSelectable =
     canSelectHomeNewItemWeekdays(dataSource);
   const durableItemsSortable = canSortHomeDurableItems(dataSource);
-  const localStorageLoadPlan = getHomeLocalStorageLoadPlan(dataSource);
-  const shouldLoadDurableSettings = localStorageLoadPlan.durableSettings;
-  const shouldLoadDailyData = localStorageLoadPlan.dailyData;
+  const dailyInitialState = createHomeDailyInitialState(
+    dataSource,
+    initialCustomItems,
+  );
 
   const [activeTab, setActiveTab] = useState<AppTab>("check");
   const [customItems, setCustomItems] =
     useState<CustomizableItem[]>(initialCustomItems);
-  const [shortageCounts, setShortageCounts] = useState(
-    createDefaultShortageCounts(initialCustomItems),
+  const [sharedDailyState, setSharedDailyState] =
+    useState<SharedDailyState | null>(dailyInitialState.sharedDailyState);
+  const initialSharedDailyKeyRef = useRef<string | null>(
+    dailyInitialState.sharedDailyState
+      ? getHomeSharedDailyStateSyncKey(dailyInitialState.sharedDailyState)
+      : null,
   );
-  const [session, setSession] = useState<PreparationSession>({
-    checkedBy: "ママ",
-    confirmedAt: null,
-    completedAt: null,
-    items: [],
-    thanksSent: false,
-  });
+  const sharedDailyView = useMemo(
+    () =>
+      sharedDailyState
+        ? deriveHomeSharedDailyState(sharedDailyState)
+        : null,
+    [sharedDailyState],
+  );
+  const dailyMode: HomeDailyInitialState["mode"] =
+    dataSource.mode === "local"
+      ? "local"
+      : sharedDailyView?.mode ?? "shared-non-success";
+  const localDailySourceKey = getHomeLocalDailySourceKey(dataSource);
+  const [localDailyHydration, setLocalDailyHydration] = useState(
+    initialHomeLocalDailyHydrationState,
+  );
+  const localDailyHydrationRequestRef = useRef(0);
+  const [shortageCounts, setShortageCounts] = useState(
+    dailyInitialState.mode === "local" ? dailyInitialState.checkCounts : {},
+  );
+  const [localSession, setLocalSession] = useState<PreparationSession | null>(
+    dailyInitialState.mode === "local" ? dailyInitialState.session : null,
+  );
+  const session =
+    dataSource.mode === "shared"
+      ? sharedDailyView?.session ?? null
+      : localSession;
+  const displayedCheckCounts =
+    dataSource.mode === "shared" &&
+    sharedDailyView?.mode === "shared-success"
+      ? sharedDailyView.checkCounts
+      : shortageCounts;
+  const sharedInitialDailyData =
+    dataSource.mode === "shared" ? dataSource.initialDailyData : null;
+  const sharedInitialDailyKey = sharedInitialDailyData
+    ? getHomeSharedDailyStateSyncKey(sharedInitialDailyData)
+    : null;
+  const localDailyHydrationReady = isHomeLocalDailyHydrationReady(
+    localDailyHydration,
+    localDailySourceKey,
+  );
+  const completeCheckActionState = {
+    dailyMode,
+    hasSession: session !== null,
+    hasCheckView: sharedDailyView?.mode === "shared-success",
+    localHydrationReady: localDailyHydrationReady,
+  };
+  const shouldRenderCompleteCheckAction =
+    canRenderHomeCompleteCheckAction(completeCheckActionState);
+  const canRunLocalCompleteCheck = canRunHomeLocalCompleteCheck(
+    completeCheckActionState,
+  );
   const [childProfile, setChildProfile] =
     useState<ChildProfile>(initialChildProfile);
   const childNameEditor = useEditableSection({
@@ -700,46 +759,98 @@ function HomeClientContent({
   }, [setChildNameDraft, setSavedChildName, sharedInitialData]);
 
   useEffect(() => {
+    const sync = getHomeSharedDailyPropSync(
+      initialSharedDailyKeyRef.current,
+      dataSource,
+    );
+
+    if (!sync.shouldSync) {
+      return;
+    }
+
+    initialSharedDailyKeyRef.current = sync.initialKey;
+    setSharedDailyState(sync.state);
+  }, [dataSource, sharedInitialDailyData, sharedInitialDailyKey]);
+
+  useEffect(() => {
     roughStatesRef.current = roughStates;
   }, [roughStates]);
 
   useEffect(() => {
+    let cancelled = false;
     let durableItems = initialCustomItems;
 
-    if (shouldLoadDurableSettings) {
-      const savedChildProfile = appRepository.loadChildProfile();
-      const savedCustomItems = normalizeCustomItems(
-        appRepository.loadCustomItems(defaultCustomItems),
-      );
-      durableItems = savedCustomItems;
-      setChildProfile(savedChildProfile);
-      setSavedChildName(savedChildProfile.name);
-      setChildNameDraft(savedChildProfile.name);
-      setCustomItems(savedCustomItems);
-      setRoughStates(
-        appRepository.loadRoughStates(createDefaultRoughStates(savedCustomItems)),
-      );
-    }
-
-    if (!shouldLoadDailyData) {
+    if (!localDailySourceKey) {
+      localDailyHydrationRequestRef.current += 1;
+      setLocalDailyHydration(initialHomeLocalDailyHydrationState);
       return;
     }
 
-    setShortageCounts(
-      appRepository.loadCheckCounts(createDefaultShortageCounts(durableItems)),
+    const requestId = localDailyHydrationRequestRef.current + 1;
+    localDailyHydrationRequestRef.current = requestId;
+    const loadingHydration = startHomeLocalDailyHydration(
+      localDailySourceKey,
+      requestId,
     );
-    setSession(appRepository.loadPreparationSession());
-    setTemporaryTodayOnlyItems(appRepository.loadTodayOnlyTemporaryItems());
-    const savedSpotAdditions = appRepository.loadSpotAdditions();
-    setSpotAdditions(savedSpotAdditions);
-    setSelectedTodayOnlyIds(savedSpotAdditions.map((addition) => addition.itemId));
-    setSpotDeadlines(appRepository.loadSpotDeadlines());
+    setLocalDailyHydration(loadingHydration);
+
+    const savedChildProfile = appRepository.loadChildProfile();
+    const savedCustomItems = normalizeCustomItems(
+      appRepository.loadCustomItems(defaultCustomItems),
+    );
+    durableItems = savedCustomItems;
+    const savedRoughStates = appRepository.loadRoughStates(
+      createDefaultRoughStates(savedCustomItems),
+    );
+
+    const localDailyState = loadHomeLocalDailyInitialState(
+      { mode: "local" },
+      appRepository,
+      createDefaultHomeCheckCounts(durableItems),
+    );
+
+    if (
+      !localDailyState ||
+      cancelled ||
+      localDailyHydrationRequestRef.current !== requestId ||
+      !canApplyHomeLocalDailyHydration(
+        loadingHydration,
+        localDailySourceKey,
+        requestId,
+      )
+    ) {
+      return;
+    }
+
+    setChildProfile(savedChildProfile);
+    setSavedChildName(savedChildProfile.name);
+    setChildNameDraft(savedChildProfile.name);
+    setCustomItems(savedCustomItems);
+    setRoughStates(savedRoughStates);
+    setShortageCounts(localDailyState.checkCounts);
+    setLocalSession(localDailyState.preparationSession);
+    setTemporaryTodayOnlyItems(localDailyState.temporaryTodayOnlyItems);
+    setSpotAdditions(localDailyState.spotAdditions);
+    setSelectedTodayOnlyIds(
+      localDailyState.spotAdditions.map((addition) => addition.itemId),
+    );
+    setSpotDeadlines(localDailyState.spotDeadlines);
+    setLocalDailyHydration(
+      completeHomeLocalDailyHydration(
+        loadingHydration,
+        localDailySourceKey,
+        requestId,
+      ),
+    );
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     initialCustomItems,
+    localDailySourceKey,
     setChildNameDraft,
     setSavedChildName,
-    shouldLoadDailyData,
-    shouldLoadDurableSettings,
   ]);
 
   useEffect(() => {
@@ -757,9 +868,23 @@ function HomeClientContent({
   }, [activeTab, childNameEditor]);
 
   useEffect(() => {
+    if (
+      !shouldRunHomeLocalDailyAutoEffects(
+        dataSource,
+        localDailyHydration,
+        localDailySourceKey,
+      )
+    ) {
+      return;
+    }
+
     const today = new Date();
     const todayWeekday = today.getDay();
     const todayKey = getTodayDateKey();
+    if (!session) {
+      return;
+    }
+
     const wasPreparedToday = session.completedAt?.slice(0, 10) === todayKey;
 
     if (wasPreparedToday) {
@@ -804,7 +929,14 @@ function HomeClientContent({
       setSelectedTodayOnlyIds(nextAdditions.map((addition) => addition.itemId));
       return nextAdditions;
     });
-  }, [customItems, session.completedAt, spotDeadlines]);
+  }, [
+    customItems,
+    dataSource,
+    localDailyHydration,
+    localDailySourceKey,
+    session,
+    spotDeadlines,
+  ]);
 
   useEffect(() => {
     if (isTodayOnlyInputOpen) {
@@ -829,6 +961,16 @@ function HomeClientContent({
   );
 
   useEffect(() => {
+    if (
+      !shouldRunHomeLocalDailyAutoEffects(
+        dataSource,
+        localDailyHydration,
+        localDailySourceKey,
+      )
+    ) {
+      return;
+    }
+
     const intervalId = window.setInterval(() => {
       const freshTemporaryItems = appRepository.loadTodayOnlyTemporaryItems();
       const freshTemporaryIds = new Set(
@@ -846,15 +988,8 @@ function HomeClientContent({
     }, 60_000);
 
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [dataSource, localDailyHydration, localDailySourceKey]);
 
-  const baseLockerItems = useMemo(
-    () =>
-      customItems.filter(
-        (item) => item.category === "持ち物" && item.count > 0,
-      ),
-    [customItems],
-  );
   const todayOnlyOptions = useMemo(
     () =>
       customItems.filter(
@@ -875,19 +1010,25 @@ function HomeClientContent({
   );
 
   const lockerItems: LockerItem[] = useMemo(
-    () =>
-      baseLockerItems.map((item) => {
-        const savedCount = shortageCounts[item.id] ?? 0;
+    () => {
+      if (dataSource.mode === "local") {
+        return createHomeLockerItems({
+          mode: "local",
+          items: customItems,
+          checkCounts: displayedCheckCounts,
+        });
+      }
 
-        return {
-          id: item.id,
-          name: item.name,
-          unit: item.unit,
-          requiredCount: item.count,
-          shortageCount: Math.min(item.count, Math.max(0, savedCount)),
-        };
-      }),
-    [baseLockerItems, shortageCounts],
+      if (sharedDailyView?.mode === "shared-success") {
+        return createHomeLockerItems({
+          mode: "shared-success",
+          checkView: sharedDailyView.checkView,
+        });
+      }
+
+      return createHomeLockerItems({ mode: "shared-non-success" });
+    },
+    [customItems, dataSource.mode, displayedCheckCounts, sharedDailyView],
   );
   const maxLockerRequiredCount = Math.max(
     1,
@@ -899,17 +1040,22 @@ function HomeClientContent({
     roughValueColumnWidth,
   );
 
+  const sessionItems = session?.items ?? [];
   const isPreparationDone =
-    session.items.length === 0 ||
-    session.items.every((item) => item.checked || item.later);
-  const hasCarryoverItems = session.items.some((item) => item.carryover);
-  const preparationCompletedAt = getPreparationCompletedAt(session);
+    sessionItems.length === 0 ||
+    sessionItems.every((item) => item.checked || item.later);
+  const hasCarryoverItems = sessionItems.some((item) => item.carryover);
+  const preparationCompletedAt = session
+    ? getPreparationCompletedAt(session)
+    : null;
   const canShowPreparationStatus =
-    session.items.length > 0 && isPreparationSessionCompleted(session);
-  const lastConfirmedDate = formatHistoryDate(session.confirmedAt);
+    session !== null &&
+    sessionItems.length > 0 &&
+    isPreparationSessionCompleted(session);
+  const lastConfirmedDate = formatHistoryDate(session?.confirmedAt ?? null);
   const lastPreparedDate = formatHistoryDate(preparationCompletedAt);
   const updateSession = (nextSession: PreparationSession) => {
-    setSession(nextSession);
+    setLocalSession(nextSession);
     appRepository.savePreparationSession(nextSession);
   };
 
@@ -1214,6 +1360,10 @@ function HomeClientContent({
       }));
 
   const completeCheck = () => {
+    if (!canRunLocalCompleteCheck) {
+      return;
+    }
+
     const nextSession = appRepository.createPreparationSession(
       buildPreparationItems([
         ...createLockerPreparationItems(),
@@ -1228,6 +1378,10 @@ function HomeClientContent({
   };
 
   const togglePreparationItem = (itemId: string) => {
+    if (!session) {
+      return;
+    }
+
     const nextItems = session.items.map((item) =>
       item.id === itemId
         ? {
@@ -1252,6 +1406,10 @@ function HomeClientContent({
   };
 
   const checkAllPreparationItems = () => {
+    if (!session) {
+      return;
+    }
+
     const shouldCheck = session.items.some(
       (item) => !item.later && !item.checked,
     );
@@ -1278,6 +1436,10 @@ function HomeClientContent({
   };
 
   const togglePreparationItemLater = (itemId: string) => {
+    if (!session) {
+      return;
+    }
+
     const nextItems = session.items.map((item) =>
       item.id === itemId
         ? { ...item, checked: false, later: !item.later }
@@ -1298,6 +1460,10 @@ function HomeClientContent({
   };
 
   const completePreparation = () => {
+    if (!session) {
+      return;
+    }
+
     const completedAt = new Date().toISOString();
     const deferredItems = session.items.filter(
       (item) => item.later && !item.checked,
@@ -1383,6 +1549,10 @@ function HomeClientContent({
   };
 
   const sendThanks = () => {
+    if (!session) {
+      return;
+    }
+
     updateSession({
       ...session,
       thanksSent: !session.thanksSent,
@@ -1570,7 +1740,11 @@ function HomeClientContent({
       appRepository.saveSpotAdditions(nextAdditions);
       return nextAdditions;
     });
-    setSession((current) => {
+    setLocalSession((current) => {
+      if (!current) {
+        return current;
+      }
+
       const nextSession = {
         ...current,
         items: current.items.filter((item) => item.id !== itemId),
@@ -2862,7 +3036,7 @@ function HomeClientContent({
         <BabyHeader
           childName={childProfile.name}
           rightContent={
-            activeTab === "check" || activeTab === "items" ? (
+            session && (activeTab === "check" || activeTab === "items") ? (
               <div className="space-y-2">
                 <div className="grid w-full grid-cols-[16px_1.75rem_auto_minmax(4.75rem,1fr)] items-center gap-x-1 gap-y-1 text-status font-normal">
                   <CheckCircle2
@@ -2901,7 +3075,7 @@ function HomeClientContent({
             ) : null
           }
           rightFooterContent={
-            activeTab === "items" && canShowPreparationStatus ? (
+            session && activeTab === "items" && canShowPreparationStatus ? (
               <button
                 type="button"
                 onClick={sendThanks}
@@ -2913,7 +3087,7 @@ function HomeClientContent({
           }
         />
 
-        {activeTab === "check" ? (
+        {activeTab === "check" && session ? (
           <div className={`${cardStackClassName} pb-24`}>
             <ShortageInputList
               items={lockerItems}
@@ -3023,7 +3197,7 @@ function HomeClientContent({
           </div>
         ) : null}
 
-        {activeTab === "items" ? (
+        {activeTab === "items" && session ? (
           <div className={cardStackClassName}>
             <PreparationChecklist
               items={session.items}
@@ -3253,12 +3427,13 @@ function HomeClientContent({
         ) : null}
       </div>
 
-      {activeTab === "check" ? (
+      {activeTab === "check" && shouldRenderCompleteCheckAction ? (
         <div className="fixed inset-x-0 bottom-[calc(88px_+_env(safe-area-inset-bottom))] z-20 mx-auto w-full max-w-[430px] px-6">
           <button
             type="button"
             onClick={completeCheck}
-            className="h-[52px] w-full rounded-button bg-primary text-button font-bold text-surface shadow-button transition hover:bg-primary-hover active:scale-[0.99]"
+            disabled={!canRunLocalCompleteCheck}
+            className="h-[52px] w-full rounded-button bg-primary text-button font-bold text-surface shadow-button transition hover:bg-primary-hover active:scale-[0.99] disabled:pointer-events-none disabled:opacity-45"
           >
             確認完了
           </button>

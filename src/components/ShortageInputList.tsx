@@ -1,6 +1,6 @@
 "use client";
 
-import { Shirt } from "lucide-react";
+import { CheckCircle2, Shirt } from "lucide-react";
 import type { LockerItem } from "../types/preparation";
 import {
   CardListRow,
@@ -32,7 +32,19 @@ export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
       {items.map((item) => (
         <CardListRow
           key={item.id}
-          left={item.name}
+          left={
+            <span className="flex items-center gap-1.5">
+              {item.isChecked ? (
+                <CheckCircle2
+                  aria-hidden="true"
+                  className="shrink-0 text-[#3b9de9]"
+                  size={16}
+                  strokeWidth={2.2}
+                />
+              ) : null}
+              <span>{item.name}</span>
+            </span>
+          }
           center={
             <ProgressDots
               total={item.requiredCount}
@@ -46,7 +58,9 @@ export function ShortageInputList({ items, onChange }: ShortageInputListProps) {
           right={`${item.shortageCount}/${item.requiredCount}`}
           indicatorWidth={indicatorColumnWidth}
           statusColor={
-            item.shortageCount === item.requiredCount
+            item.isChecked
+              ? "text-[#3b9de9]"
+              : item.shortageCount === item.requiredCount
               ? "text-text-tertiary"
               : "text-primary"
           }
