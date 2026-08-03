@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   mapUpdateDailyPreparationItemsResponse,
-  updateDailyPreparationItems,
+  updateDailyPreparationItems as updateDailyPreparationItemsImpl,
 } from "../src/lib/family-sharing/update-daily-preparation-items";
+import { mapDailyItemPayload } from "../src/lib/family-sharing/daily-data";
 import type {
   DailyDataClient,
   DailyPreparationItemUpdate,
+  UpdateDailyPreparationItemsInput,
+  UpdateDailyPreparationItemsValidationContext,
 } from "../src/types/daily";
 
 const familyId = "11111111-1111-4111-8111-111111111111";
@@ -104,6 +107,47 @@ const input = (updates: DailyPreparationItemUpdate[]) => ({
   updates,
 });
 
+const currentItem = (
+  update: DailyPreparationItemUpdate,
+  overrides: Record<string, unknown> = {},
+) => {
+  const mapped = mapDailyItemPayload(
+    updatedItemPayload(update.dailyItemId, {
+      version: update.expectedVersion,
+      is_prepared: update.isPrepared,
+      is_deferred: false,
+      ...overrides,
+    }),
+  );
+  assert.equal(mapped.ok, true);
+  return mapped.data;
+};
+
+const validationContext = (
+  updates: DailyPreparationItemUpdate[],
+  overrides: Partial<UpdateDailyPreparationItemsValidationContext> = {},
+): UpdateDailyPreparationItemsValidationContext => ({
+  dailySessionId: sessionId,
+  items: updates.map((update) => currentItem(update)),
+  ...overrides,
+});
+
+const updateDailyPreparationItems = (
+  client: DailyDataClient,
+  request: UpdateDailyPreparationItemsInput,
+  context?: UpdateDailyPreparationItemsValidationContext,
+) => {
+  let resolvedContext = context;
+  if (!resolvedContext) {
+    try {
+      resolvedContext = validationContext(request.updates);
+    } catch {
+      resolvedContext = { dailySessionId: sessionId, items: [] };
+    }
+  }
+  return updateDailyPreparationItemsImpl(client, request, resolvedContext);
+};
+
 test("maps changed and no-op items from a successful batch response", async () => {
   const response = {
     status: "success",
@@ -116,9 +160,6 @@ test("maps changed and no-op items from a successful batch response", async () =
         changed: false,
         version: 7,
         is_prepared: false,
-        updated_by_member_id: null,
-        updated_by_user_id: null,
-        updated_by_display_name: null,
       }),
     ],
     conflicts: [],
@@ -574,6 +615,21 @@ test("rejects invalid update fields and duplicate daily item IDs", async () => {
   }
 });
 
+test("rejects a non-array update collection without throwing or calling Supabase", async () => {
+  const calls: unknown[] = [];
+  const result = await updateDailyPreparationItemsImpl(
+    clientReturning(null, null, calls),
+    {
+      ...input([]),
+      updates: null as unknown as DailyPreparationItemUpdate[],
+    },
+    { dailySessionId: sessionId, items: [] },
+  );
+
+  assert.equal(result.status, "client_error");
+  assert.equal(calls.length, 0);
+});
+
 test("accepts the maximum expected version and rejects integer overflow", async () => {
   const accepted = await updateDailyPreparationItems(
     clientReturning({
@@ -615,7 +671,7 @@ test("accepts the maximum expected version and rejects integer overflow", async 
   assert.equal(calls.length, 0);
 });
 
-test("sends an empty array because the low-level wrapper preserves the DB contract", async () => {
+test("rejects an empty array without calling Supabase", async () => {
   const calls: unknown[] = [];
   const result = await updateDailyPreparationItems(
     clientReturning(
@@ -634,10 +690,136 @@ test("sends an empty array because the low-level wrapper preserves the DB contra
     input([]),
   );
 
+  assert.equal(result.status, "client_error");
+  assert.equal(calls.length, 0);
+});
+
+test("accepts exactly 100 updates without chunking", async () => {
+  const updates = Array.from({ length: 100 }, (_, index) => ({
+    dailyItemId: `aaaaaaaa-aaaa-4aaa-8aaa-${index
+      .toString(16)
+      .padStart(12, "0")}`,
+    expectedVersion: 1,
+    isPrepared: true,
+  }));
+  const calls: unknown[] = [];
+  const items = updates.map((update) =>
+    updatedItemPayload(update.dailyItemId),
+  );
+  const result = await updateDailyPreparationItems(
+    clientReturning(
+      {
+        status: "success",
+        requested_count: 100,
+        changed_count: 100,
+        unchanged_count: 0,
+        items,
+        conflicts: [],
+        session: null,
+      },
+      null,
+      calls,
+    ),
+    input(updates),
+  );
+
   assert.equal(result.status, "success");
   assert.equal(calls.length, 1);
-  assert.deepEqual(
-    (calls[0] as { args: { p_updates: unknown[] } }).args.p_updates,
-    [],
+  assert.equal(
+    (calls[0] as { args: { p_updates: unknown[] } }).args.p_updates.length,
+    100,
   );
+});
+
+test("rejects success items with invalid session, state, or changed version semantics", async () => {
+  const update = {
+    dailyItemId: firstItemId,
+    expectedVersion: 1,
+    isPrepared: true,
+  };
+  const invalidItems = [
+    updatedItemPayload(firstItemId, { daily_session_id: secondItemId }),
+    updatedItemPayload(firstItemId, { is_prepared: false }),
+    updatedItemPayload(firstItemId, { is_deferred: true }),
+    updatedItemPayload(firstItemId, { version: 1 }),
+  ];
+
+  for (const item of invalidItems) {
+    const result = await updateDailyPreparationItems(
+      clientReturning({
+        status: "success",
+        requested_count: 1,
+        changed_count: 1,
+        unchanged_count: 0,
+        items: [item],
+        conflicts: [],
+        session: null,
+      }),
+      input([update]),
+    );
+    assert.equal(result.status, "transport_error");
+  }
+});
+
+test("requires false requests to preserve the starting deferred state", async () => {
+  const update = {
+    dailyItemId: firstItemId,
+    expectedVersion: 1,
+    isPrepared: false,
+  };
+  const result = await updateDailyPreparationItems(
+    clientReturning({
+      status: "success",
+      requested_count: 1,
+      changed_count: 1,
+      unchanged_count: 0,
+      items: [
+        updatedItemPayload(firstItemId, {
+          is_prepared: false,
+          is_deferred: false,
+        }),
+      ],
+      conflicts: [],
+      session: null,
+    }),
+    input([update]),
+    validationContext([update], {
+      items: [
+        currentItem(update, {
+          is_prepared: true,
+          is_deferred: true,
+        }),
+      ],
+    }),
+  );
+
+  assert.equal(result.status, "transport_error");
+});
+
+test("rejects a no-op response that contradicts any canonical item field", async () => {
+  const update = {
+    dailyItemId: firstItemId,
+    expectedVersion: 1,
+    isPrepared: true,
+  };
+  const result = await updateDailyPreparationItems(
+    clientReturning({
+      status: "success",
+      requested_count: 1,
+      changed_count: 0,
+      unchanged_count: 1,
+      items: [
+        updatedItemPayload(firstItemId, {
+          changed: false,
+          version: 1,
+          name: "unexpected name",
+        }),
+      ],
+      conflicts: [],
+      session: null,
+    }),
+    input([update]),
+  );
+
+  assert.equal(result.status, "transport_error");
 });

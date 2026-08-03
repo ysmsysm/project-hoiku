@@ -1,15 +1,23 @@
 import type {
   DailyDataClient,
   DailyItem,
+  DailyPreparationItemUpdate,
   DailySession,
   LoadDailyDataInput,
   LoadDailyDataResult,
+  UpdatedDailyItem,
 } from "../../types/daily";
 import type { SharedDailyState } from "../../types/shared-daily";
-import { loadDailyData, normalizeDailyDataUuid } from "./daily-data";
+import {
+  isDailyDataUuid,
+  isPostgresInteger,
+  loadDailyData,
+  normalizeDailyDataUuid,
+} from "./daily-data";
 import {
   mapDailySessionToCheckView,
   mapDailySessionToPreparationSession,
+  isDailyItemVisibleInPreparation,
 } from "./daily-data-view";
 
 const viewMappingFailure = (
@@ -33,8 +41,67 @@ export type SharedDailyItemUpdateScope = {
   expectedVersion: number;
 };
 
+export const maxSharedPreparationBulkItems = 100;
+
+export type SharedPreparationBulkMutationPlan =
+  | { status: "empty" | "too_many" | "invalid" }
+  | {
+      status: "ready";
+      desiredPrepared: boolean;
+      updates: DailyPreparationItemUpdate[];
+      currentItems: DailyItem[];
+    };
+
+export type SharedDailyItemsUpdateScope = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  dailySessionId: string;
+  updates: DailyPreparationItemUpdate[];
+};
+
 const uuidEquals = (left: string, right: string): boolean =>
   normalizeDailyDataUuid(left) === normalizeDailyDataUuid(right);
+
+export function getSharedPreparationBulkMutationPlan(
+  session: DailySession,
+): SharedPreparationBulkMutationPlan {
+  const targets = session.items.filter(
+    (item) => isDailyItemVisibleInPreparation(item) && !item.isDeferred,
+  );
+  if (targets.length === 0) {
+    return { status: "empty" };
+  }
+  if (targets.length > maxSharedPreparationBulkItems) {
+    return { status: "too_many" };
+  }
+
+  const ids = new Set<string>();
+  for (const item of targets) {
+    const id = normalizeDailyDataUuid(item.dailyItemId);
+    if (
+      !isDailyDataUuid(item.dailyItemId) ||
+      ids.has(id) ||
+      !isPostgresInteger(item.version) ||
+      item.version < 1
+    ) {
+      return { status: "invalid" };
+    }
+    ids.add(id);
+  }
+
+  const desiredPrepared = targets.some((item) => !item.isPrepared);
+  return {
+    status: "ready",
+    desiredPrepared,
+    updates: targets.map((item) => ({
+      dailyItemId: item.dailyItemId,
+      expectedVersion: item.version,
+      isPrepared: desiredPrepared,
+    })),
+    currentItems: targets,
+  };
+}
 
 export function mapDailySessionToSharedDailyState(
   session: DailySession,
@@ -84,6 +151,86 @@ export function applyUpdatedItemToSharedDailyState(
 
   const items = [...state.session.items];
   items[itemIndex] = updatedItem;
+  const mapped = mapDailySessionToSharedDailyState(
+    { ...state.session, items },
+    scope.sessionDate,
+  );
+  return mapped.status === "success" ? mapped : state;
+}
+
+export function applyUpdatedItemsToSharedDailyState(
+  state: SharedDailyState,
+  scope: SharedDailyItemsUpdateScope,
+  updatedItems: UpdatedDailyItem[],
+  changedCount: number,
+): SharedDailyState {
+  if (
+    state.status !== "success" ||
+    !uuidEquals(state.session.familyId, scope.familyId) ||
+    !uuidEquals(state.session.childId, scope.childId) ||
+    state.session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(state.session.dailySessionId, scope.dailySessionId) ||
+    !Number.isInteger(changedCount) ||
+    changedCount < 0 ||
+    updatedItems.filter((item) => item.changed).length !== changedCount
+  ) {
+    return state;
+  }
+
+  const requestById = new Map<string, DailyPreparationItemUpdate>();
+  for (const update of scope.updates) {
+    const id = normalizeDailyDataUuid(update.dailyItemId);
+    if (requestById.has(id)) {
+      return state;
+    }
+    requestById.set(id, update);
+  }
+  if (requestById.size === 0 || updatedItems.length !== requestById.size) {
+    return state;
+  }
+
+  const currentById = new Map(
+    state.session.items.map((item) => [
+      normalizeDailyDataUuid(item.dailyItemId),
+      item,
+    ]),
+  );
+  const responseById = new Map<string, UpdatedDailyItem>();
+  for (const updatedItem of updatedItems) {
+    const id = normalizeDailyDataUuid(updatedItem.dailyItemId);
+    const request = requestById.get(id);
+    const currentItem = currentById.get(id);
+    if (
+      responseById.has(id) ||
+      !request ||
+      !currentItem ||
+      currentItem.version !== request.expectedVersion ||
+      !uuidEquals(updatedItem.familyId, scope.familyId) ||
+      !uuidEquals(updatedItem.dailySessionId, scope.dailySessionId) ||
+      updatedItem.isPrepared !== request.isPrepared ||
+      updatedItem.isDeferred !==
+        (request.isPrepared ? false : currentItem.isDeferred) ||
+      updatedItem.version !==
+        request.expectedVersion + (updatedItem.changed ? 1 : 0)
+    ) {
+      return state;
+    }
+    responseById.set(id, updatedItem);
+  }
+  if (responseById.size !== requestById.size) {
+    return state;
+  }
+
+  const items = state.session.items.map((item) => {
+    const updatedItem = responseById.get(
+      normalizeDailyDataUuid(item.dailyItemId),
+    );
+    if (!updatedItem) {
+      return item;
+    }
+    const { changed, ...dailyItem } = updatedItem;
+    return changed ? dailyItem : item;
+  });
   const mapped = mapDailySessionToSharedDailyState(
     { ...state.session, items },
     scope.sessionDate,

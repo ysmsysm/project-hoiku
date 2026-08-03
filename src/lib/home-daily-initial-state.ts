@@ -11,7 +11,10 @@ import type {
   TodayOnlyTemporaryItem,
 } from "../types/preparation";
 import type { SpotAddition } from "../types/spot";
-import type { UpdateDailyItemResult } from "../types/daily";
+import type {
+  UpdateDailyItemResult,
+  UpdateDailyPreparationItemsResult,
+} from "../types/daily";
 
 type SharedDailySuccessState = Extract<
   SharedDailyState,
@@ -46,7 +49,8 @@ export type HomeSharedDailyStatusView = {
 export type HomeDailyItemMutationOperation =
   | "quantity"
   | "prepared"
-  | "deferred";
+  | "deferred"
+  | "bulk_prepared";
 
 export type HomeDailyItemMutationErrorView = {
   title: string;
@@ -348,8 +352,25 @@ export function canRunHomePreparationItemMutation(
   return dailyMode === "local" || dailyMode === "shared-success";
 }
 
+export function canRunHomePreparationBulkMutation(
+  dailyMode: HomeDailyInitialState["mode"],
+): boolean {
+  return dailyMode === "local" || dailyMode === "shared-success";
+}
+
+export function getHomePreparationBulkTooManyItemsView(): HomeDailyItemMutationErrorView {
+  return {
+    title: "一括操作を利用できません",
+    body: "項目が多いため、一括操作を利用できません。個別に変更してください。",
+    canReload: false,
+  };
+}
+
 export function getHomeDailyItemMutationErrorView(
-  result: Exclude<UpdateDailyItemResult, { status: "success" }>,
+  result: Exclude<
+    UpdateDailyItemResult | UpdateDailyPreparationItemsResult,
+    { status: "success" }
+  >,
   operation: HomeDailyItemMutationOperation,
 ): HomeDailyItemMutationErrorView {
   const operationName =
@@ -357,7 +378,9 @@ export function getHomeDailyItemMutationErrorView(
       ? "数量"
       : operation === "prepared"
         ? "準備状態"
-        : "「あとで」の状態";
+        : operation === "deferred"
+          ? "「あとで」の状態"
+          : "一括の準備状態";
 
   switch (result.status) {
     case "conflict":

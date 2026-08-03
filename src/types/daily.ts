@@ -202,6 +202,11 @@ export type UpdateDailyPreparationItemsInput = {
   updates: DailyPreparationItemUpdate[];
 };
 
+export type UpdateDailyPreparationItemsValidationContext = {
+  dailySessionId: string;
+  items: DailyItem[];
+};
+
 export type DailyPreparationConflictPayload = {
   daily_item_id: unknown;
   expected_version: unknown;

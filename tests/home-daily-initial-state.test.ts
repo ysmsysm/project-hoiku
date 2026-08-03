@@ -7,6 +7,7 @@ import {
   canRunHomeLocalCompleteCheck,
   canRunHomeLocalDailyMutation,
   canRunHomeObservedQuantityMutation,
+  canRunHomePreparationBulkMutation,
   canRunHomePreparationItemMutation,
   completeHomeLocalDailyHydration,
   createHomeLockerItems,
@@ -14,6 +15,7 @@ import {
   deriveHomeSharedDailyState,
   getHomeLocalDailySourceKey,
   getHomeDailyItemMutationErrorView,
+  getHomePreparationBulkTooManyItemsView,
   getHomeSharedDailyStatusView,
   getHomeSharedDailyPropSync,
   getHomeSharedDailyStateSyncKey,
@@ -598,6 +600,13 @@ test("preparation item capability includes only local and shared success", () =>
   }
 });
 
+test("preparation bulk capability includes only local and shared success", () => {
+  assert.equal(canRunHomePreparationBulkMutation("local"), true);
+  assert.equal(canRunHomePreparationBulkMutation("shared-success"), true);
+  assert.equal(canRunHomePreparationBulkMutation("shared-non-success"), false);
+  assert.equal(canRunHomePreparationBulkMutation("shared-error"), false);
+});
+
 test("daily item mutation errors are operation-specific, safe, and reloadable", () => {
   const conflict = getHomeDailyItemMutationErrorView(
     { status: "conflict", item: dailyItem() },
@@ -665,6 +674,22 @@ test("daily item mutation errors are operation-specific, safe, and reloadable", 
     ).title,
     /現在の状態/,
   );
+
+  const bulk = getHomeDailyItemMutationErrorView(
+    {
+      status: "not_found",
+      requestedCount: 2,
+      changedCount: 0,
+      unchangedCount: 2,
+    },
+    "bulk_prepared",
+  );
+  assert.match(bulk.title, /対象のデータ/);
+  const tooMany = getHomePreparationBulkTooManyItemsView();
+  assert.equal(tooMany.canReload, false);
+  assert.match(tooMany.body, /項目が多い/);
+  assert.match(tooMany.body, /個別/);
+  assert.doesNotMatch(JSON.stringify(tooMany), /100|RPC|DB|update_daily/);
 });
 
 test("shared daily status views keep all six statuses distinct and user-safe", () => {
@@ -714,7 +739,11 @@ test("daily mutation controls propagate native disabled state", () => {
     preparationChecklistSource,
     /disabled=\{disabled \|\| completeActionDisabled\}/,
   );
-  assert.match(homeClientSource, /bulkActionDisabled=\{!canRunLocalDailyMutation\}/);
+  assert.match(homeClientSource, /bulkActionDisabled=\{isPreparationBulkDisabled\}/);
+  assert.match(
+    homeClientSource,
+    /sharedPreparationBulkPlan\?\.status !== "ready"[\s\S]*?hasInvalidSharedPreparationBulkItem[\s\S]*?isSharedPreparationBulkPending/,
+  );
   assert.match(homeClientSource, /completeActionDisabled=\{!canRunLocalDailyMutation\}/);
   assert.match(homeClientSource, /itemActionsDisabled=\{!canRunPreparationItemMutation\}/);
   assert.match(
@@ -801,6 +830,55 @@ test("shared preparation handlers reuse the item lock and preserve local save bo
   );
   assert.equal(deferredHandlerSource.match(/updateSession\(/g)?.length, 1);
   assert.doesNotMatch(deferredHandlerSource, /savePreparationSession|localStorage/);
+
+  const batchRunnerSource = homeClientSource.slice(
+    homeClientSource.indexOf(
+      "const runSharedDailyPreparationItemsMutation = async",
+    ),
+    homeClientSource.indexOf("const updateShortageCount = async"),
+  );
+  assert.match(batchRunnerSource, /getCurrentSharedDailySession\(\)/);
+  assert.match(batchRunnerSource, /getSharedPreparationBulkMutationPlan/);
+  assert.match(batchRunnerSource, /plan\.status !== "ready"/);
+  assert.match(
+    batchRunnerSource,
+    /targetIds\.some[\s\S]*pendingDailyItemMutationRequestsRef\.current\.has/,
+  );
+  assert.match(
+    batchRunnerSource,
+    /const requestToken = Symbol\("bulk-prepared"\)/,
+  );
+  assert.match(
+    batchRunnerSource,
+    /targetIds\.forEach[\s\S]*pendingDailyItemMutationRequestsRef\.current\.set/,
+  );
+  assert.match(batchRunnerSource, /updateDailyPreparationItems\(/);
+  assert.match(batchRunnerSource, /applyUpdatedItemsToSharedDailyState/);
+  assert.match(
+    batchRunnerSource,
+    /getHomeDailyItemMutationErrorView\(result, "bulk_prepared"\)/,
+  );
+  assert.match(
+    batchRunnerSource,
+    /pendingDailyItemMutationRequestsRef\.current\.get\(dailyItemId\) ===[\s\S]*requestToken/,
+  );
+  assert.doesNotMatch(
+    batchRunnerSource,
+    /router\.refresh|appRepository|savePreparationSession/,
+  );
+
+  const bulkHandlerSource = homeClientSource.slice(
+    homeClientSource.indexOf("const checkAllPreparationItems"),
+    homeClientSource.indexOf("const togglePreparationItemLater"),
+  );
+  assert.match(
+    bulkHandlerSource,
+    /dailyMode === "shared-success"[\s\S]*void runSharedDailyPreparationItemsMutation\(\)/,
+  );
+  assert.match(
+    bulkHandlerSource,
+    /dailyMode !== "local"[\s\S]*updateSession\(nextSession\)/,
+  );
 });
 
 test("the same pending daily item set disables quantity and preparation controls", () => {
@@ -849,13 +927,14 @@ test("preparation completion remains guarded and mutation errors render once acr
   );
   assert.equal(
     homeClientSource.match(
-      /activeTab !== "settings" &&[\s\S]{0,100}dailyMode === "shared-success" &&[\s\S]{0,100}dailyItemMutationError/g,
+      /activeTab !== "settings" &&[\s\S]{0,100}dailyMode === "shared-success" &&[\s\S]{0,100}displayedDailyItemMutationError/g,
     )
       ?.length,
     1,
   );
   assert.equal(
-    homeClientSource.match(/\{dailyItemMutationError\.title\}/g)?.length,
+    homeClientSource.match(/\{displayedDailyItemMutationError\.title\}/g)
+      ?.length,
     1,
   );
 });
@@ -923,7 +1002,7 @@ test("local daily save boundaries and template cleanup are mode guarded", () => 
   assert.doesNotMatch(quantityHandlerSource, /router\.refresh\(\)/);
   assert.match(
     homeClientSource,
-    /dailyItemMutationError\.canReload[\s\S]*?router\.refresh\(\)/,
+    /displayedDailyItemMutationError\.canReload[\s\S]*?router\.refresh\(\)/,
   );
 
   assert.match(

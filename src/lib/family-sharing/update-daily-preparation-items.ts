@@ -4,8 +4,10 @@ import type {
   DailyDataValidationIssue,
   DailyPreparationConflict,
   DailyPreparationConflictPayload,
+  DailyItem,
   UpdateDailyPreparationItemsInput,
   UpdateDailyPreparationItemsResult,
+  UpdateDailyPreparationItemsValidationContext,
   UpdatedDailyItem,
 } from "../../types/daily";
 import {
@@ -28,6 +30,15 @@ const isNonNegativeInteger = (value: unknown): value is number =>
 
 const isPositiveInteger = (value: unknown): value is number =>
   isPostgresInteger(value) && value >= 1;
+
+const dailyItemsEqual = (left: DailyItem, right: DailyItem): boolean => {
+  const leftKeys = Object.keys(left) as (keyof DailyItem)[];
+  const rightKeys = Object.keys(right);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => Object.is(left[key], right[key]))
+  );
+};
 
 const nullableUuid = (value: unknown) =>
   value === null || isDailyDataUuid(value);
@@ -55,6 +66,9 @@ export function validateDailyPreparationItemsInput(
   if (!Array.isArray(input.updates)) {
     issues.push({ path: "updates", code: "invalid_array" });
   } else {
+    if (input.updates.length === 0) {
+      issues.push({ path: "updates", code: "empty_updates" });
+    }
     if (input.updates.length > maxDailyPreparationItemUpdates) {
       issues.push({ path: "updates", code: "too_many_updates" });
     }
@@ -105,10 +119,19 @@ export function validateDailyPreparationItemsInput(
 export async function updateDailyPreparationItems(
   client: DailyDataClient,
   input: UpdateDailyPreparationItemsInput,
+  context: UpdateDailyPreparationItemsValidationContext,
 ): Promise<UpdateDailyPreparationItemsResult> {
   const inputError = validateDailyPreparationItemsInput(input);
-  if (inputError) {
-    return { status: "client_error", error: inputError };
+  const contextIssues = validateValidationContext(context, input);
+  if (inputError || contextIssues.length > 0) {
+    return {
+      status: "client_error",
+      error: inputError ?? {
+        kind: "invalid_input",
+        message: "Invalid daily preparation update context",
+        issues: contextIssues,
+      },
+    };
   }
 
   let response: { data: unknown; error: unknown };
@@ -142,7 +165,7 @@ export async function updateDailyPreparationItems(
     if (result.status === "success") {
       const issues =
         result.requestedCount === input.updates.length
-          ? validateSuccessResponseScope(result.items, input)
+          ? validateSuccessResponseScope(result.items, input, context)
           : [{ path: "requested_count", code: "requested_count_mismatch" }];
       return issues.length === 0
         ? result
@@ -174,11 +197,19 @@ export async function updateDailyPreparationItems(
 const validateSuccessResponseScope = (
   items: UpdatedDailyItem[],
   input: UpdateDailyPreparationItemsInput,
+  context: UpdateDailyPreparationItemsValidationContext,
 ): DailyDataValidationIssue[] => {
-  const expectedIds = new Set(
-    input.updates.map((update) =>
+  const expectedUpdates = new Map(
+    input.updates.map((update) => [
       normalizeDailyDataUuid(update.dailyItemId),
-    ),
+      update,
+    ]),
+  );
+  const currentItems = new Map(
+    context.items.map((item) => [
+      normalizeDailyDataUuid(item.dailyItemId),
+      item,
+    ]),
   );
   const seenIds = new Set<string>();
   const issues: DailyDataValidationIssue[] = [];
@@ -192,7 +223,9 @@ const validateSuccessResponseScope = (
     } else {
       seenIds.add(id);
     }
-    if (!expectedIds.has(id)) {
+    const expectedUpdate = expectedUpdates.get(id);
+    const currentItem = currentItems.get(id);
+    if (!expectedUpdate || !currentItem) {
       issues.push({
         path: `items[${index}].daily_item_id`,
         code: "unexpected_daily_item_id",
@@ -207,10 +240,130 @@ const validateSuccessResponseScope = (
         code: "family_id_mismatch",
       });
     }
+    if (
+      normalizeDailyDataUuid(item.dailySessionId) !==
+      normalizeDailyDataUuid(context.dailySessionId)
+    ) {
+      issues.push({
+        path: `items[${index}].daily_session_id`,
+        code: "daily_session_id_mismatch",
+      });
+    }
+    if (expectedUpdate && currentItem) {
+      if (item.isPrepared !== expectedUpdate.isPrepared) {
+        issues.push({
+          path: `items[${index}].is_prepared`,
+          code: "prepared_mismatch",
+        });
+      }
+      const expectedDeferred = expectedUpdate.isPrepared
+        ? false
+        : currentItem.isDeferred;
+      if (item.isDeferred !== expectedDeferred) {
+        issues.push({
+          path: `items[${index}].is_deferred`,
+          code: "deferred_mismatch",
+        });
+      }
+      const expectedVersion = item.changed
+        ? expectedUpdate.expectedVersion + 1
+        : expectedUpdate.expectedVersion;
+      if (item.version !== expectedVersion) {
+        issues.push({
+          path: `items[${index}].version`,
+          code: item.changed
+            ? "unexpected_updated_version"
+            : "unexpected_unchanged_version",
+        });
+      }
+      const { changed, ...responseItem } = item;
+      if (!changed && !dailyItemsEqual(responseItem, currentItem)) {
+        issues.push({
+          path: `items[${index}]`,
+          code: "unchanged_item_mismatch",
+        });
+      }
+    }
   });
-  expectedIds.forEach((id) => {
+  expectedUpdates.forEach((_, id) => {
     if (!seenIds.has(id)) {
       issues.push({ path: "items", code: "missing_daily_item_id" });
+    }
+  });
+  return issues;
+};
+
+const validateValidationContext = (
+  context: UpdateDailyPreparationItemsValidationContext,
+  input: UpdateDailyPreparationItemsInput,
+): DailyDataValidationIssue[] => {
+  const issues: DailyDataValidationIssue[] = [];
+  if (!Array.isArray(input.updates)) {
+    issues.push({ path: "updates", code: "invalid_array" });
+    return issues;
+  }
+  if (!isPlainObject(context) || !isDailyDataUuid(context.dailySessionId)) {
+    issues.push({ path: "context.dailySessionId", code: "invalid_uuid" });
+    return issues;
+  }
+  if (!Array.isArray(context.items)) {
+    issues.push({ path: "context.items", code: "invalid_array" });
+    return issues;
+  }
+
+  const requestedIds = new Set(
+    input.updates
+      .filter((update) => isDailyDataUuid(update.dailyItemId))
+      .map((update) => normalizeDailyDataUuid(update.dailyItemId)),
+  );
+  const seenIds = new Set<string>();
+  context.items.forEach((item, index) => {
+    const path = `context.items[${index}]`;
+    if (!isPlainObject(item) || !isDailyDataUuid(item.dailyItemId)) {
+      issues.push({ path: `${path}.dailyItemId`, code: "invalid_uuid" });
+      return;
+    }
+    const id = normalizeDailyDataUuid(item.dailyItemId);
+    if (seenIds.has(id)) {
+      issues.push({ path: `${path}.dailyItemId`, code: "duplicate_daily_item_id" });
+    }
+    seenIds.add(id);
+    if (!requestedIds.has(id)) {
+      issues.push({ path: `${path}.dailyItemId`, code: "unexpected_daily_item_id" });
+    }
+    if (typeof item.isDeferred !== "boolean") {
+      issues.push({ path: `${path}.isDeferred`, code: "invalid_boolean" });
+    }
+    const requestedUpdate = input.updates.find(
+      (update) =>
+        isDailyDataUuid(update.dailyItemId) &&
+        normalizeDailyDataUuid(update.dailyItemId) === id,
+    );
+    if (
+      requestedUpdate &&
+      item.version !== requestedUpdate.expectedVersion
+    ) {
+      issues.push({ path: `${path}.version`, code: "expected_version_mismatch" });
+    }
+    if (
+      normalizeDailyDataUuid(item.familyId) !==
+      normalizeDailyDataUuid(input.familyId)
+    ) {
+      issues.push({ path: `${path}.familyId`, code: "family_id_mismatch" });
+    }
+    if (
+      normalizeDailyDataUuid(item.dailySessionId) !==
+      normalizeDailyDataUuid(context.dailySessionId)
+    ) {
+      issues.push({
+        path: `${path}.dailySessionId`,
+        code: "daily_session_id_mismatch",
+      });
+    }
+  });
+  requestedIds.forEach((id) => {
+    if (!seenIds.has(id)) {
+      issues.push({ path: "context.items", code: "missing_daily_item_id" });
     }
   });
   return issues;
@@ -299,7 +452,8 @@ export function mapUpdateDailyPreparationItemsResponse(
     if (
       issues.length > 0 ||
       items.length !== counts.requestedCount ||
-      items.filter((item) => item.changed).length !== counts.changedCount
+      items.filter((item) => item.changed).length !== counts.changedCount ||
+      items.filter((item) => !item.changed).length !== counts.unchangedCount
     ) {
       return invalidResponse(
         "Invalid update_daily_preparation_items success items",

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyUpdatedItemsToSharedDailyState,
   applyUpdatedItemToSharedDailyState,
+  getSharedPreparationBulkMutationPlan,
   loadSharedDailyDataForDate,
   mapLoadDailyDataResultToSharedDailyState,
 } from "../src/lib/family-sharing/shared-daily-data";
@@ -419,4 +421,265 @@ test("does not apply stale or out-of-scope daily item results", async () => {
       current,
     );
   }
+});
+
+test("selects every visible non-deferred preparation item and enforces the bulk bounds", async () => {
+  const items = [
+    itemPayload(),
+    itemPayload({
+      id: "66666666-6666-4666-8666-666666666666",
+      daily_item_id: "66666666-6666-4666-8666-666666666666",
+      kind: "spot",
+      required_quantity: 2,
+      is_prepared: true,
+    }),
+    itemPayload({
+      id: "77777777-7777-4777-8777-777777777777",
+      daily_item_id: "77777777-7777-4777-8777-777777777777",
+      kind: "rough",
+      rough_state: "refill",
+      required_quantity: 1,
+      is_carryover: true,
+    }),
+    itemPayload({
+      id: "88888888-8888-4888-8888-888888888888",
+      daily_item_id: "88888888-8888-4888-8888-888888888888",
+      is_deferred: true,
+    }),
+    itemPayload({
+      id: "99999999-9999-4999-8999-999999999999",
+      daily_item_id: "99999999-9999-4999-8999-999999999999",
+      observed_quantity: 3,
+      shortage_count: 0,
+    }),
+  ];
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({ status: "success", session: sessionPayload(), items }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  if (state.status !== "success") return;
+
+  const plan = getSharedPreparationBulkMutationPlan(state.session);
+  assert.equal(plan.status, "ready");
+  if (plan.status === "ready") {
+    assert.equal(plan.desiredPrepared, true);
+    assert.deepEqual(
+      plan.updates.map((update) => update.dailyItemId),
+      items.slice(0, 3).map((item) => item.daily_item_id),
+    );
+    assert.equal(plan.updates.every((update) => update.isPrepared), true);
+
+    const allPreparedPlan = getSharedPreparationBulkMutationPlan({
+      ...state.session,
+      items: state.session.items.map((item) => ({
+        ...item,
+        isPrepared: true,
+      })),
+    });
+    assert.equal(allPreparedPlan.status, "ready");
+    if (allPreparedPlan.status === "ready") {
+      assert.equal(allPreparedPlan.desiredPrepared, false);
+      assert.equal(
+        allPreparedPlan.updates.every((update) => !update.isPrepared),
+        true,
+      );
+    }
+  }
+
+  assert.equal(
+    getSharedPreparationBulkMutationPlan({ ...state.session, items: [] }).status,
+    "empty",
+  );
+  const oneHundred = Array.from({ length: 100 }, (_, index) => ({
+    ...state.session.items[0],
+    dailyItemId: `aaaaaaaa-aaaa-4aaa-8aaa-${index
+      .toString(16)
+      .padStart(12, "0")}`,
+  }));
+  assert.equal(
+    getSharedPreparationBulkMutationPlan({
+      ...state.session,
+      items: oneHundred,
+    }).status,
+    "ready",
+  );
+  assert.equal(
+    getSharedPreparationBulkMutationPlan({
+      ...state.session,
+      items: [
+        ...oneHundred,
+        {
+          ...state.session.items[0],
+          dailyItemId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        },
+      ],
+    }).status,
+    "too_many",
+  );
+  assert.equal(
+    getSharedPreparationBulkMutationPlan({
+      ...state.session,
+      items: [
+        state.session.items[0],
+        { ...state.session.items[0] },
+      ],
+    }).status,
+    "invalid",
+  );
+  assert.equal(
+    getSharedPreparationBulkMutationPlan({
+      ...state.session,
+      items: [
+        { ...state.session.items[0], dailyItemId: "" },
+      ],
+    }).status,
+    "invalid",
+  );
+  assert.equal(
+    getSharedPreparationBulkMutationPlan({
+      ...state.session,
+      items: [{ ...state.session.items[0], version: 0 }],
+    }).status,
+    "invalid",
+  );
+});
+
+test("atomically applies multiple changed items in one batch", async () => {
+  const secondItemId = "66666666-6666-4666-8666-666666666666";
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload(),
+      items: [
+        itemPayload(),
+        itemPayload({ id: secondItemId, daily_item_id: secondItemId }),
+      ],
+    }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  if (state.status !== "success") return;
+
+  const updates = state.session.items.map((item) => ({
+    dailyItemId: item.dailyItemId,
+    expectedVersion: item.version,
+    isPrepared: true,
+  }));
+  const returned = state.session.items.map((item) => ({
+    ...item,
+    isPrepared: true,
+    isDeferred: false,
+    version: item.version + 1,
+    changed: true,
+  }));
+  const applied = applyUpdatedItemsToSharedDailyState(
+    state,
+    { familyId, childId, sessionDate, dailySessionId: sessionId, updates },
+    returned,
+    2,
+  );
+
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") {
+    assert.equal(applied.session.items.every((item) => item.isPrepared), true);
+    assert.equal(
+      applied.preparationSession.items.every((item) => item.checked),
+      true,
+    );
+  }
+});
+
+test("atomically applies changed batch items while preserving no-op and unrelated references", async () => {
+  const secondItemId = "66666666-6666-4666-8666-666666666666";
+  const thirdItemId = "77777777-7777-4777-8777-777777777777";
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload(),
+      items: [
+        itemPayload(),
+        itemPayload({
+          id: secondItemId,
+          daily_item_id: secondItemId,
+          version: 7,
+          is_prepared: true,
+        }),
+        itemPayload({ id: thirdItemId, daily_item_id: thirdItemId }),
+      ],
+    }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  if (state.status !== "success") return;
+
+  const noOpItem = state.session.items[1];
+  const unrelatedItem = state.session.items[2];
+  const changedItem = {
+    ...state.session.items[0],
+    isPrepared: true,
+    isDeferred: false,
+    version: 5,
+    changed: true,
+  };
+  const returnedNoOp = { ...noOpItem, changed: false };
+  const scope = {
+    familyId,
+    childId,
+    sessionDate,
+    dailySessionId: sessionId,
+    updates: [
+      { dailyItemId: itemId, expectedVersion: 4, isPrepared: true },
+      { dailyItemId: secondItemId, expectedVersion: 7, isPrepared: true },
+    ],
+  };
+  const applied = applyUpdatedItemsToSharedDailyState(
+    state,
+    scope,
+    [changedItem, returnedNoOp],
+    1,
+  );
+
+  assert.notEqual(applied, state);
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") {
+    assert.equal(applied.session.items[0].isPrepared, true);
+    assert.equal(applied.session.items[0].version, 5);
+    assert.equal(applied.session.items[1], noOpItem);
+    assert.equal(applied.session.items[2], unrelatedItem);
+    assert.equal(applied.preparationSession.items[0].checked, true);
+    assert.equal(applied.preparationSession.items[0].dailyItemVersion, 5);
+    assert.equal(applied.checkView.items[0].version, 5);
+  }
+
+  const invalidCases = [
+    { scope: { ...scope, familyId: thirdItemId }, items: [changedItem, returnedNoOp], count: 1 },
+    { scope: { ...scope, childId: thirdItemId }, items: [changedItem, returnedNoOp], count: 1 },
+    { scope: { ...scope, sessionDate: "2026-07-30" }, items: [changedItem, returnedNoOp], count: 1 },
+    { scope: { ...scope, dailySessionId: thirdItemId }, items: [changedItem, returnedNoOp], count: 1 },
+    { scope: { ...scope, updates: scope.updates.map((update) => ({ ...update, expectedVersion: 3 })) }, items: [changedItem, returnedNoOp], count: 1 },
+    { scope, items: [changedItem], count: 1 },
+    { scope, items: [changedItem, changedItem], count: 2 },
+    { scope, items: [changedItem, returnedNoOp], count: 2 },
+  ];
+  for (const invalid of invalidCases) {
+    assert.equal(
+      applyUpdatedItemsToSharedDailyState(
+        state,
+        invalid.scope,
+        invalid.items,
+        invalid.count,
+      ),
+      state,
+    );
+  }
+  assert.equal(
+    applyUpdatedItemsToSharedDailyState(
+      { status: "not_found", sessionDate },
+      scope,
+      [changedItem, returnedNoOp],
+      1,
+    ).status,
+    "not_found",
+  );
 });

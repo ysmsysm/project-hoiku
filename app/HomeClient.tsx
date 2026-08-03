@@ -75,6 +75,7 @@ import {
   canRunHomeLocalDailyMutation,
   canRunHomeLocalCompleteCheck,
   canRunHomeObservedQuantityMutation,
+  canRunHomePreparationBulkMutation,
   canRunHomePreparationItemMutation,
   completeHomeLocalDailyHydration,
   createHomeLockerItems,
@@ -83,6 +84,7 @@ import {
   deriveHomeSharedDailyState,
   getHomeLocalDailySourceKey,
   getHomeDailyItemMutationErrorView,
+  getHomePreparationBulkTooManyItemsView,
   getHomeSharedDailyStatusView,
   getHomeSharedDailyPropSync,
   getHomeSharedDailyStateSyncKey,
@@ -126,17 +128,25 @@ import {
 import { clampSpotQuantity, formatSpotItemName } from "../src/lib/spotQuantity";
 import { createClient as createSupabaseClient } from "../src/lib/supabase/client";
 import {
+  updateDailyPreparationItems,
+} from "../src/lib/family-sharing/update-daily-preparation-items";
+import {
   isDeferredDailyItemMutationNoOp,
   isPreparedDailyItemMutationNoOp,
   updateDailyItem,
   validateUpdateDailyItemInput,
 } from "../src/lib/family-sharing/update-daily-item";
-import { applyUpdatedItemToSharedDailyState } from "../src/lib/family-sharing/shared-daily-data";
+import {
+  applyUpdatedItemsToSharedDailyState,
+  applyUpdatedItemToSharedDailyState,
+  getSharedPreparationBulkMutationPlan,
+} from "../src/lib/family-sharing/shared-daily-data";
 import { useEditableSection } from "../src/hooks/useEditableSection";
 import type { ChildProfile } from "../src/types/child";
 import type { SpotAddition } from "../src/types/spot";
 import type { SharedDailyState } from "../src/types/shared-daily";
 import type {
+  DailyDataClient,
   UpdateDailyItemClient,
   UpdateDailyItemInput,
 } from "../src/types/daily";
@@ -577,6 +587,8 @@ function HomeClientContent({
     canRunHomeObservedQuantityMutation(dailyMode);
   const canRunPreparationItemMutation =
     canRunHomePreparationItemMutation(dailyMode);
+  const canRunPreparationBulkMutation =
+    canRunHomePreparationBulkMutation(dailyMode);
   const sharedDailyStatusView =
     sharedDailyState && isHomeSharedDailyDisplayState(sharedDailyState)
       ? getHomeSharedDailyStatusView(sharedDailyState)
@@ -593,6 +605,7 @@ function HomeClientContent({
     useState<ReadonlySet<string>>(() => new Set());
   const pendingDailyItemMutationRequestsRef = useRef(new Map<string, symbol>());
   const dailyItemMutationClientRef = useRef<UpdateDailyItemClient | null>(null);
+  const dailyPreparationItemsClientRef = useRef<DailyDataClient | null>(null);
   const dailyItemMutationMountedRef = useRef(true);
   const [dailyItemMutationError, setDailyItemMutationError] =
     useState<HomeDailyItemMutationErrorView | null>(null);
@@ -1140,6 +1153,38 @@ function HomeClientContent({
   );
 
   const sessionItems = useMemo(() => session?.items ?? [], [session]);
+  const sharedPreparationBulkPlan = useMemo(
+    () =>
+      sharedDailyState?.status === "success"
+        ? getSharedPreparationBulkMutationPlan(sharedDailyState.session)
+        : null,
+    [sharedDailyState],
+  );
+  const isSharedPreparationBulkPending =
+    sharedPreparationBulkPlan?.status === "ready" &&
+    sharedPreparationBulkPlan.updates.some((update) =>
+      pendingDailyItemMutationItemIds.has(update.dailyItemId),
+    );
+  const hasInvalidSharedPreparationBulkItem =
+    dailyMode === "shared-success" &&
+    sessionItems.some(
+      (item) =>
+        !item.later &&
+        (!item.dailyItemId || item.dailyItemVersion === undefined),
+    );
+  const isPreparationBulkDisabled =
+    !canRunPreparationBulkMutation ||
+    (dailyMode === "shared-success" &&
+      (sharedPreparationBulkPlan?.status !== "ready" ||
+        hasInvalidSharedPreparationBulkItem ||
+        isSharedPreparationBulkPending));
+  const preparationBulkAvailabilityError =
+    dailyMode === "shared-success" &&
+    sharedPreparationBulkPlan?.status === "too_many"
+      ? getHomePreparationBulkTooManyItemsView()
+      : null;
+  const displayedDailyItemMutationError =
+    preparationBulkAvailabilityError ?? dailyItemMutationError;
   const disabledPreparationItemIds = useMemo(() => {
     const disabledIds = new Set(pendingDailyItemMutationItemIds);
     if (dailyMode === "shared-success") {
@@ -1299,6 +1344,130 @@ function HomeClientContent({
       ) {
         pendingDailyItemMutationRequestsRef.current.delete(dailyItemId);
       }
+      if (dailyItemMutationMountedRef.current) {
+        setPendingDailyItemMutationItemIds(
+          new Set(pendingDailyItemMutationRequestsRef.current.keys()),
+        );
+      }
+    }
+  };
+
+  const runSharedDailyPreparationItemsMutation = async () => {
+    const currentSharedSession = getCurrentSharedDailySession();
+    if (!currentSharedSession) {
+      return;
+    }
+    const plan = getSharedPreparationBulkMutationPlan(currentSharedSession);
+    if (plan.status !== "ready") {
+      return;
+    }
+
+    const targetIds = plan.updates.map((update) => update.dailyItemId);
+    if (
+      targetIds.some((dailyItemId) =>
+        pendingDailyItemMutationRequestsRef.current.has(dailyItemId),
+      )
+    ) {
+      return;
+    }
+
+    const requestScopeKey = dailyItemMutationScopeKeyRef.current;
+    const requestScopeGeneration =
+      dailyItemMutationScopeGenerationRef.current;
+    const requestToken = Symbol("bulk-prepared");
+    targetIds.forEach((dailyItemId) => {
+      pendingDailyItemMutationRequestsRef.current.set(
+        dailyItemId,
+        requestToken,
+      );
+    });
+    setPendingDailyItemMutationItemIds(
+      new Set(pendingDailyItemMutationRequestsRef.current.keys()),
+    );
+    setDailyItemMutationError(null);
+
+    try {
+      if (!dailyPreparationItemsClientRef.current) {
+        const browserClient = createSupabaseClient();
+        dailyPreparationItemsClientRef.current = {
+          rpc(functionName, args) {
+            return browserClient.rpc(functionName, args);
+          },
+        };
+      }
+
+      const input = {
+        familyId: currentSharedSession.familyId,
+        childId: currentSharedSession.childId,
+        sessionDate: currentSharedSession.sessionDate,
+        updates: plan.updates,
+      };
+      const result = await updateDailyPreparationItems(
+        dailyPreparationItemsClientRef.current,
+        input,
+        {
+          dailySessionId: currentSharedSession.dailySessionId,
+          items: plan.currentItems,
+        },
+      );
+      if (
+        !dailyItemMutationMountedRef.current ||
+        dailyItemMutationScopeKeyRef.current !== requestScopeKey ||
+        dailyItemMutationScopeGenerationRef.current !== requestScopeGeneration
+      ) {
+        return;
+      }
+
+      if (result.status === "success") {
+        setSharedDailyState((current) =>
+          current
+            ? applyUpdatedItemsToSharedDailyState(
+                current,
+                {
+                  familyId: input.familyId,
+                  childId: input.childId,
+                  sessionDate: input.sessionDate,
+                  dailySessionId: currentSharedSession.dailySessionId,
+                  updates: input.updates,
+                },
+                result.items,
+                result.changedCount,
+              )
+            : current,
+        );
+      } else {
+        setDailyItemMutationError(
+          getHomeDailyItemMutationErrorView(result, "bulk_prepared"),
+        );
+      }
+    } catch {
+      if (
+        dailyItemMutationMountedRef.current &&
+        dailyItemMutationScopeKeyRef.current === requestScopeKey &&
+        dailyItemMutationScopeGenerationRef.current === requestScopeGeneration
+      ) {
+        setDailyItemMutationError(
+          getHomeDailyItemMutationErrorView(
+            {
+              status: "transport_error",
+              error: {
+                kind: "rpc_error",
+                message: "Daily preparation items mutation failed",
+              },
+            },
+            "bulk_prepared",
+          ),
+        );
+      }
+    } finally {
+      targetIds.forEach((dailyItemId) => {
+        if (
+          pendingDailyItemMutationRequestsRef.current.get(dailyItemId) ===
+          requestToken
+        ) {
+          pendingDailyItemMutationRequestsRef.current.delete(dailyItemId);
+        }
+      });
       if (dailyItemMutationMountedRef.current) {
         setPendingDailyItemMutationItemIds(
           new Set(pendingDailyItemMutationRequestsRef.current.keys()),
@@ -1818,7 +1987,11 @@ function HomeClientContent({
   };
 
   const checkAllPreparationItems = () => {
-    if (!canRunLocalDailyMutation || !session) {
+    if (dailyMode === "shared-success") {
+      void runSharedDailyPreparationItemsMutation();
+      return;
+    }
+    if (dailyMode !== "local" || !canRunLocalDailyMutation || !session) {
       return;
     }
 
@@ -3580,18 +3753,18 @@ function HomeClientContent({
 
         {activeTab !== "settings" &&
         dailyMode === "shared-success" &&
-        dailyItemMutationError ? (
+        displayedDailyItemMutationError ? (
           <div
             role="alert"
             className="mt-5 rounded-section bg-card-today px-4 py-3 text-status text-text-secondary ring-1 ring-border-soft"
           >
             <p className="font-semibold text-text-primary">
-              {dailyItemMutationError.title}
+              {displayedDailyItemMutationError.title}
             </p>
             <p className="mt-1 leading-relaxed">
-              {dailyItemMutationError.body}
+              {displayedDailyItemMutationError.body}
             </p>
-            {dailyItemMutationError.canReload ? (
+            {displayedDailyItemMutationError.canReload ? (
               <button
                 type="button"
                 onClick={() => router.refresh()}
@@ -3730,7 +3903,7 @@ function HomeClientContent({
               onToggleLater={togglePreparationItemLater}
               onComplete={completePreparation}
               itemActionsDisabled={!canRunPreparationItemMutation}
-              bulkActionDisabled={!canRunLocalDailyMutation}
+              bulkActionDisabled={isPreparationBulkDisabled}
               completeActionDisabled={!canRunLocalDailyMutation}
               disabledItemIds={disabledPreparationItemIds}
             />
