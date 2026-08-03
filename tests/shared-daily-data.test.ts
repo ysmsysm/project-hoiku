@@ -301,6 +301,71 @@ test("applies one validated item to the canonical session and re-derives views",
   }
 });
 
+test("applies prepared and deferred item transitions through the shared mapper", async () => {
+  const transitions = [
+    { isPrepared: true, isDeferred: false },
+    { isPrepared: false, isDeferred: false },
+    { isPrepared: false, isDeferred: true },
+    { isPrepared: true, isDeferred: false },
+  ];
+
+  for (const transition of transitions) {
+    const state = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload(),
+        items: [itemPayload(), itemPayload({
+          id: "66666666-6666-4666-8666-666666666666",
+          daily_item_id: "66666666-6666-4666-8666-666666666666",
+          item_template_id: "77777777-7777-4777-8777-777777777777",
+        })],
+      }),
+      input,
+    );
+    assert.equal(state.status, "success");
+    if (state.status !== "success") {
+      continue;
+    }
+    const untouchedItem = state.session.items[1];
+    const updatedItem: DailyItem = {
+      ...state.session.items[0],
+      ...transition,
+      version: 5,
+    };
+    const applied = applyUpdatedItemToSharedDailyState(
+      state,
+      {
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        dailyItemId: itemId,
+        expectedVersion: 4,
+      },
+      updatedItem,
+    );
+
+    assert.equal(applied.status, "success");
+    if (applied.status === "success") {
+      assert.equal(applied.session.items[0], updatedItem);
+      assert.equal(applied.session.items[1], untouchedItem);
+      assert.equal(applied.checkView.items[0].version, 5);
+      assert.equal(
+        applied.preparationSession.items[0].checked,
+        transition.isPrepared,
+      );
+      assert.equal(
+        applied.preparationSession.items[0].later,
+        transition.isDeferred,
+      );
+      assert.equal(
+        applied.preparationSession.items[0].dailyItemVersion,
+        5,
+      );
+    }
+  }
+});
+
 test("does not apply stale or out-of-scope daily item results", async () => {
   const state = await loadSharedDailyDataForDate(
     clientReturning({

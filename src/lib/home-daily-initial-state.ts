@@ -43,7 +43,12 @@ export type HomeSharedDailyStatusView = {
   body: string;
 };
 
-export type HomeObservedQuantityMutationErrorView = {
+export type HomeDailyItemMutationOperation =
+  | "quantity"
+  | "prepared"
+  | "deferred";
+
+export type HomeDailyItemMutationErrorView = {
   title: string;
   body: string;
   canReload: boolean;
@@ -337,14 +342,28 @@ export function canRunHomeObservedQuantityMutation(
   return dailyMode === "local" || dailyMode === "shared-success";
 }
 
-export function getHomeObservedQuantityMutationErrorView(
+export function canRunHomePreparationItemMutation(
+  dailyMode: HomeDailyInitialState["mode"],
+): boolean {
+  return dailyMode === "local" || dailyMode === "shared-success";
+}
+
+export function getHomeDailyItemMutationErrorView(
   result: Exclude<UpdateDailyItemResult, { status: "success" }>,
-): HomeObservedQuantityMutationErrorView {
+  operation: HomeDailyItemMutationOperation,
+): HomeDailyItemMutationErrorView {
+  const operationName =
+    operation === "quantity"
+      ? "数量"
+      : operation === "prepared"
+        ? "準備状態"
+        : "「あとで」の状態";
+
   switch (result.status) {
     case "conflict":
       return {
-        title: "他の端末で数量が更新されています",
-        body: "最新の数量を確認するため、再読み込みしてください。",
+        title: `他の端末で${operationName}が更新されています`,
+        body: "最新の状態を確認するため、再読み込みしてください。",
         canReload: true,
       };
     case "forbidden":
@@ -362,19 +381,19 @@ export function getHomeObservedQuantityMutationErrorView(
     case "invalid_state":
       return result.reason === "session_prepared"
         ? {
-            title: "準備完了後は数量を変更できません",
+            title: `準備完了後は${operationName}を変更できません`,
             body: "最新の状態を確認してください。",
             canReload: true,
           }
         : {
-            title: "現在の状態では数量を変更できません",
+            title: `現在の状態では${operationName}を変更できません`,
             body: "最新の状態を確認してください。",
             canReload: true,
           };
     case "client_error":
       return {
-        title: "数量を更新できませんでした",
-        body: "数量を確認して、もう一度操作してください。",
+        title: `${operationName}を更新できませんでした`,
+        body: "内容を確認して、もう一度操作してください。",
         canReload: false,
       };
     case "transport_error":

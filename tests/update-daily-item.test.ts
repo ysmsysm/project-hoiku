@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isDeferredDailyItemMutationNoOp,
+  isPreparedDailyItemMutationNoOp,
   mapUpdateDailyItemResponse,
   updateDailyItem,
 } from "../src/lib/family-sharing/update-daily-item";
@@ -15,6 +17,7 @@ const sessionId = "33333333-3333-4333-8333-333333333333";
 const itemId = "44444444-4444-4444-8444-444444444444";
 
 const input: UpdateDailyItemInput = {
+  action: "set_observed_quantity",
   familyId,
   childId,
   sessionDate: "2026-08-02",
@@ -23,6 +26,32 @@ const input: UpdateDailyItemInput = {
   expectedVersion: 4,
   requiredQuantity: 3,
   observedQuantity: 2,
+};
+
+const preparedInput: UpdateDailyItemInput = {
+  action: "set_prepared",
+  familyId,
+  childId,
+  sessionDate: "2026-08-02",
+  dailySessionId: sessionId,
+  dailyItemId: itemId,
+  expectedVersion: 4,
+  nextPrepared: true,
+  currentIsPrepared: false,
+  currentIsDeferred: true,
+};
+
+const deferredInput: UpdateDailyItemInput = {
+  action: "set_deferred",
+  familyId,
+  childId,
+  sessionDate: "2026-08-02",
+  dailySessionId: sessionId,
+  dailyItemId: itemId,
+  expectedVersion: 4,
+  nextDeferred: true,
+  currentIsPrepared: true,
+  currentIsDeferred: false,
 };
 
 function itemPayload(overrides: Record<string, unknown> = {}) {
@@ -137,6 +166,192 @@ test("calls update_daily_item with the exact observed quantity contract", async 
     assert.equal(result.item.observedQuantity, 2);
     assert.equal(result.item.shortageCount, 1);
     assert.equal("changed" in result.item, false);
+  }
+});
+
+test("calls update_daily_item with exact prepared and deferred contracts", async () => {
+  const cases: Array<{
+    input: UpdateDailyItemInput;
+    item: Record<string, unknown>;
+    action: "set_prepared" | "set_deferred";
+    value: { is_prepared: boolean } | { is_deferred: boolean };
+  }> = [
+    {
+      input: preparedInput,
+      item: { is_prepared: true, is_deferred: false },
+      action: "set_prepared",
+      value: { is_prepared: true },
+    },
+    {
+      input: { ...preparedInput, nextPrepared: false },
+      item: { is_prepared: false, is_deferred: true },
+      action: "set_prepared",
+      value: { is_prepared: false },
+    },
+    {
+      input: deferredInput,
+      item: { is_prepared: false, is_deferred: true },
+      action: "set_deferred",
+      value: { is_deferred: true },
+    },
+    {
+      input: { ...deferredInput, nextDeferred: false },
+      item: { is_prepared: true, is_deferred: false },
+      action: "set_deferred",
+      value: { is_deferred: false },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const calls: unknown[] = [];
+    const result = await updateDailyItem(
+      clientReturning(
+        {
+          status: "success",
+          item: itemPayload(testCase.item),
+          session: null,
+        },
+        null,
+        calls,
+      ),
+      testCase.input,
+    );
+    assert.equal(result.status, "success");
+    assert.deepEqual(calls, [
+      {
+        functionName: "update_daily_item",
+        args: {
+          p_family_id: familyId,
+          p_child_id: childId,
+          p_session_date: "2026-08-02",
+          p_daily_item_id: itemId,
+          p_expected_version: 4,
+          p_action: testCase.action,
+          p_value: testCase.value,
+        },
+      },
+    ]);
+  }
+});
+
+test("validates action-specific preparation inputs without quantity fields", async () => {
+  const invalidInputs: UpdateDailyItemInput[] = [];
+  for (const base of [preparedInput, deferredInput]) {
+    for (const field of [
+      base.action === "set_prepared" ? "nextPrepared" : "nextDeferred",
+      "currentIsPrepared",
+      "currentIsDeferred",
+    ]) {
+      for (const value of [null, "true", 1]) {
+        const malformed = { ...base };
+        Object.defineProperty(malformed, field, { value });
+        invalidInputs.push(malformed);
+      }
+    }
+  }
+
+  for (const invalidInput of invalidInputs) {
+    const calls: unknown[] = [];
+    const result = await updateDailyItem(
+      clientReturning(null, null, calls),
+      invalidInput,
+    );
+    assert.equal(result.status, "client_error");
+    assert.equal(calls.length, 0);
+  }
+});
+
+test("validates paired preparation transitions and accepts every mapped item kind", async () => {
+  for (const kind of ["regular", "spot", "rough"] as const) {
+    const result = await updateDailyItem(
+      clientReturning({
+        status: "success",
+        item: itemPayload({
+          kind,
+          is_ad_hoc: kind === "spot",
+          observed_quantity: kind === "regular" ? 2 : null,
+          shortage_count: kind === "regular" ? 1 : null,
+          rough_state: kind === "rough" ? "refill" : null,
+          is_prepared: true,
+          is_deferred: false,
+        }),
+        session: null,
+      }),
+      preparedInput,
+    );
+    assert.equal(result.status, "success");
+  }
+
+  for (const [actionInput, overrides] of [
+    [preparedInput, { is_prepared: true, is_deferred: true }],
+    [
+      { ...preparedInput, nextPrepared: false },
+      { is_prepared: false, is_deferred: false },
+    ],
+    [deferredInput, { is_prepared: true, is_deferred: true }],
+    [
+      { ...deferredInput, nextDeferred: false },
+      { is_prepared: false, is_deferred: false },
+    ],
+  ] as const) {
+    const result = await updateDailyItem(
+      clientReturning({
+        status: "success",
+        item: itemPayload(overrides),
+        session: null,
+      }),
+      actionInput,
+    );
+    assert.equal(result.status, "transport_error");
+  }
+});
+
+test("detects preparation no-ops while allowing inconsistent pairs to normalize", () => {
+  assert.equal(
+    isPreparedDailyItemMutationNoOp(
+      { isPrepared: true, isDeferred: false },
+      true,
+    ),
+    true,
+  );
+  assert.equal(
+    isPreparedDailyItemMutationNoOp(
+      { isPrepared: true, isDeferred: true },
+      true,
+    ),
+    false,
+  );
+  for (const isDeferred of [false, true]) {
+    assert.equal(
+      isPreparedDailyItemMutationNoOp(
+        { isPrepared: false, isDeferred },
+        false,
+      ),
+      true,
+    );
+  }
+  assert.equal(
+    isDeferredDailyItemMutationNoOp(
+      { isPrepared: false, isDeferred: true },
+      true,
+    ),
+    true,
+  );
+  assert.equal(
+    isDeferredDailyItemMutationNoOp(
+      { isPrepared: true, isDeferred: true },
+      true,
+    ),
+    false,
+  );
+  for (const isPrepared of [false, true]) {
+    assert.equal(
+      isDeferredDailyItemMutationNoOp(
+        { isPrepared, isDeferred: false },
+        false,
+      ),
+      true,
+    );
   }
 });
 

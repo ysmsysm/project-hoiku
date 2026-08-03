@@ -7,12 +7,13 @@ import {
   canRunHomeLocalCompleteCheck,
   canRunHomeLocalDailyMutation,
   canRunHomeObservedQuantityMutation,
+  canRunHomePreparationItemMutation,
   completeHomeLocalDailyHydration,
   createHomeLockerItems,
   createHomeDailyInitialState,
   deriveHomeSharedDailyState,
   getHomeLocalDailySourceKey,
-  getHomeObservedQuantityMutationErrorView,
+  getHomeDailyItemMutationErrorView,
   getHomeSharedDailyStatusView,
   getHomeSharedDailyPropSync,
   getHomeSharedDailyStateSyncKey,
@@ -584,56 +585,84 @@ test("observed quantity capability includes only local and shared success", () =
   }
 });
 
-test("observed quantity mutation errors are user-safe and reloadable when needed", () => {
-  const conflict = getHomeObservedQuantityMutationErrorView({
-    status: "conflict",
-    item: dailyItem(),
-  });
+test("preparation item capability includes only local and shared success", () => {
+  assert.equal(canRunHomePreparationItemMutation("local"), true);
+  assert.equal(canRunHomePreparationItemMutation("shared-success"), true);
+  assert.equal(canRunHomePreparationItemMutation("shared-non-success"), false);
+  assert.equal(canRunHomePreparationItemMutation("shared-error"), false);
+
+  for (const state of nonSuccessStates()) {
+    const derived = deriveHomeSharedDailyState(state);
+    assert.equal(canRunHomePreparationItemMutation(derived.mode), false);
+    assert.equal(canRunHomeLocalDailyMutation(derived.mode), false);
+  }
+});
+
+test("daily item mutation errors are operation-specific, safe, and reloadable", () => {
+  const conflict = getHomeDailyItemMutationErrorView(
+    { status: "conflict", item: dailyItem() },
+    "quantity",
+  );
   assert.equal(conflict.canReload, true);
   assert.match(conflict.title, /他の端末/);
 
-  const prepared = getHomeObservedQuantityMutationErrorView({
-    status: "invalid_state",
-    reason: "session_prepared",
-  });
+  const prepared = getHomeDailyItemMutationErrorView(
+    { status: "invalid_state", reason: "session_prepared" },
+    "prepared",
+  );
   assert.match(prepared.title, /準備完了後/);
+  assert.match(prepared.title, /準備状態/);
+  assert.match(
+    getHomeDailyItemMutationErrorView(
+      { status: "client_error", error: { kind: "invalid_input", message: "x", issues: [] } },
+      "deferred",
+    ).title,
+    /「あとで」の状態/,
+  );
 
-  const invalidResponse = getHomeObservedQuantityMutationErrorView({
-    status: "transport_error",
-    error: {
-      kind: "invalid_response",
-      message: "internal update_daily_item failure",
-      issues: [{ path: "familyId", code: familyId }],
+  const invalidResponse = getHomeDailyItemMutationErrorView(
+    {
+      status: "transport_error",
+      error: {
+        kind: "invalid_response",
+        message: "internal update_daily_item failure",
+        issues: [{ path: "familyId", code: familyId }],
+      },
     },
-  });
+    "quantity",
+  );
   assert.equal(invalidResponse.canReload, true);
   assert.doesNotMatch(
     JSON.stringify(invalidResponse),
     /update_daily_item|familyId|11111111/,
   );
 
-  const rpcError = getHomeObservedQuantityMutationErrorView({
-    status: "transport_error",
-    error: { kind: "rpc_error", message: "internal network detail" },
-  });
+  const rpcError = getHomeDailyItemMutationErrorView(
+    {
+      status: "transport_error",
+      error: { kind: "rpc_error", message: "internal network detail" },
+    },
+    "quantity",
+  );
   assert.equal(rpcError.canReload, false);
   assert.match(rpcError.title, /通信/);
   assert.notEqual(rpcError.title, invalidResponse.title);
 
   assert.equal(
-    getHomeObservedQuantityMutationErrorView({ status: "forbidden" })
+    getHomeDailyItemMutationErrorView({ status: "forbidden" }, "quantity")
       .canReload,
     false,
   );
   assert.equal(
-    getHomeObservedQuantityMutationErrorView({ status: "not_found" })
+    getHomeDailyItemMutationErrorView({ status: "not_found" }, "quantity")
       .canReload,
     true,
   );
   assert.match(
-    getHomeObservedQuantityMutationErrorView({
-      status: "invalid_state",
-    }).title,
+    getHomeDailyItemMutationErrorView(
+      { status: "invalid_state" },
+      "quantity",
+    ).title,
     /現在の状態/,
   );
 });
@@ -669,15 +698,25 @@ test("daily mutation controls propagate native disabled state", () => {
     2,
   );
   assert.match(preparationChecklistSource, /disabled\?: boolean/);
+  assert.match(preparationChecklistSource, /itemActionsDisabled\?: boolean/);
+  assert.match(preparationChecklistSource, /bulkActionDisabled\?: boolean/);
+  assert.match(preparationChecklistSource, /completeActionDisabled\?: boolean/);
+  assert.match(preparationChecklistSource, /disabledItemIds\?: ReadonlySet<string>/);
   assert.match(
     preparationChecklistSource,
-    /onClick=\{onCheckAll\}[\s\S]*?disabled=\{disabled\}/,
+    /onClick=\{onCheckAll\}[\s\S]*?disabled=\{disabled \|\| bulkActionDisabled\}/,
   );
   assert.match(
     preparationChecklistSource,
-    /disabled=\{disabled \|\| item\.checked\}/,
+    /disabled=\{isItemActionDisabled \|\| item\.checked\}/,
   );
-  assert.match(homeClientSource, /disabled=\{!canRunLocalDailyMutation\}/);
+  assert.match(
+    preparationChecklistSource,
+    /disabled=\{disabled \|\| completeActionDisabled\}/,
+  );
+  assert.match(homeClientSource, /bulkActionDisabled=\{!canRunLocalDailyMutation\}/);
+  assert.match(homeClientSource, /completeActionDisabled=\{!canRunLocalDailyMutation\}/);
+  assert.match(homeClientSource, /itemActionsDisabled=\{!canRunPreparationItemMutation\}/);
   assert.match(
     homeClientSource,
     /disabled=\{!canRunObservedQuantityMutation\}/,
@@ -690,6 +729,135 @@ test("daily mutation controls propagate native disabled state", () => {
   assert.match(homeClientSource, /dailyMode === "shared-non-success"/);
   assert.match(homeClientSource, /router\.refresh\(\)/);
   assert.doesNotMatch(homeClientSource, /window\.location\.reload\(\)/);
+});
+
+test("shared preparation handlers reuse the item lock and preserve local save boundaries", () => {
+  const runnerSource = homeClientSource.slice(
+    homeClientSource.indexOf("const runSharedDailyItemMutation = async"),
+    homeClientSource.indexOf("const updateShortageCount = async"),
+  );
+  assert.match(
+    runnerSource,
+    /getCurrentSharedDailySession\(\)[\s\S]*?canonicalItem[\s\S]*?canonicalItem\?\.version !== input\.expectedVersion/,
+  );
+  assert.match(
+    runnerSource,
+    /pendingDailyItemMutationRequestsRef\.current\.has\(dailyItemId\)/,
+  );
+  assert.match(
+    runnerSource,
+    /pendingDailyItemMutationRequestsRef\.current\.set\(dailyItemId, requestToken\)/,
+  );
+  assert.match(
+    runnerSource,
+    /pendingDailyItemMutationRequestsRef\.current\.get\(dailyItemId\) ===[\s\S]*?requestToken/,
+  );
+  assert.match(runnerSource, /dailyItemMutationClientRef\.current/);
+  assert.match(runnerSource, /updateDailyItem\([\s\S]*?input/);
+  assert.match(
+    runnerSource,
+    /dailyItemMutationScopeKeyRef\.current !== requestScopeKey/,
+  );
+  assert.match(
+    runnerSource,
+    /dailyItemMutationScopeGenerationRef\.current !== requestScopeGeneration/,
+  );
+  assert.match(
+    runnerSource,
+    /result\.status === "success"[\s\S]*?setSharedDailyState\(\(current\) =>[\s\S]*?applyUpdatedItemToSharedDailyState/,
+  );
+  assert.doesNotMatch(runnerSource, /router\.refresh\(\)|appRepository/);
+
+  const preparedHandlerSource = homeClientSource.slice(
+    homeClientSource.indexOf("const togglePreparationItem = async"),
+    homeClientSource.indexOf("const checkAllPreparationItems"),
+  );
+  assert.match(
+    preparedHandlerSource,
+    /dailyMode === "local"[\s\S]*?updateSession\(nextSession\)[\s\S]*?canRunPreparationItemMutation/,
+  );
+  assert.match(preparedHandlerSource, /action: "set_prepared"/);
+  assert.match(preparedHandlerSource, /nextPrepared = !canonicalItem\.isPrepared/);
+  assert.match(
+    preparedHandlerSource,
+    /isPreparedDailyItemMutationNoOp[\s\S]*?runSharedDailyItemMutation\(input, "prepared"\)/,
+  );
+  assert.equal(preparedHandlerSource.match(/updateSession\(/g)?.length, 1);
+  assert.doesNotMatch(preparedHandlerSource, /savePreparationSession|localStorage/);
+
+  const deferredHandlerSource = homeClientSource.slice(
+    homeClientSource.indexOf("const togglePreparationItemLater = async"),
+    homeClientSource.indexOf("const completePreparation"),
+  );
+  assert.match(
+    deferredHandlerSource,
+    /dailyMode === "local"[\s\S]*?checked: false,[\s\S]*?later: !item\.later[\s\S]*?updateSession\(nextSession\)/,
+  );
+  assert.match(deferredHandlerSource, /action: "set_deferred"/);
+  assert.match(deferredHandlerSource, /nextDeferred = !canonicalItem\.isDeferred/);
+  assert.match(
+    deferredHandlerSource,
+    /isDeferredDailyItemMutationNoOp[\s\S]*?runSharedDailyItemMutation\(input, "deferred"\)/,
+  );
+  assert.equal(deferredHandlerSource.match(/updateSession\(/g)?.length, 1);
+  assert.doesNotMatch(deferredHandlerSource, /savePreparationSession|localStorage/);
+});
+
+test("the same pending daily item set disables quantity and preparation controls", () => {
+  assert.match(
+    homeClientSource,
+    /const disabledObservedQuantityItemIds = useMemo[\s\S]*?new Set\(pendingDailyItemMutationItemIds\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /const disabledPreparationItemIds = useMemo[\s\S]*?new Set\(pendingDailyItemMutationItemIds\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /disabledItemIds=\{disabledObservedQuantityItemIds\}/,
+  );
+  assert.match(
+    homeClientSource,
+    /disabledItemIds=\{disabledPreparationItemIds\}/,
+  );
+  assert.match(
+    preparationChecklistSource,
+    /const itemMutationId = item\.dailyItemId \?\? item\.id/,
+  );
+  assert.match(
+    preparationChecklistSource,
+    /disabledItemIds\.has\(itemMutationId\)/,
+  );
+  assert.match(
+    preparationChecklistSource,
+    /disabled=\{isItemActionDisabled\}[\s\S]*?disabled=\{isItemActionDisabled \|\| item\.checked\}/,
+  );
+});
+
+test("preparation completion remains guarded and mutation errors render once across daily tabs", () => {
+  assert.match(
+    preparationChecklistSource,
+    /useEffect\(\(\) => \{[\s\S]*?if \(disabled \|\| completeActionDisabled\)[\s\S]*?setIsConfirmOpen\(false\)/,
+  );
+  assert.match(
+    preparationChecklistSource,
+    /const confirmCompletion[\s\S]*?if \(disabled \|\| completeActionDisabled\)/,
+  );
+  assert.match(
+    preparationChecklistSource,
+    /type="button"[\s\S]*?disabled=\{isItemActionDisabled\}/,
+  );
+  assert.equal(
+    homeClientSource.match(
+      /activeTab !== "settings" &&[\s\S]{0,100}dailyMode === "shared-success" &&[\s\S]{0,100}dailyItemMutationError/g,
+    )
+      ?.length,
+    1,
+  );
+  assert.equal(
+    homeClientSource.match(/\{dailyItemMutationError\.title\}/g)?.length,
+    1,
+  );
 });
 
 test("local daily save boundaries and template cleanup are mode guarded", () => {
@@ -713,19 +881,19 @@ test("local daily save boundaries and template cleanup are mode guarded", () => 
   );
   assert.match(
     homeClientSource,
-    /dailyMode !== "shared-success"[\s\S]*?updateDailyItem\(/,
+    /const getCurrentSharedDailySession[\s\S]*?dailyMode !== "shared-success"[\s\S]*?const runSharedDailyItemMutation[\s\S]*?updateDailyItem\(/,
   );
   assert.match(
     homeClientSource,
-    /pendingObservedQuantityRequestsRef\.current\.has\(dailyItemId\)/,
+    /pendingDailyItemMutationRequestsRef\.current\.has\(dailyItemId\)/,
   );
   assert.match(
     homeClientSource,
-    /observedQuantityMountedRef\.current = true/,
+    /dailyItemMutationMountedRef\.current = true/,
   );
   assert.match(
     homeClientSource,
-    /observedQuantityScopeGenerationRef\.current !== requestScopeGeneration/,
+    /dailyItemMutationScopeGenerationRef\.current !== requestScopeGeneration/,
   );
   assert.match(
     homeClientSource,
@@ -736,7 +904,7 @@ test("local daily save boundaries and template cleanup are mode guarded", () => 
     homeClientSource.indexOf("const toggleRoughState = async"),
   );
   const sharedQuantityBranchIndex = quantityHandlerSource.indexOf(
-    'dailyMode !== "shared-success"',
+    "const currentSharedSession = getCurrentSharedDailySession()",
   );
   assert.notEqual(sharedQuantityBranchIndex, -1);
   assert.equal(
@@ -751,11 +919,11 @@ test("local daily save boundaries and template cleanup are mode guarded", () => 
     quantityHandlerSource.slice(sharedQuantityBranchIndex),
     /setShortageCounts|appRepository/,
   );
-  assert.equal(quantityHandlerSource.match(/updateDailyItem\(/g)?.length, 1);
+  assert.match(quantityHandlerSource, /runSharedDailyItemMutation\(input, "quantity"\)/);
   assert.doesNotMatch(quantityHandlerSource, /router\.refresh\(\)/);
   assert.match(
     homeClientSource,
-    /observedQuantityMutationError\.canReload[\s\S]*?router\.refresh\(\)/,
+    /dailyItemMutationError\.canReload[\s\S]*?router\.refresh\(\)/,
   );
 
   assert.match(

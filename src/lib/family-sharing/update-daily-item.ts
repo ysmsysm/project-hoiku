@@ -34,6 +34,26 @@ const invalidResponse = (
   },
 });
 
+export function isPreparedDailyItemMutationNoOp(
+  current: Pick<DailyItem, "isPrepared" | "isDeferred">,
+  nextPrepared: boolean,
+): boolean {
+  return (
+    nextPrepared === current.isPrepared &&
+    !(nextPrepared && current.isDeferred)
+  );
+}
+
+export function isDeferredDailyItemMutationNoOp(
+  current: Pick<DailyItem, "isPrepared" | "isDeferred">,
+  nextDeferred: boolean,
+): boolean {
+  return (
+    nextDeferred === current.isDeferred &&
+    !(nextDeferred && current.isPrepared)
+  );
+}
+
 export function validateUpdateDailyItemInput(
   input: UpdateDailyItemInput,
 ): DailyDataInvalidInputError | null {
@@ -52,22 +72,49 @@ export function validateUpdateDailyItemInput(
       code: "invalid_positive_integer",
     });
   }
-  if (!isPostgresInteger(input.requiredQuantity) || input.requiredQuantity < 0) {
-    issues.push({
-      path: "requiredQuantity",
-      code: "invalid_non_negative_integer",
-    });
-  }
-  if (!isPostgresInteger(input.observedQuantity) || input.observedQuantity < 0) {
-    issues.push({
-      path: "observedQuantity",
-      code: "invalid_non_negative_integer",
-    });
-  } else if (
-    isPostgresInteger(input.requiredQuantity) &&
-    input.observedQuantity > input.requiredQuantity
-  ) {
-    issues.push({ path: "observedQuantity", code: "quantity_exceeds_required" });
+  switch (input.action) {
+    case "set_observed_quantity":
+      if (
+        !isPostgresInteger(input.requiredQuantity) ||
+        input.requiredQuantity < 0
+      ) {
+        issues.push({
+          path: "requiredQuantity",
+          code: "invalid_non_negative_integer",
+        });
+      }
+      if (
+        !isPostgresInteger(input.observedQuantity) ||
+        input.observedQuantity < 0
+      ) {
+        issues.push({
+          path: "observedQuantity",
+          code: "invalid_non_negative_integer",
+        });
+      } else if (
+        isPostgresInteger(input.requiredQuantity) &&
+        input.observedQuantity > input.requiredQuantity
+      ) {
+        issues.push({
+          path: "observedQuantity",
+          code: "quantity_exceeds_required",
+        });
+      }
+      break;
+    case "set_prepared":
+      if (typeof input.nextPrepared !== "boolean") {
+        issues.push({ path: "nextPrepared", code: "invalid_boolean" });
+      }
+      validateCurrentPreparationState(input, issues);
+      break;
+    case "set_deferred":
+      if (typeof input.nextDeferred !== "boolean") {
+        issues.push({ path: "nextDeferred", code: "invalid_boolean" });
+      }
+      validateCurrentPreparationState(input, issues);
+      break;
+    default:
+      issues.push({ path: "action", code: "invalid_action" });
   }
 
   return issues.length > 0
@@ -77,6 +124,21 @@ export function validateUpdateDailyItemInput(
         issues,
       }
     : null;
+}
+
+function validateCurrentPreparationState(
+  input: Extract<
+    UpdateDailyItemInput,
+    { action: "set_prepared" | "set_deferred" }
+  >,
+  issues: DailyDataValidationIssue[],
+) {
+  if (typeof input.currentIsPrepared !== "boolean") {
+    issues.push({ path: "currentIsPrepared", code: "invalid_boolean" });
+  }
+  if (typeof input.currentIsDeferred !== "boolean") {
+    issues.push({ path: "currentIsDeferred", code: "invalid_boolean" });
+  }
 }
 
 export async function updateDailyItem(
@@ -100,17 +162,10 @@ export async function updateDailyItem(
 
   let response: { data: unknown; error: unknown };
   try {
-    response = await client.rpc("update_daily_item", {
-      p_family_id: input.familyId,
-      p_child_id: input.childId,
-      p_session_date: input.sessionDate,
-      p_daily_item_id: input.dailyItemId,
-      p_expected_version: input.expectedVersion,
-      p_action: "set_observed_quantity",
-      p_value: {
-        observed_quantity: input.observedQuantity,
-      },
-    });
+    response = await client.rpc(
+      "update_daily_item",
+      buildUpdateDailyItemRpcArgs(input),
+    );
   } catch (error) {
     return {
       status: "transport_error",
@@ -131,6 +186,37 @@ export async function updateDailyItem(
     return invalidResponse("Invalid update_daily_item response", [
       { path: "response", code: "response_read_failed" },
     ]);
+  }
+}
+
+function buildUpdateDailyItemRpcArgs(input: UpdateDailyItemInput) {
+  const scope = {
+    p_family_id: input.familyId,
+    p_child_id: input.childId,
+    p_session_date: input.sessionDate,
+    p_daily_item_id: input.dailyItemId,
+    p_expected_version: input.expectedVersion,
+  };
+
+  switch (input.action) {
+    case "set_observed_quantity":
+      return {
+        ...scope,
+        p_action: input.action,
+        p_value: { observed_quantity: input.observedQuantity },
+      };
+    case "set_prepared":
+      return {
+        ...scope,
+        p_action: input.action,
+        p_value: { is_prepared: input.nextPrepared },
+      };
+    case "set_deferred":
+      return {
+        ...scope,
+        p_action: input.action,
+        p_value: { is_deferred: input.nextDeferred },
+      };
   }
 }
 
@@ -255,6 +341,29 @@ function validateResponseItemScope(
       code: "daily_session_id_mismatch",
     });
   }
+  if (status === "success") {
+    if (item.version !== input.expectedVersion + 1) {
+      issues.push({ path: "item.version", code: "unexpected_updated_version" });
+    }
+  } else if (item.version === input.expectedVersion) {
+    issues.push({ path: "item.version", code: "unexpected_conflict_version" });
+  }
+
+  if (input.action === "set_observed_quantity") {
+    validateObservedQuantityResponse(item, input, status, issues);
+  } else if (status === "success") {
+    validatePreparationResponse(item, input, issues);
+  }
+
+  return issues;
+}
+
+function validateObservedQuantityResponse(
+  item: DailyItem,
+  input: Extract<UpdateDailyItemInput, { action: "set_observed_quantity" }>,
+  status: "success" | "conflict",
+  issues: DailyDataValidationIssue[],
+) {
   if (item.kind !== "regular") {
     issues.push({ path: "item.kind", code: "unexpected_item_kind" });
   }
@@ -264,26 +373,51 @@ function validateResponseItemScope(
       code: "required_quantity_mismatch",
     });
   }
+  if (status !== "success") {
+    return;
+  }
+  if (item.observedQuantity !== input.observedQuantity) {
+    issues.push({
+      path: "item.observed_quantity",
+      code: "observed_quantity_mismatch",
+    });
+  }
+  if (item.shortageCount !== input.requiredQuantity - input.observedQuantity) {
+    issues.push({
+      path: "item.shortage_count",
+      code: "shortage_count_mismatch",
+    });
+  }
+}
 
-  if (status === "success") {
-    if (item.version !== input.expectedVersion + 1) {
-      issues.push({ path: "item.version", code: "unexpected_updated_version" });
+function validatePreparationResponse(
+  item: DailyItem,
+  input: Extract<
+    UpdateDailyItemInput,
+    { action: "set_prepared" | "set_deferred" }
+  >,
+  issues: DailyDataValidationIssue[],
+) {
+  if (input.action === "set_prepared") {
+    if (item.isPrepared !== input.nextPrepared) {
+      issues.push({ path: "item.is_prepared", code: "prepared_mismatch" });
     }
-    if (item.observedQuantity !== input.observedQuantity) {
-      issues.push({
-        path: "item.observed_quantity",
-        code: "observed_quantity_mismatch",
-      });
+    const expectedDeferred = input.nextPrepared
+      ? false
+      : input.currentIsDeferred;
+    if (item.isDeferred !== expectedDeferred) {
+      issues.push({ path: "item.is_deferred", code: "deferred_mismatch" });
     }
-    if (item.shortageCount !== input.requiredQuantity - input.observedQuantity) {
-      issues.push({
-        path: "item.shortage_count",
-        code: "shortage_count_mismatch",
-      });
-    }
-  } else if (item.version === input.expectedVersion) {
-    issues.push({ path: "item.version", code: "unexpected_conflict_version" });
+    return;
   }
 
-  return issues;
+  if (item.isDeferred !== input.nextDeferred) {
+    issues.push({ path: "item.is_deferred", code: "deferred_mismatch" });
+  }
+  const expectedPrepared = input.nextDeferred
+    ? false
+    : input.currentIsPrepared;
+  if (item.isPrepared !== expectedPrepared) {
+    issues.push({ path: "item.is_prepared", code: "prepared_mismatch" });
+  }
 }

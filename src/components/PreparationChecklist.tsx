@@ -1,5 +1,5 @@
 import { Briefcase } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PreparationItem } from "../types/preparation";
 import { getDeadlineDisplay } from "../lib/deadline";
 import { getSpotQuantityLabel } from "../lib/spotQuantity";
@@ -15,6 +15,10 @@ type PreparationChecklistProps = {
   onToggleLater: (itemId: string) => void;
   onComplete: () => void;
   disabled?: boolean;
+  itemActionsDisabled?: boolean;
+  bulkActionDisabled?: boolean;
+  completeActionDisabled?: boolean;
+  disabledItemIds?: ReadonlySet<string>;
 };
 
 export function PreparationChecklist({
@@ -25,6 +29,10 @@ export function PreparationChecklist({
   onToggleLater,
   onComplete,
   disabled = false,
+  itemActionsDisabled = false,
+  bulkActionDisabled = false,
+  completeActionDisabled = false,
+  disabledItemIds = new Set(),
 }: PreparationChecklistProps) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const isCompleted = Boolean(completedAt);
@@ -32,10 +40,24 @@ export function PreparationChecklist({
   const hasDeferredItems = items.some((item) => item.later && !item.checked);
   const canCompletePreparation = !hasIncompleteItems;
   const isCompleteButtonDisabled =
-    disabled || isCompleted || !canCompletePreparation;
+    disabled ||
+    completeActionDisabled ||
+    isCompleted ||
+    !canCompletePreparation;
+
+  useEffect(() => {
+    if (disabled || completeActionDisabled) {
+      setIsConfirmOpen(false);
+    }
+  }, [completeActionDisabled, disabled]);
 
   const completePreparation = () => {
-    if (disabled || isCompleted || !canCompletePreparation) {
+    if (
+      disabled ||
+      completeActionDisabled ||
+      isCompleted ||
+      !canCompletePreparation
+    ) {
       return;
     }
 
@@ -48,7 +70,7 @@ export function PreparationChecklist({
   };
 
   const confirmCompletion = () => {
-    if (disabled) {
+    if (disabled || completeActionDisabled) {
       return;
     }
 
@@ -83,7 +105,7 @@ export function PreparationChecklist({
         <button
           type="button"
           onClick={onCheckAll}
-          disabled={disabled}
+          disabled={disabled || bulkActionDisabled}
           className="h-9 shrink-0 rounded-button bg-transparent px-3 text-status font-normal text-danger ring-1 ring-danger/15 transition hover:bg-surface/60 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-45"
         >
           ✓全て
@@ -91,6 +113,11 @@ export function PreparationChecklist({
       }
     >
       {items.map((item) => {
+        const itemMutationId = item.dailyItemId ?? item.id;
+        const isItemActionDisabled =
+          disabled ||
+          itemActionsDisabled ||
+          disabledItemIds.has(itemMutationId);
         const isLater = Boolean(item.later && !item.checked);
         const deadline = getDeadlineDisplay(item.dueDate);
         const quantityText = item.source === "spot" ? (
@@ -136,7 +163,7 @@ export function PreparationChecklist({
                 onClick={() => {
                   onToggle(item.id);
                 }}
-                disabled={disabled}
+                disabled={isItemActionDisabled}
                 aria-label={`${item.name}をチェック`}
                 className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 text-status font-normal disabled:cursor-not-allowed disabled:opacity-45 ${
                   item.checked
@@ -159,7 +186,7 @@ export function PreparationChecklist({
               <button
                 type="button"
                 onClick={() => onToggleLater(item.id)}
-                disabled={disabled || item.checked}
+                disabled={isItemActionDisabled || item.checked}
                 className={`h-8 w-16 shrink-0 whitespace-nowrap rounded-button px-2 text-[13px] font-normal leading-none transition active:scale-95 disabled:pointer-events-none ${
                   isLater
                     ? "bg-warning/45 text-text-primary ring-1 ring-warning/50"
@@ -207,7 +234,7 @@ export function PreparationChecklist({
               <button
                 type="button"
                 onClick={confirmCompletion}
-                disabled={disabled}
+                disabled={disabled || completeActionDisabled}
                 className="h-11 rounded-button bg-primary text-number font-normal text-surface shadow-button transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45"
               >
                 準備完了

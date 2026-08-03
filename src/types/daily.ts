@@ -250,16 +250,35 @@ export type UpdateDailyPreparationItemsResult =
   | UpdateDailyPreparationItemsBusinessResult
   | DailyDataFailure;
 
-export type UpdateDailyItemInput = {
+type UpdateDailyItemScopeInput = {
   familyId: string;
   childId: string;
   sessionDate: string;
   dailySessionId: string;
   dailyItemId: string;
   expectedVersion: number;
-  requiredQuantity: number;
-  observedQuantity: number;
 };
+
+export type UpdateDailyItemInput = UpdateDailyItemScopeInput &
+  (
+    | {
+        action: "set_observed_quantity";
+        requiredQuantity: number;
+        observedQuantity: number;
+      }
+    | {
+        action: "set_prepared";
+        nextPrepared: boolean;
+        currentIsPrepared: boolean;
+        currentIsDeferred: boolean;
+      }
+    | {
+        action: "set_deferred";
+        nextDeferred: boolean;
+        currentIsPrepared: boolean;
+        currentIsDeferred: boolean;
+      }
+  );
 
 export type UpdateDailyItemBusinessResult =
   | {
@@ -285,17 +304,34 @@ export type UpdateDailyItemResult =
 export type UpdateDailyItemClient = {
   rpc: (
     functionName: "update_daily_item",
-    args: {
-      p_family_id: string;
-      p_child_id: string;
-      p_session_date: string;
-      p_daily_item_id: string;
-      p_expected_version: number;
-      p_action: "set_observed_quantity";
-      p_value: {
-        observed_quantity: number;
-      };
-    },
+    args:
+      | {
+          p_family_id: string;
+          p_child_id: string;
+          p_session_date: string;
+          p_daily_item_id: string;
+          p_expected_version: number;
+          p_action: "set_observed_quantity";
+          p_value: { observed_quantity: number };
+        }
+      | {
+          p_family_id: string;
+          p_child_id: string;
+          p_session_date: string;
+          p_daily_item_id: string;
+          p_expected_version: number;
+          p_action: "set_prepared";
+          p_value: { is_prepared: boolean };
+        }
+      | {
+          p_family_id: string;
+          p_child_id: string;
+          p_session_date: string;
+          p_daily_item_id: string;
+          p_expected_version: number;
+          p_action: "set_deferred";
+          p_value: { is_deferred: boolean };
+        },
   ) => PromiseLike<{
     data: unknown;
     error: unknown;
