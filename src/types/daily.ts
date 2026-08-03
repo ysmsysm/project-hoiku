@@ -131,6 +131,45 @@ export type DailySession = {
   items: DailyItem[];
 };
 
+export type DailySessionMetadata = Omit<DailySession, "items">;
+
+export type CompleteDailyPreparationInput = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  expectedSessionVersion: number;
+};
+
+export type CompleteDailyPreparationReason =
+  | "daily_check_incomplete"
+  | "preparation_items_incomplete";
+
+export type CompleteDailyPreparationBusinessResult =
+  | {
+      status: "success";
+      changed: boolean;
+      session: DailySessionMetadata;
+    }
+  | {
+      status: "conflict";
+      changed: false;
+      session: DailySessionMetadata;
+    }
+  | {
+      status: "forbidden" | "not_found";
+      changed: false;
+    }
+  | {
+      status: "invalid_state";
+      changed: false;
+      reason?: CompleteDailyPreparationReason;
+      session?: DailySessionMetadata;
+    };
+
+export type CompleteDailyPreparationResult =
+  | CompleteDailyPreparationBusinessResult
+  | DailyDataFailure;
+
 export type DailyDataValidationIssue = {
   path: string;
   code: string;
@@ -343,9 +382,27 @@ export type UpdateDailyItemClient = {
   }>;
 };
 
+export type CompleteDailyPreparationClient = {
+  rpc: (
+    functionName: "complete_daily_preparation",
+    args: {
+      p_family_id: string;
+      p_child_id: string;
+      p_session_date: string;
+      p_expected_version: number;
+    },
+  ) => PromiseLike<{
+    data: unknown;
+    error: unknown;
+  }>;
+};
+
 export type DailyDataClient = {
   rpc: (
-    functionName: "load_daily_data" | "update_daily_preparation_items",
+    functionName:
+      | "load_daily_data"
+      | "update_daily_preparation_items"
+      | "complete_daily_preparation",
     args:
       | {
           p_family_id: string;
@@ -361,6 +418,12 @@ export type DailyDataClient = {
             expected_version: number;
             is_prepared: boolean;
           }[];
+        }
+      | {
+          p_family_id: string;
+          p_child_id: string;
+          p_session_date: string;
+          p_expected_version: number;
         },
   ) => PromiseLike<{
     data: unknown;

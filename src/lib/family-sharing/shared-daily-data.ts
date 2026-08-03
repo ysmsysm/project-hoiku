@@ -60,6 +60,16 @@ export type SharedDailyItemsUpdateScope = {
   updates: DailyPreparationItemUpdate[];
 };
 
+export type SharedDailyCompletionScope = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  dailySessionId: string;
+  expectedSessionVersion: number;
+  completedSessionVersion: number;
+  changed: boolean;
+};
+
 const uuidEquals = (left: string, right: string): boolean =>
   normalizeDailyDataUuid(left) === normalizeDailyDataUuid(right);
 
@@ -235,6 +245,48 @@ export function applyUpdatedItemsToSharedDailyState(
     { ...state.session, items },
     scope.sessionDate,
   );
+  return mapped.status === "success" ? mapped : state;
+}
+
+export function applyCompletedSessionToSharedDailyState(
+  state: SharedDailyState,
+  scope: SharedDailyCompletionScope,
+  session: DailySession,
+): SharedDailyState {
+  if (
+    state.status !== "success" ||
+    !uuidEquals(state.session.familyId, scope.familyId) ||
+    !uuidEquals(state.session.childId, scope.childId) ||
+    state.session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(state.session.dailySessionId, scope.dailySessionId) ||
+    !uuidEquals(session.familyId, scope.familyId) ||
+    !uuidEquals(session.childId, scope.childId) ||
+    session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(session.dailySessionId, scope.dailySessionId) ||
+    !session.isChecked ||
+    !session.checkedAt ||
+    !session.isCompleted ||
+    !session.completedAt ||
+    session.items.some(
+      (item) =>
+        !uuidEquals(item.familyId, session.familyId) ||
+        !uuidEquals(item.dailySessionId, session.dailySessionId),
+    ) ||
+    new Set(
+      session.items.map((item) => normalizeDailyDataUuid(item.dailyItemId)),
+    ).size !== session.items.length ||
+    session.version !== scope.completedSessionVersion ||
+    (scope.changed
+      ? state.session.version !== scope.expectedSessionVersion ||
+        scope.completedSessionVersion !== scope.expectedSessionVersion + 1
+      : state.session.version !== scope.expectedSessionVersion &&
+        (!state.session.isCompleted ||
+          state.session.version !== session.version))
+  ) {
+    return state;
+  }
+
+  const mapped = mapDailySessionToSharedDailyState(session, scope.sessionDate);
   return mapped.status === "success" ? mapped : state;
 }
 

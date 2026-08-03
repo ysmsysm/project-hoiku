@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyCompletedSessionToSharedDailyState,
   applyUpdatedItemsToSharedDailyState,
   applyUpdatedItemToSharedDailyState,
   getSharedPreparationBulkMutationPlan,
@@ -588,6 +589,148 @@ test("atomically applies multiple changed items in one batch", async () => {
       true,
     );
   }
+});
+
+test("replaces the full canonical session only after validated preparation completion", async () => {
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload(),
+      items: [itemPayload({ is_prepared: true })],
+    }),
+    input,
+  );
+  const completed = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({
+        version: 3,
+        is_prepared: true,
+        prepared_at: "2026-07-29T00:10:00.000Z",
+        prepared_by_member_id: familyId,
+        prepared_by_user_id: childId,
+        prepared_by_display_name: "ママ",
+      }),
+      items: [
+        itemPayload({
+          is_prepared: true,
+          is_carryover: true,
+          carryover_resolved_at: "2026-07-29T00:10:00.000Z",
+          version: 5,
+        }),
+      ],
+    }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  assert.equal(completed.status, "success");
+  if (state.status !== "success" || completed.status !== "success") return;
+
+  const scope = {
+    familyId,
+    childId,
+    sessionDate,
+    dailySessionId: sessionId,
+    expectedSessionVersion: 2,
+    completedSessionVersion: 3,
+    changed: true,
+  };
+  const applied = applyCompletedSessionToSharedDailyState(
+    state,
+    scope,
+    completed.session,
+  );
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") {
+    assert.equal(applied.session, completed.session);
+    assert.equal(applied.preparationSession.completedAt, "2026-07-29T00:10:00.000Z");
+    assert.equal(applied.preparationSession.items[0].dailyItemVersion, 5);
+    assert.equal(applied.session.items[0].carryoverResolvedAt, "2026-07-29T00:10:00.000Z");
+    assert.equal(applied.checkView.items[0].version, 5);
+  }
+
+  for (const invalidScope of [
+    { ...scope, familyId: childId },
+    { ...scope, childId: familyId },
+    { ...scope, sessionDate: "2026-07-30" },
+    { ...scope, dailySessionId: itemId },
+    { ...scope, expectedSessionVersion: 1 },
+    { ...scope, completedSessionVersion: 4 },
+  ]) {
+    assert.equal(
+      applyCompletedSessionToSharedDailyState(
+        state,
+        invalidScope,
+        completed.session,
+      ),
+      state,
+    );
+  }
+  const invalidItemScope = {
+    ...completed.session,
+    items: [{ ...completed.session.items[0], familyId: childId }],
+  };
+  const duplicateItems = {
+    ...completed.session,
+    items: [completed.session.items[0], completed.session.items[0]],
+  };
+  assert.equal(
+    applyCompletedSessionToSharedDailyState(state, scope, invalidItemScope),
+    state,
+  );
+  assert.equal(
+    applyCompletedSessionToSharedDailyState(state, scope, duplicateItems),
+    state,
+  );
+  assert.equal(
+    applyCompletedSessionToSharedDailyState(
+      { status: "not_found", sessionDate },
+      scope,
+      completed.session,
+    ).status,
+    "not_found",
+  );
+});
+
+test("accepts retry-safe no-op completion without requiring expected plus one", async () => {
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload(),
+      items: [itemPayload({ is_prepared: true })],
+    }),
+    input,
+  );
+  const completed = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({
+        version: 8,
+        is_prepared: true,
+        prepared_at: "2026-07-29T00:10:00.000Z",
+      }),
+      items: [itemPayload({ is_prepared: true })],
+    }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  assert.equal(completed.status, "success");
+  if (state.status !== "success" || completed.status !== "success") return;
+  const applied = applyCompletedSessionToSharedDailyState(
+    state,
+    {
+      familyId,
+      childId,
+      sessionDate,
+      dailySessionId: sessionId,
+      expectedSessionVersion: 2,
+      completedSessionVersion: 8,
+      changed: false,
+    },
+    completed.session,
+  );
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") assert.equal(applied.session.version, 8);
 });
 
 test("atomically applies changed batch items while preserving no-op and unrelated references", async () => {

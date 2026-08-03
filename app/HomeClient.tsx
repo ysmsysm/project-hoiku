@@ -73,6 +73,7 @@ import {
   canApplyHomeLocalDailyHydration,
   canRenderHomeCompleteCheckAction,
   canRunHomeLocalDailyMutation,
+  canRunHomeCompletePreparationMutation,
   canRunHomeLocalCompleteCheck,
   canRunHomeObservedQuantityMutation,
   canRunHomePreparationBulkMutation,
@@ -130,6 +131,8 @@ import { createClient as createSupabaseClient } from "../src/lib/supabase/client
 import {
   updateDailyPreparationItems,
 } from "../src/lib/family-sharing/update-daily-preparation-items";
+import { completeDailyPreparation } from "../src/lib/family-sharing/complete-daily-preparation";
+import { loadDailyData } from "../src/lib/family-sharing/daily-data";
 import {
   isDeferredDailyItemMutationNoOp,
   isPreparedDailyItemMutationNoOp,
@@ -139,6 +142,7 @@ import {
 import {
   applyUpdatedItemsToSharedDailyState,
   applyUpdatedItemToSharedDailyState,
+  applyCompletedSessionToSharedDailyState,
   getSharedPreparationBulkMutationPlan,
 } from "../src/lib/family-sharing/shared-daily-data";
 import { useEditableSection } from "../src/hooks/useEditableSection";
@@ -589,6 +593,8 @@ function HomeClientContent({
     canRunHomePreparationItemMutation(dailyMode);
   const canRunPreparationBulkMutation =
     canRunHomePreparationBulkMutation(dailyMode);
+  const canRunCompletePreparationMutation =
+    canRunHomeCompletePreparationMutation(dailyMode);
   const sharedDailyStatusView =
     sharedDailyState && isHomeSharedDailyDisplayState(sharedDailyState)
       ? getHomeSharedDailyStatusView(sharedDailyState)
@@ -604,6 +610,12 @@ function HomeClientContent({
   const [pendingDailyItemMutationItemIds, setPendingDailyItemMutationItemIds] =
     useState<ReadonlySet<string>>(() => new Set());
   const pendingDailyItemMutationRequestsRef = useRef(new Map<string, symbol>());
+  const [isCompletePreparationPending, setIsCompletePreparationPending] =
+    useState(false);
+  const completePreparationRequestRef = useRef<symbol | null>(null);
+  const dailyMutationBrowserClientRef = useRef<ReturnType<
+    typeof createSupabaseClient
+  > | null>(null);
   const dailyItemMutationClientRef = useRef<UpdateDailyItemClient | null>(null);
   const dailyPreparationItemsClientRef = useRef<DailyDataClient | null>(null);
   const dailyItemMutationMountedRef = useRef(true);
@@ -860,7 +872,9 @@ function HomeClientContent({
 
   useEffect(() => {
     pendingDailyItemMutationRequestsRef.current.clear();
+    completePreparationRequestRef.current = null;
     setPendingDailyItemMutationItemIds(new Set());
+    setIsCompletePreparationPending(false);
     setDailyItemMutationError(null);
   }, [dailyItemMutationScopeKey]);
 
@@ -870,6 +884,7 @@ function HomeClientContent({
     return () => {
       dailyItemMutationMountedRef.current = false;
       pendingRequests.clear();
+      completePreparationRequestRef.current = null;
     };
   }, []);
 
@@ -1133,6 +1148,14 @@ function HomeClientContent({
   );
   const disabledObservedQuantityItemIds = useMemo(() => {
     const disabledIds = new Set(pendingDailyItemMutationItemIds);
+    if (
+      isCompletePreparationPending ||
+      (dailyMode === "shared-success" && session?.completedAt)
+    ) {
+      lockerItems.forEach((item) => {
+        disabledIds.add(item.dailyItemId ?? item.id);
+      });
+    }
     if (dailyMode === "shared-success") {
       lockerItems.forEach((item) => {
         if (!item.dailyItemId || item.dailyItemVersion === undefined) {
@@ -1141,7 +1164,13 @@ function HomeClientContent({
       });
     }
     return disabledIds;
-  }, [dailyMode, lockerItems, pendingDailyItemMutationItemIds]);
+  }, [
+    dailyMode,
+    isCompletePreparationPending,
+    lockerItems,
+    pendingDailyItemMutationItemIds,
+    session?.completedAt,
+  ]);
   const maxLockerRequiredCount = Math.max(
     1,
     ...lockerItems.map((item) => item.requiredCount),
@@ -1153,6 +1182,8 @@ function HomeClientContent({
   );
 
   const sessionItems = useMemo(() => session?.items ?? [], [session]);
+  const isSharedDailyPreparationCompleted =
+    dailyMode === "shared-success" && Boolean(session?.completedAt);
   const sharedPreparationBulkPlan = useMemo(
     () =>
       sharedDailyState?.status === "success"
@@ -1174,6 +1205,8 @@ function HomeClientContent({
     );
   const isPreparationBulkDisabled =
     !canRunPreparationBulkMutation ||
+    isSharedDailyPreparationCompleted ||
+    isCompletePreparationPending ||
     (dailyMode === "shared-success" &&
       (sharedPreparationBulkPlan?.status !== "ready" ||
         hasInvalidSharedPreparationBulkItem ||
@@ -1187,6 +1220,11 @@ function HomeClientContent({
     preparationBulkAvailabilityError ?? dailyItemMutationError;
   const disabledPreparationItemIds = useMemo(() => {
     const disabledIds = new Set(pendingDailyItemMutationItemIds);
+    if (isCompletePreparationPending || isSharedDailyPreparationCompleted) {
+      sessionItems.forEach((item) => {
+        disabledIds.add(item.dailyItemId ?? item.id);
+      });
+    }
     if (dailyMode === "shared-success") {
       sessionItems.forEach((item) => {
         if (!item.dailyItemId || item.dailyItemVersion === undefined) {
@@ -1195,7 +1233,13 @@ function HomeClientContent({
       });
     }
     return disabledIds;
-  }, [dailyMode, pendingDailyItemMutationItemIds, sessionItems]);
+  }, [
+    dailyMode,
+    isCompletePreparationPending,
+    isSharedDailyPreparationCompleted,
+    pendingDailyItemMutationItemIds,
+    sessionItems,
+  ]);
   const isPreparationDone =
     sessionItems.length === 0 ||
     sessionItems.every((item) => item.checked || item.later);
@@ -1207,6 +1251,21 @@ function HomeClientContent({
     session !== null &&
     sessionItems.length > 0 &&
     isPreparationSessionCompleted(session);
+  const canRunSharedCompletePreparation =
+    dailyMode === "shared-success" &&
+    canRunCompletePreparationMutation &&
+    session !== null &&
+    session.items.length > 0 &&
+    !session.completedAt &&
+    session.items.every((item) => item.checked || item.later) &&
+    sharedDailyState?.status === "success" &&
+    sharedDailyState.session.isChecked &&
+    Boolean(sharedDailyState.session.checkedAt) &&
+    !sharedDailyState.session.isCompleted &&
+    Number.isInteger(sharedDailyState.session.version) &&
+    sharedDailyState.session.version >= 1 &&
+    pendingDailyItemMutationRequestsRef.current.size === 0 &&
+    !isCompletePreparationPending;
   const lastConfirmedDate = formatHistoryDate(session?.confirmedAt ?? null);
   const lastPreparedDate = formatHistoryDate(preparationCompletedAt);
   const updateSession = (nextSession: PreparationSession) => {
@@ -1245,6 +1304,9 @@ function HomeClientContent({
     input: UpdateDailyItemInput,
     operation: HomeDailyItemMutationOperation,
   ) => {
+    if (completePreparationRequestRef.current) {
+      return;
+    }
     const dailyItemId = input.dailyItemId;
     const currentSharedSession = getCurrentSharedDailySession();
     const canonicalItem = currentSharedSession?.items.find(
@@ -1276,7 +1338,9 @@ function HomeClientContent({
 
     try {
       if (!dailyItemMutationClientRef.current) {
-        const browserClient = createSupabaseClient();
+        const browserClient =
+          dailyMutationBrowserClientRef.current ?? createSupabaseClient();
+        dailyMutationBrowserClientRef.current = browserClient;
         dailyItemMutationClientRef.current = {
           rpc(functionName, args) {
             return browserClient.rpc(functionName, args);
@@ -1353,6 +1417,9 @@ function HomeClientContent({
   };
 
   const runSharedDailyPreparationItemsMutation = async () => {
+    if (completePreparationRequestRef.current) {
+      return;
+    }
     const currentSharedSession = getCurrentSharedDailySession();
     if (!currentSharedSession) {
       return;
@@ -1388,7 +1455,9 @@ function HomeClientContent({
 
     try {
       if (!dailyPreparationItemsClientRef.current) {
-        const browserClient = createSupabaseClient();
+        const browserClient =
+          dailyMutationBrowserClientRef.current ?? createSupabaseClient();
+        dailyMutationBrowserClientRef.current = browserClient;
         dailyPreparationItemsClientRef.current = {
           rpc(functionName, args) {
             return browserClient.rpc(functionName, args);
@@ -2099,7 +2168,156 @@ function HomeClientContent({
     await runSharedDailyItemMutation(input, "deferred");
   };
 
+  const runSharedCompletePreparation = async () => {
+    const currentSharedSession = getCurrentSharedDailySession();
+    const currentPreparationSession = session;
+    if (
+      !currentSharedSession ||
+      !currentPreparationSession ||
+      currentPreparationSession.items.length === 0 ||
+      currentPreparationSession.completedAt ||
+      !currentPreparationSession.items.every(
+        (item) => item.checked || item.later,
+      ) ||
+      !currentSharedSession.isChecked ||
+      !currentSharedSession.checkedAt ||
+      currentSharedSession.isCompleted ||
+      !Number.isInteger(currentSharedSession.version) ||
+      currentSharedSession.version < 1 ||
+      pendingDailyItemMutationRequestsRef.current.size > 0 ||
+      completePreparationRequestRef.current
+    ) {
+      return;
+    }
+
+    const requestScopeKey = dailyItemMutationScopeKeyRef.current;
+    const requestScopeGeneration =
+      dailyItemMutationScopeGenerationRef.current;
+    const requestToken = Symbol("complete-preparation");
+    const input = {
+      familyId: currentSharedSession.familyId,
+      childId: currentSharedSession.childId,
+      sessionDate: currentSharedSession.sessionDate,
+      expectedSessionVersion: currentSharedSession.version,
+    };
+    completePreparationRequestRef.current = requestToken;
+    setIsCompletePreparationPending(true);
+    setDailyItemMutationError(null);
+
+    try {
+      if (!dailyPreparationItemsClientRef.current) {
+        const browserClient =
+          dailyMutationBrowserClientRef.current ?? createSupabaseClient();
+        dailyMutationBrowserClientRef.current = browserClient;
+        dailyPreparationItemsClientRef.current = {
+          rpc(functionName, args) {
+            return browserClient.rpc(functionName, args);
+          },
+        };
+      }
+      const client = dailyPreparationItemsClientRef.current;
+      const result = await completeDailyPreparation(client, input);
+      if (
+        !dailyItemMutationMountedRef.current ||
+        dailyItemMutationScopeKeyRef.current !== requestScopeKey ||
+        dailyItemMutationScopeGenerationRef.current !==
+          requestScopeGeneration ||
+        completePreparationRequestRef.current !== requestToken
+      ) {
+        return;
+      }
+      if (result.status !== "success") {
+        setDailyItemMutationError(
+          getHomeDailyItemMutationErrorView(
+            result,
+            "complete_preparation",
+          ),
+        );
+        return;
+      }
+
+      const loaded = await loadDailyData(client, {
+        familyId: input.familyId,
+        childId: input.childId,
+        sessionDate: input.sessionDate,
+      });
+      if (
+        !dailyItemMutationMountedRef.current ||
+        dailyItemMutationScopeKeyRef.current !== requestScopeKey ||
+        dailyItemMutationScopeGenerationRef.current !==
+          requestScopeGeneration ||
+        completePreparationRequestRef.current !== requestToken
+      ) {
+        return;
+      }
+      if (
+        loaded.status !== "success" ||
+        loaded.session.dailySessionId.toLowerCase() !==
+          currentSharedSession.dailySessionId.toLowerCase() ||
+        loaded.session.dailySessionId.toLowerCase() !==
+          result.session.dailySessionId.toLowerCase() ||
+        loaded.session.version !== result.session.version ||
+        !loaded.session.isChecked ||
+        !loaded.session.checkedAt ||
+        !loaded.session.isCompleted ||
+        !loaded.session.completedAt
+      ) {
+        setDailyItemMutationError({
+          title: "完了結果を確認できませんでした",
+          body: "最新の状態を確認するため、再読み込みしてください。",
+          canReload: true,
+        });
+        return;
+      }
+
+      setSharedDailyState((current) =>
+        current
+          ? applyCompletedSessionToSharedDailyState(
+              current,
+              {
+                familyId: input.familyId,
+                childId: input.childId,
+                sessionDate: input.sessionDate,
+                dailySessionId: currentSharedSession.dailySessionId,
+                expectedSessionVersion: input.expectedSessionVersion,
+                completedSessionVersion: result.session.version,
+                changed: result.changed,
+              },
+              loaded.session,
+            )
+          : current,
+      );
+      setDailyItemMutationError(null);
+    } catch {
+      if (
+        dailyItemMutationMountedRef.current &&
+        dailyItemMutationScopeKeyRef.current === requestScopeKey &&
+        dailyItemMutationScopeGenerationRef.current ===
+          requestScopeGeneration &&
+        completePreparationRequestRef.current === requestToken
+      ) {
+        setDailyItemMutationError({
+          title: "通信に失敗しました",
+          body: "通信環境を確認して、もう一度操作してください。",
+          canReload: false,
+        });
+      }
+    } finally {
+      if (completePreparationRequestRef.current === requestToken) {
+        completePreparationRequestRef.current = null;
+        if (dailyItemMutationMountedRef.current) {
+          setIsCompletePreparationPending(false);
+        }
+      }
+    }
+  };
+
   const completePreparation = () => {
+    if (dailyMode === "shared-success") {
+      void runSharedCompletePreparation();
+      return;
+    }
+
     if (!canRunLocalDailyMutation || !session) {
       return;
     }
@@ -3781,7 +3999,11 @@ function HomeClientContent({
             <ShortageInputList
               items={lockerItems}
               onChange={updateShortageCount}
-              disabled={!canRunObservedQuantityMutation}
+              disabled={
+                !canRunObservedQuantityMutation ||
+                isCompletePreparationPending ||
+                isSharedDailyPreparationCompleted
+              }
               disabledItemIds={disabledObservedQuantityItemIds}
             />
 
@@ -3902,9 +4124,18 @@ function HomeClientContent({
               onCheckAll={checkAllPreparationItems}
               onToggleLater={togglePreparationItemLater}
               onComplete={completePreparation}
-              itemActionsDisabled={!canRunPreparationItemMutation}
+              itemActionsDisabled={
+                !canRunPreparationItemMutation ||
+                isCompletePreparationPending ||
+                isSharedDailyPreparationCompleted
+              }
               bulkActionDisabled={isPreparationBulkDisabled}
-              completeActionDisabled={!canRunLocalDailyMutation}
+              completeActionDisabled={
+                dailyMode === "local"
+                  ? !canRunCompletePreparationMutation
+                  : !canRunSharedCompletePreparation
+              }
+              completeActionPending={isCompletePreparationPending}
               disabledItemIds={disabledPreparationItemIds}
             />
           </div>

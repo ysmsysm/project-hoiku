@@ -9,6 +9,7 @@ import type {
   DailyItemPayload,
   DailyRoughState,
   DailySession,
+  DailySessionMetadata,
   DailySessionPayload,
   LoadDailyDataInput,
   LoadDailyDataResult,
@@ -402,11 +403,10 @@ export function mapDailyItemsPayload(
     : { ok: true, data: items };
 }
 
-export function mapDailySessionPayload(
+export function mapDailySessionMetadataPayload(
   value: unknown,
-  items: DailyItem[],
   path = "session",
-): DailyDataMappingResult<DailySession> {
+): DailyDataMappingResult<DailySessionMetadata> {
   if (!isPlainObject(value)) {
     return mappingFailure("Invalid daily session response", [
       { path, code: "invalid_object" },
@@ -446,7 +446,7 @@ export function mapDailySessionPayload(
     reader.add(`${path}.is_prepared`, "prepared_state_mismatch");
   }
 
-  const session: DailySession = {
+  const session: DailySessionMetadata = {
     dailySessionId,
     familyId: reader.uuid(payload.family_id, `${path}.family_id`),
     childId: reader.uuid(payload.child_id, `${path}.child_id`),
@@ -508,7 +508,6 @@ export function mapDailySessionPayload(
     ),
     createdAt: reader.dateTime(payload.created_at, `${path}.created_at`),
     updatedAt: reader.dateTime(payload.updated_at, `${path}.updated_at`),
-    items,
   };
 
   if (reader.issues.length > 0) {
@@ -516,6 +515,17 @@ export function mapDailySessionPayload(
   }
 
   return { ok: true, data: session };
+}
+
+export function mapDailySessionPayload(
+  value: unknown,
+  items: DailyItem[],
+  path = "session",
+): DailyDataMappingResult<DailySession> {
+  const mapped = mapDailySessionMetadataPayload(value, path);
+  return mapped.ok === false
+    ? mapped
+    : { ok: true, data: { ...mapped.data, items } };
 }
 
 export function validateDailyDataScopeInput(

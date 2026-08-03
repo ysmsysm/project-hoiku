@@ -18,6 +18,7 @@ type PreparationChecklistProps = {
   itemActionsDisabled?: boolean;
   bulkActionDisabled?: boolean;
   completeActionDisabled?: boolean;
+  completeActionPending?: boolean;
   disabledItemIds?: ReadonlySet<string>;
 };
 
@@ -32,6 +33,7 @@ export function PreparationChecklist({
   itemActionsDisabled = false,
   bulkActionDisabled = false,
   completeActionDisabled = false,
+  completeActionPending = false,
   disabledItemIds = new Set(),
 }: PreparationChecklistProps) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
@@ -213,7 +215,11 @@ export function PreparationChecklist({
               : "bg-primary text-surface shadow-button hover:bg-primary-hover active:scale-[0.99]"
           }`}
         >
-          {isCompleted ? "✓ 準備完了" : "準備完了"}
+          {completeActionPending
+            ? "保存中"
+            : isCompleted
+              ? "✓ 準備完了"
+              : "準備完了"}
         </button>
       </div>
 

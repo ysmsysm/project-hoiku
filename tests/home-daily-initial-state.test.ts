@@ -5,6 +5,7 @@ import {
   canApplyHomeLocalDailyHydration,
   canRenderHomeCompleteCheckAction,
   canRunHomeLocalCompleteCheck,
+  canRunHomeCompletePreparationMutation,
   canRunHomeLocalDailyMutation,
   canRunHomeObservedQuantityMutation,
   canRunHomePreparationBulkMutation,
@@ -607,6 +608,13 @@ test("preparation bulk capability includes only local and shared success", () =>
   assert.equal(canRunHomePreparationBulkMutation("shared-error"), false);
 });
 
+test("complete preparation capability includes only local and shared success", () => {
+  assert.equal(canRunHomeCompletePreparationMutation("local"), true);
+  assert.equal(canRunHomeCompletePreparationMutation("shared-success"), true);
+  assert.equal(canRunHomeCompletePreparationMutation("shared-non-success"), false);
+  assert.equal(canRunHomeCompletePreparationMutation("shared-error"), false);
+});
+
 test("daily item mutation errors are operation-specific, safe, and reloadable", () => {
   const conflict = getHomeDailyItemMutationErrorView(
     { status: "conflict", item: dailyItem() },
@@ -690,6 +698,25 @@ test("daily item mutation errors are operation-specific, safe, and reloadable", 
   assert.match(tooMany.body, /項目が多い/);
   assert.match(tooMany.body, /個別/);
   assert.doesNotMatch(JSON.stringify(tooMany), /100|RPC|DB|update_daily/);
+
+  const incompleteCheck = getHomeDailyItemMutationErrorView(
+    { status: "invalid_state", changed: false, reason: "daily_check_incomplete" },
+    "complete_preparation",
+  );
+  const incompleteItems = getHomeDailyItemMutationErrorView(
+    {
+      status: "invalid_state",
+      changed: false,
+      reason: "preparation_items_incomplete",
+    },
+    "complete_preparation",
+  );
+  assert.match(incompleteCheck.body, /確認を完了/);
+  assert.match(incompleteItems.body, /未完了の項目/);
+  assert.doesNotMatch(
+    JSON.stringify([incompleteCheck, incompleteItems]),
+    /daily_check_incomplete|preparation_items_incomplete/,
+  );
 });
 
 test("shared daily status views keep all six statuses distinct and user-safe", () => {
@@ -744,11 +771,17 @@ test("daily mutation controls propagate native disabled state", () => {
     homeClientSource,
     /sharedPreparationBulkPlan\?\.status !== "ready"[\s\S]*?hasInvalidSharedPreparationBulkItem[\s\S]*?isSharedPreparationBulkPending/,
   );
-  assert.match(homeClientSource, /completeActionDisabled=\{!canRunLocalDailyMutation\}/);
-  assert.match(homeClientSource, /itemActionsDisabled=\{!canRunPreparationItemMutation\}/);
   assert.match(
     homeClientSource,
-    /disabled=\{!canRunObservedQuantityMutation\}/,
+    /completeActionDisabled=\{[\s\S]*?canRunSharedCompletePreparation/,
+  );
+  assert.match(
+    homeClientSource,
+    /itemActionsDisabled=\{[\s\S]*?!canRunPreparationItemMutation[\s\S]*?isCompletePreparationPending/,
+  );
+  assert.match(
+    homeClientSource,
+    /disabled=\{[\s\S]*?!canRunObservedQuantityMutation[\s\S]*?isCompletePreparationPending/,
   );
   assert.match(
     homeClientSource,
@@ -816,7 +849,7 @@ test("shared preparation handlers reuse the item lock and preserve local save bo
 
   const deferredHandlerSource = homeClientSource.slice(
     homeClientSource.indexOf("const togglePreparationItemLater = async"),
-    homeClientSource.indexOf("const completePreparation"),
+    homeClientSource.indexOf("const runSharedCompletePreparation = async"),
   );
   assert.match(
     deferredHandlerSource,
@@ -921,6 +954,8 @@ test("preparation completion remains guarded and mutation errors render once acr
     preparationChecklistSource,
     /const confirmCompletion[\s\S]*?if \(disabled \|\| completeActionDisabled\)/,
   );
+  assert.match(preparationChecklistSource, /completeActionPending/);
+  assert.match(preparationChecklistSource, /completeActionPending[\s\S]*?"保存中"/);
   assert.match(
     preparationChecklistSource,
     /type="button"[\s\S]*?disabled=\{isItemActionDisabled\}/,
@@ -936,6 +971,61 @@ test("preparation completion remains guarded and mutation errors render once acr
     homeClientSource.match(/\{displayedDailyItemMutationError\.title\}/g)
       ?.length,
     1,
+  );
+});
+
+test("shared completion uses session pending, full reload, and whole canonical replacement", () => {
+  const completeSource = homeClientSource.slice(
+    homeClientSource.indexOf("const runSharedCompletePreparation = async"),
+    homeClientSource.indexOf("const sendThanks"),
+  );
+  const sharedSource = completeSource.slice(
+    0,
+    completeSource.indexOf("if (!canRunLocalDailyMutation || !session)"),
+  );
+  const localSource = completeSource.slice(sharedSource.length);
+  assert.match(sharedSource, /getCurrentSharedDailySession\(\)/);
+  assert.match(sharedSource, /pendingDailyItemMutationRequestsRef\.current\.size > 0/);
+  assert.match(sharedSource, /completePreparationRequestRef\.current/);
+  assert.match(sharedSource, /Symbol\("complete-preparation"\)/);
+  assert.match(sharedSource, /completeDailyPreparation\(client, input\)/);
+  assert.match(sharedSource, /await loadDailyData\(client/);
+  assert.match(sharedSource, /setSharedDailyState\(\(current\) =>/);
+  assert.match(sharedSource, /applyCompletedSessionToSharedDailyState/);
+  assert.match(sharedSource, /dailyItemMutationScopeGenerationRef/);
+  assert.match(sharedSource, /completePreparationRequestRef\.current === requestToken/);
+  assert.doesNotMatch(sharedSource, /router\.refresh\(\)|appRepository|updateSession\(/);
+  assert.match(completeSource, /void runSharedCompletePreparation\(\)/);
+  assert.match(localSource, /updateSession\(/);
+  assert.match(localSource, /appRepository\.saveCheckCounts/);
+  assert.match(localSource, /updateSpotAdditions/);
+  assert.match(localSource, /updateSpotDeadlines/);
+  assert.match(localSource, /updateTemporaryTodayOnlyItems/);
+});
+
+test("complete pending is a bidirectional item and batch mutation lock", () => {
+  const singleRunner = homeClientSource.slice(
+    homeClientSource.indexOf("const runSharedDailyItemMutation = async"),
+    homeClientSource.indexOf("const runSharedDailyPreparationItemsMutation = async"),
+  );
+  const batchRunner = homeClientSource.slice(
+    homeClientSource.indexOf("const runSharedDailyPreparationItemsMutation = async"),
+    homeClientSource.indexOf("const updateShortageCount = async"),
+  );
+  assert.match(singleRunner, /if \(completePreparationRequestRef\.current\)/);
+  assert.match(batchRunner, /if \(completePreparationRequestRef\.current\)/);
+  assert.match(
+    homeClientSource,
+    /disabled=\{[\s\S]{0,180}!canRunObservedQuantityMutation[\s\S]{0,180}isCompletePreparationPending[\s\S]{0,180}isSharedDailyPreparationCompleted/,
+  );
+  assert.match(
+    homeClientSource,
+    /itemActionsDisabled=\{[\s\S]{0,180}isCompletePreparationPending[\s\S]{0,180}isSharedDailyPreparationCompleted/,
+  );
+  assert.match(homeClientSource, /completeActionPending=\{isCompletePreparationPending\}/);
+  assert.match(
+    homeClientSource,
+    /dailyMutationBrowserClientRef\.current \?\? createSupabaseClient\(\)/,
   );
 });
 

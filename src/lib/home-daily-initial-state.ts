@@ -12,6 +12,7 @@ import type {
 } from "../types/preparation";
 import type { SpotAddition } from "../types/spot";
 import type {
+  CompleteDailyPreparationResult,
   UpdateDailyItemResult,
   UpdateDailyPreparationItemsResult,
 } from "../types/daily";
@@ -50,7 +51,8 @@ export type HomeDailyItemMutationOperation =
   | "quantity"
   | "prepared"
   | "deferred"
-  | "bulk_prepared";
+  | "bulk_prepared"
+  | "complete_preparation";
 
 export type HomeDailyItemMutationErrorView = {
   title: string;
@@ -358,6 +360,12 @@ export function canRunHomePreparationBulkMutation(
   return dailyMode === "local" || dailyMode === "shared-success";
 }
 
+export function canRunHomeCompletePreparationMutation(
+  dailyMode: HomeDailyInitialState["mode"],
+): boolean {
+  return dailyMode === "local" || dailyMode === "shared-success";
+}
+
 export function getHomePreparationBulkTooManyItemsView(): HomeDailyItemMutationErrorView {
   return {
     title: "一括操作を利用できません",
@@ -368,7 +376,9 @@ export function getHomePreparationBulkTooManyItemsView(): HomeDailyItemMutationE
 
 export function getHomeDailyItemMutationErrorView(
   result: Exclude<
-    UpdateDailyItemResult | UpdateDailyPreparationItemsResult,
+    | UpdateDailyItemResult
+    | UpdateDailyPreparationItemsResult
+    | CompleteDailyPreparationResult,
     { status: "success" }
   >,
   operation: HomeDailyItemMutationOperation,
@@ -380,7 +390,45 @@ export function getHomeDailyItemMutationErrorView(
         ? "準備状態"
         : operation === "deferred"
           ? "「あとで」の状態"
-          : "一括の準備状態";
+          : operation === "bulk_prepared"
+            ? "一括の準備状態"
+            : "準備完了";
+
+  if (operation === "complete_preparation") {
+    if (result.status === "invalid_state") {
+      if (result.reason === "daily_check_incomplete") {
+        return {
+          title: "準備完了を保存できませんでした",
+          body: "確認を完了してから操作してください。",
+          canReload: true,
+        };
+      }
+      if (result.reason === "preparation_items_incomplete") {
+        return {
+          title: "準備完了を保存できませんでした",
+          body: "未完了の項目があります。最新の状態を確認してください。",
+          canReload: true,
+        };
+      }
+    }
+    if (result.status === "client_error") {
+      return {
+        title: "準備完了を保存できませんでした",
+        body: "現在の状態では完了できません。",
+        canReload: false,
+      };
+    }
+    if (
+      result.status === "transport_error" &&
+      result.error.kind === "invalid_response"
+    ) {
+      return {
+        title: "完了結果を確認できませんでした",
+        body: "最新の状態を確認するため、再読み込みしてください。",
+        canReload: true,
+      };
+    }
+  }
 
   switch (result.status) {
     case "conflict":
