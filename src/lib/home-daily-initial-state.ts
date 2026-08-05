@@ -13,6 +13,7 @@ import type {
 import type { SpotAddition } from "../types/spot";
 import type {
   CompleteDailyPreparationResult,
+  SendDailyThanksResult,
   UpdateDailyItemResult,
   UpdateDailyPreparationItemsResult,
 } from "../types/daily";
@@ -52,7 +53,8 @@ export type HomeDailyItemMutationOperation =
   | "prepared"
   | "deferred"
   | "bulk_prepared"
-  | "complete_preparation";
+  | "complete_preparation"
+  | "send_thanks";
 
 export type HomeDailyItemMutationErrorView = {
   title: string;
@@ -366,6 +368,22 @@ export function canRunHomeCompletePreparationMutation(
   return dailyMode === "local" || dailyMode === "shared-success";
 }
 
+export function canRunHomeSendThanksMutation(
+  dailyMode: HomeDailyInitialState["mode"],
+): boolean {
+  return dailyMode === "local" || dailyMode === "shared-success";
+}
+
+export function isHomeSharedThanksSelf(
+  currentMemberId: string,
+  completedByMemberId: string | null,
+): boolean {
+  return (
+    completedByMemberId !== null &&
+    currentMemberId.toLowerCase() === completedByMemberId.toLowerCase()
+  );
+}
+
 export function getHomePreparationBulkTooManyItemsView(): HomeDailyItemMutationErrorView {
   return {
     title: "一括操作を利用できません",
@@ -378,7 +396,8 @@ export function getHomeDailyItemMutationErrorView(
   result: Exclude<
     | UpdateDailyItemResult
     | UpdateDailyPreparationItemsResult
-    | CompleteDailyPreparationResult,
+    | CompleteDailyPreparationResult
+    | SendDailyThanksResult,
     { status: "success" }
   >,
   operation: HomeDailyItemMutationOperation,
@@ -393,6 +412,84 @@ export function getHomeDailyItemMutationErrorView(
           : operation === "bulk_prepared"
             ? "一括の準備状態"
             : "準備完了";
+
+  if (operation === "send_thanks") {
+    if (result.status === "invalid_state") {
+      switch (result.reason) {
+        case "preparation_incomplete":
+          return {
+            title: "ありがとうを送信できませんでした",
+            body: "準備完了後に操作してください。",
+            canReload: true,
+          };
+        case "recipient_missing":
+          return {
+            title: "ありがとうを送信できませんでした",
+            body: "ありがとうを送る相手を確認できません。最新の状態を確認してください。",
+            canReload: true,
+          };
+        case "self_recipient":
+          return {
+            title: "ありがとうを送信できませんでした",
+            body: "自分自身にはありがとうを送信できません。",
+            canReload: false,
+          };
+        case "invalid_input":
+        default:
+          return {
+            title: "ありがとうを送信できませんでした",
+            body: "現在の状態では操作できません。",
+            canReload: false,
+          };
+      }
+    }
+    if (result.status === "conflict") {
+      return {
+        title: "ほかの端末で状態が更新されています",
+        body: "最新の状態を確認するため、再読み込みしてください。",
+        canReload: true,
+      };
+    }
+    if (result.status === "forbidden") {
+      return {
+        title: "送信権限を確認できません",
+        body: "家族の共有設定を確認してください。",
+        canReload: false,
+      };
+    }
+    if (result.status === "not_found") {
+      return {
+        title: "対象のデータが見つかりません",
+        body: "最新の状態を確認するため、再読み込みしてください。",
+        canReload: true,
+      };
+    }
+    if (result.status === "client_error") {
+      return {
+        title: "ありがとうを送信できませんでした",
+        body: "現在の状態では操作できません。",
+        canReload: false,
+      };
+    }
+    if (result.status === "transport_error") {
+      return result.error.kind === "invalid_response"
+        ? {
+            title: "送信結果を確認できませんでした",
+            body: "最新の状態を確認するため、再読み込みしてください。",
+            canReload: true,
+          }
+        : {
+            title: "通信に失敗しました",
+            body: "通信環境を確認して、もう一度操作してください。",
+            canReload: false,
+          };
+    }
+    return {
+      title: "ありがとうを送信できませんでした",
+      body: "現在の状態では操作できません。",
+      canReload: false,
+    };
+  }
 
   if (operation === "complete_preparation") {
     if (result.status === "invalid_state") {

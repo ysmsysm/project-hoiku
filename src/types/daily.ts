@@ -170,6 +170,45 @@ export type CompleteDailyPreparationResult =
   | CompleteDailyPreparationBusinessResult
   | DailyDataFailure;
 
+export type SendDailyThanksInput = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  expectedSessionVersion: number;
+};
+
+export type SendDailyThanksReason =
+  | "invalid_input"
+  | "preparation_incomplete"
+  | "recipient_missing"
+  | "self_recipient";
+
+export type SendDailyThanksBusinessResult =
+  | {
+      status: "success";
+      changed: boolean;
+      session: DailySessionMetadata;
+    }
+  | {
+      status: "conflict";
+      changed: false;
+      session: DailySessionMetadata;
+    }
+  | {
+      status: "forbidden" | "not_found";
+      changed: false;
+    }
+  | {
+      status: "invalid_state";
+      changed: false;
+      reason: SendDailyThanksReason;
+      session?: DailySessionMetadata;
+    };
+
+export type SendDailyThanksResult =
+  | SendDailyThanksBusinessResult
+  | DailyDataFailure;
+
 export type DailyDataValidationIssue = {
   path: string;
   code: string;
@@ -385,6 +424,21 @@ export type UpdateDailyItemClient = {
 export type CompleteDailyPreparationClient = {
   rpc: (
     functionName: "complete_daily_preparation",
+    args: {
+      p_family_id: string;
+      p_child_id: string;
+      p_session_date: string;
+      p_expected_version: number;
+    },
+  ) => PromiseLike<{
+    data: unknown;
+    error: unknown;
+  }>;
+};
+
+export type SendDailyThanksClient = {
+  rpc: (
+    functionName: "send_daily_thanks",
     args: {
       p_family_id: string;
       p_child_id: string;

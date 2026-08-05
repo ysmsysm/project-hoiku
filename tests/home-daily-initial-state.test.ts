@@ -10,6 +10,7 @@ import {
   canRunHomeObservedQuantityMutation,
   canRunHomePreparationBulkMutation,
   canRunHomePreparationItemMutation,
+  canRunHomeSendThanksMutation,
   completeHomeLocalDailyHydration,
   createHomeLockerItems,
   createHomeDailyInitialState,
@@ -23,6 +24,7 @@ import {
   initialHomeLocalDailyHydrationState,
   isHomeLocalDailyHydrationReady,
   isHomeSharedDailyDisplayState,
+  isHomeSharedThanksSelf,
   loadHomeLocalDailyInitialState,
   shouldRunHomeLocalDailyAutoEffects,
   startHomeLocalDailyHydration,
@@ -228,6 +230,7 @@ function sharedDataSource(
   return {
     mode: "shared",
     familyId,
+    currentMemberId: "11111111-1111-4111-8111-111111111111",
     initialData: sharedInitialData,
     initialDailyData,
     childProfileEditable: true,
@@ -615,6 +618,29 @@ test("complete preparation capability includes only local and shared success", (
   assert.equal(canRunHomeCompletePreparationMutation("shared-error"), false);
 });
 
+test("send thanks capability includes only local and shared success", () => {
+  assert.equal(canRunHomeSendThanksMutation("local"), true);
+  assert.equal(canRunHomeSendThanksMutation("shared-success"), true);
+  assert.equal(canRunHomeSendThanksMutation("shared-non-success"), false);
+  assert.equal(canRunHomeSendThanksMutation("shared-error"), false);
+});
+
+test("shared thanks self detection compares normalized member UUIDs", () => {
+  const memberId = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
+  assert.equal(
+    isHomeSharedThanksSelf(memberId, memberId.toLowerCase()),
+    true,
+  );
+  assert.equal(
+    isHomeSharedThanksSelf(
+      memberId,
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    ),
+    false,
+  );
+  assert.equal(isHomeSharedThanksSelf(memberId, null), false);
+});
+
 test("daily item mutation errors are operation-specific, safe, and reloadable", () => {
   const conflict = getHomeDailyItemMutationErrorView(
     { status: "conflict", item: dailyItem() },
@@ -719,6 +745,38 @@ test("daily item mutation errors are operation-specific, safe, and reloadable", 
   );
 });
 
+test("thanks mutation errors are safe and classify refresh availability", () => {
+  for (const [reason, canReload] of [
+    ["preparation_incomplete", true],
+    ["recipient_missing", true],
+    ["self_recipient", false],
+    ["invalid_input", false],
+  ] as const) {
+    const view = getHomeDailyItemMutationErrorView(
+      { status: "invalid_state", changed: false, reason },
+      "send_thanks",
+    );
+    assert.equal(view.canReload, canReload);
+    assert.doesNotMatch(JSON.stringify(view), new RegExp(reason));
+  }
+  const invalidResponse = getHomeDailyItemMutationErrorView(
+    {
+      status: "transport_error",
+      error: {
+        kind: "invalid_response",
+        message: "send_daily_thanks leaked detail",
+        issues: [{ path: familyId, code: "version_4" }],
+      },
+    },
+    "send_thanks",
+  );
+  assert.equal(invalidResponse.canReload, true);
+  assert.doesNotMatch(
+    JSON.stringify(invalidResponse),
+    /send_daily_thanks|11111111|version_4/,
+  );
+});
+
 test("shared daily status views keep all six statuses distinct and user-safe", () => {
   const views = nonSuccessStates().map((state) => {
     assert.equal(isHomeSharedDailyDisplayState(state), true);
@@ -777,11 +835,11 @@ test("daily mutation controls propagate native disabled state", () => {
   );
   assert.match(
     homeClientSource,
-    /itemActionsDisabled=\{[\s\S]*?!canRunPreparationItemMutation[\s\S]*?isCompletePreparationPending/,
+    /itemActionsDisabled=\{[\s\S]*?!canRunPreparationItemMutation[\s\S]*?isSharedSessionMutationPending/,
   );
   assert.match(
     homeClientSource,
-    /disabled=\{[\s\S]*?!canRunObservedQuantityMutation[\s\S]*?isCompletePreparationPending/,
+    /disabled=\{[\s\S]*?!canRunObservedQuantityMutation[\s\S]*?isSharedSessionMutationPending/,
   );
   assert.match(
     homeClientSource,
@@ -986,14 +1044,14 @@ test("shared completion uses session pending, full reload, and whole canonical r
   const localSource = completeSource.slice(sharedSource.length);
   assert.match(sharedSource, /getCurrentSharedDailySession\(\)/);
   assert.match(sharedSource, /pendingDailyItemMutationRequestsRef\.current\.size > 0/);
-  assert.match(sharedSource, /completePreparationRequestRef\.current/);
+  assert.match(sharedSource, /sharedSessionMutationRequestRef\.current/);
   assert.match(sharedSource, /Symbol\("complete-preparation"\)/);
   assert.match(sharedSource, /completeDailyPreparation\(client, input\)/);
   assert.match(sharedSource, /await loadDailyData\(client/);
   assert.match(sharedSource, /setSharedDailyState\(\(current\) =>/);
   assert.match(sharedSource, /applyCompletedSessionToSharedDailyState/);
   assert.match(sharedSource, /dailyItemMutationScopeGenerationRef/);
-  assert.match(sharedSource, /completePreparationRequestRef\.current === requestToken/);
+  assert.match(sharedSource, /sharedSessionMutationRequestRef\.current\?\.token === requestToken/);
   assert.doesNotMatch(sharedSource, /router\.refresh\(\)|appRepository|updateSession\(/);
   assert.match(completeSource, /void runSharedCompletePreparation\(\)/);
   assert.match(localSource, /updateSession\(/);
@@ -1012,20 +1070,96 @@ test("complete pending is a bidirectional item and batch mutation lock", () => {
     homeClientSource.indexOf("const runSharedDailyPreparationItemsMutation = async"),
     homeClientSource.indexOf("const updateShortageCount = async"),
   );
-  assert.match(singleRunner, /if \(completePreparationRequestRef\.current\)/);
-  assert.match(batchRunner, /if \(completePreparationRequestRef\.current\)/);
+  assert.match(singleRunner, /if \(sharedSessionMutationRequestRef\.current\)/);
+  assert.match(batchRunner, /if \(sharedSessionMutationRequestRef\.current\)/);
   assert.match(
     homeClientSource,
-    /disabled=\{[\s\S]{0,180}!canRunObservedQuantityMutation[\s\S]{0,180}isCompletePreparationPending[\s\S]{0,180}isSharedDailyPreparationCompleted/,
+    /disabled=\{[\s\S]{0,180}!canRunObservedQuantityMutation[\s\S]{0,180}isSharedSessionMutationPending[\s\S]{0,180}isSharedDailyPreparationCompleted/,
   );
   assert.match(
     homeClientSource,
-    /itemActionsDisabled=\{[\s\S]{0,180}isCompletePreparationPending[\s\S]{0,180}isSharedDailyPreparationCompleted/,
+    /itemActionsDisabled=\{[\s\S]{0,180}isSharedSessionMutationPending[\s\S]{0,180}isSharedDailyPreparationCompleted/,
   );
   assert.match(homeClientSource, /completeActionPending=\{isCompletePreparationPending\}/);
   assert.match(
     homeClientSource,
     /dailyMutationBrowserClientRef\.current \?\? createSupabaseClient\(\)/,
+  );
+});
+
+test("shared thanks uses a guarded session mutation, full reload, and canonical replacement", () => {
+  const sharedRunner = homeClientSource.slice(
+    homeClientSource.indexOf("const runSharedSendThanks = async"),
+    homeClientSource.indexOf("const sendThanks = ()"),
+  );
+  const sendHandler = homeClientSource.slice(
+    homeClientSource.indexOf("const sendThanks = ()"),
+    homeClientSource.indexOf("const showZeroQuantityToast"),
+  );
+  assert.match(sharedRunner, /getCurrentSharedDailySession\(\)/);
+  assert.match(
+    sharedRunner,
+    /isHomeSharedThanksSelf\(\s*dataSource\.currentMemberId,\s*currentSharedSession\.completedByMemberId,\s*\)/,
+  );
+  assert.match(sharedRunner, /pendingDailyItemMutationRequestsRef\.current\.size > 0/);
+  assert.match(sharedRunner, /sharedSessionMutationRequestRef\.current/);
+  assert.match(sharedRunner, /operation: "send_thanks"/);
+  assert.match(sharedRunner, /scopeKey: requestScopeKey/);
+  assert.match(sharedRunner, /generation: requestScopeGeneration/);
+  assert.match(sharedRunner, /startVersion: currentSharedSession\.version/);
+  assert.match(sharedRunner, /Symbol\("send-thanks"\)/);
+  assert.match(sharedRunner, /sendDailyThanks\(dailyThanksClientRef\.current, input\)/);
+  assert.match(sharedRunner, /await loadDailyData\(dailyPreparationItemsClientRef\.current/);
+  assert.match(sharedRunner, /applyThanksSessionToSharedDailyState/);
+  assert.match(sharedRunner, /responseSessionVersion: result\.session\.version/);
+  assert.match(sharedRunner, /changed: result\.changed/);
+  assert.match(sharedRunner, /sharedSessionMutationRequestRef\.current !== request/);
+  assert.match(sharedRunner, /dailyItemMutationScopeGenerationRef\.current !== request\.generation/);
+  assert.match(sharedRunner, /sharedSessionMutationRequestRef\.current === request/);
+  assert.match(sharedRunner, /title: "送信結果を確認できませんでした"/);
+  assert.doesNotMatch(sharedRunner, /router\.refresh|appRepository|updateSession\(/);
+  assert.match(sendHandler, /dailyMode === "shared-success"[\s\S]*?void runSharedSendThanks\(\)/);
+  assert.match(sendHandler, /thanksSent: !session\.thanksSent/);
+  assert.match(sendHandler, /updateSession\(/);
+});
+
+test("thanks UI prioritizes sent state, hides unsent self thanks, and disables pending sends", () => {
+  assert.match(
+    homeClientSource,
+    /!sharedThanksSession\.thanksSent[\s\S]*?isHomeSharedThanksSelf\([\s\S]*?dataSource\.currentMemberId[\s\S]*?sharedThanksSession\.completedByMemberId/,
+  );
+  assert.match(
+    homeClientSource,
+    /dailyMode === "shared-success" && !isUnsentSharedSelfThanks/,
+  );
+  assert.match(homeClientSource, /sharedThanksSession\.thanksSent \|\|/);
+  assert.match(homeClientSource, /isSharedSessionMutationPending/);
+  assert.match(homeClientSource, /aria-busy=\{isSendThanksPending \|\| undefined\}/);
+  assert.match(homeClientSource, /"✓ ありがとう済み"/);
+  assert.match(homeClientSource, /"♡ ありがとう"/);
+  assert.match(homeClientSource, /"送信中…"/);
+});
+
+test("session mutation generalization keeps complete and thanks mutually exclusive", () => {
+  assert.match(
+    homeClientSource,
+    /type SharedSessionMutationOperation = "complete_preparation" \| "send_thanks"/,
+  );
+  assert.match(
+    homeClientSource,
+    /sharedSessionMutationPendingOperation === "complete_preparation"/,
+  );
+  assert.match(
+    homeClientSource,
+    /sharedSessionMutationPendingOperation === "send_thanks"/,
+  );
+  assert.match(
+    homeClientSource,
+    /sharedSessionMutationRequestRef\.current = null[\s\S]*?setSharedSessionMutationPendingOperation\(null\)/,
+  );
+  assert.equal(
+    homeClientSource.match(/dailyMutationBrowserClientRef\.current \?\? createSupabaseClient\(\)/g)?.length,
+    4,
   );
 });
 

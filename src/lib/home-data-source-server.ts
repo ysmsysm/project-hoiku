@@ -4,6 +4,7 @@ import type { SharedSettingsLoadResult } from "./family-sharing/shared-settings-
 import type { CurrentFamilyMembership } from "../types/family";
 import type { LoadDailyDataInput } from "../types/daily";
 import type { SharedDailyState } from "../types/shared-daily";
+import { isDailyDataUuid } from "./family-sharing/daily-data";
 import {
   toHomeSharedErrorReason,
   type HomeDataSource,
@@ -65,6 +66,13 @@ export async function getHomeDataSource(
     return { mode: "local" };
   }
 
+  if (!isDailyDataUuid(membership.memberId)) {
+    return {
+      mode: "shared-error",
+      reason: "membership-query-failed",
+    };
+  }
+
   const sharedSettings = await dependencies.loadSharedSettingsForFamily(
     membership.familyId,
   );
@@ -92,6 +100,7 @@ export async function getHomeDataSource(
   return {
     mode: "shared",
     familyId: membership.familyId,
+    currentMemberId: membership.memberId,
     initialData: sharedSettings.data,
     initialDailyData,
     childProfileEditable: true,

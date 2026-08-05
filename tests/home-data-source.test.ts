@@ -85,6 +85,7 @@ test("shared mode uses initialData and skips durable localStorage loading", () =
   const dataSource: HomeDataSource = {
     mode: "shared",
     familyId: "family-1",
+    currentMemberId: "11111111-1111-4111-8111-111111111111",
     initialData: sharedInitialData,
     initialDailyData: sharedInitialDailyData,
     childProfileEditable: true,
@@ -117,6 +118,7 @@ test("shared mode separates durable item editing permissions by operation", () =
   const dataSource: HomeDataSource = {
     mode: "shared",
     familyId: "family-1",
+    currentMemberId: "11111111-1111-4111-8111-111111111111",
     initialData: sharedInitialData,
     initialDailyData: sharedInitialDailyData,
     childProfileEditable: true,

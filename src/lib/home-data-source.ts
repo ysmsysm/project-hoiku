@@ -16,6 +16,7 @@ export type HomeDataSource =
   | {
       mode: "shared";
       familyId: string;
+      currentMemberId: string;
       initialData: SharedSettingsAppData;
       initialDailyData: SharedDailyState;
       childProfileEditable: true;

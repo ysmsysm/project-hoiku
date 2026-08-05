@@ -29,6 +29,7 @@ const sharedInitialData: SharedSettingsAppData = {
 };
 
 const sessionDate = "2026-08-01";
+const currentMemberId = "11111111-1111-4111-8111-111111111111";
 
 function dailySession(): DailySession {
   return {
@@ -83,7 +84,7 @@ function membership(
   overrides: Partial<CurrentFamilyMembership> = {},
 ): CurrentFamilyMembership {
   return {
-    memberId: "member-1",
+    memberId: currentMemberId,
     familyId: "family-1",
     role: "member",
     displayName: "So",
@@ -177,10 +178,33 @@ test("successful auth with user continues to membership and shared settings", as
     },
   ]);
   if (dataSource.mode === "shared") {
+    assert.equal(dataSource.currentMemberId, currentMemberId);
     assert.deepEqual(dataSource.initialDailyData, {
       status: "not_found",
       sessionDate,
     });
+  }
+});
+
+test("invalid or missing shared member IDs fail closed before shared loading", async () => {
+  const missingMemberId = membership();
+  Reflect.deleteProperty(missingMemberId, "memberId");
+
+  for (const currentMembership of [
+    membership({ memberId: "not-a-uuid" }),
+    missingMemberId,
+  ]) {
+    const { deps, calls } = createDependencies({
+      currentUser: { status: "authenticated", user },
+      membership: currentMembership,
+    });
+    assert.deepEqual(await getHomeDataSource(deps), {
+      mode: "shared-error",
+      reason: "membership-query-failed",
+    });
+    assert.equal(calls.sharedSettings, 0);
+    assert.equal(calls.sessionDate, 0);
+    assert.deepEqual(calls.daily, []);
   }
 });
 

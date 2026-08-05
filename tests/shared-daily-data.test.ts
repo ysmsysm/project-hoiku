@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyCompletedSessionToSharedDailyState,
+  applyThanksSessionToSharedDailyState,
   applyUpdatedItemsToSharedDailyState,
   applyUpdatedItemToSharedDailyState,
   getSharedPreparationBulkMutationPlan,
@@ -731,6 +732,217 @@ test("accepts retry-safe no-op completion without requiring expected plus one", 
   );
   assert.equal(applied.status, "success");
   if (applied.status === "success") assert.equal(applied.session.version, 8);
+});
+
+test("replaces the whole canonical state with a validated thanks reload", async () => {
+  const preparerMemberId = "66666666-6666-4666-8666-666666666666";
+  const preparerUserId = "77777777-7777-4777-8777-777777777777";
+  const senderMemberId = "88888888-8888-4888-8888-888888888888";
+  const senderUserId = "99999999-9999-4999-8999-999999999999";
+  const completedFields = {
+    checked_by_member_id: senderMemberId,
+    checked_by_user_id: senderUserId,
+    checked_by_display_name: "Checker",
+    is_prepared: true,
+    prepared_at: "2026-07-29T00:10:00.000Z",
+    prepared_by_member_id: preparerMemberId,
+    prepared_by_user_id: preparerUserId,
+    prepared_by_display_name: "Preparer",
+  };
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({ version: 2, ...completedFields }),
+      items: [itemPayload({ is_prepared: true })],
+    }),
+    input,
+  );
+  const reloaded = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({
+        version: 3,
+        ...completedFields,
+        thanks_sent_at: "2026-07-29T00:15:00.000Z",
+        thanks_sent_by_member_id: senderMemberId,
+        thanks_sent_by_user_id: senderUserId,
+        thanks_sent_by_display_name: "Sender",
+        thanks_received_by_member_id: preparerMemberId,
+        thanks_received_by_user_id: preparerUserId,
+        thanks_received_by_display_name: "Preparer",
+      }),
+      items: [
+        itemPayload({
+          version: 5,
+          is_prepared: true,
+          observed_quantity: 2,
+          shortage_count: 1,
+        }),
+      ],
+    }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  assert.equal(reloaded.status, "success");
+  if (state.status !== "success" || reloaded.status !== "success") return;
+
+  const scope = {
+    familyId,
+    childId,
+    sessionDate,
+    dailySessionId: sessionId,
+    expectedSessionVersion: 2,
+    responseSessionVersion: 3,
+    changed: true,
+    requestScopeKey: "scope-a",
+    currentScopeKey: "scope-a",
+    requestScopeGeneration: 4,
+    currentScopeGeneration: 4,
+  };
+  const applied = applyThanksSessionToSharedDailyState(
+    state,
+    scope,
+    reloaded.session,
+  );
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") {
+    assert.equal(applied.session, reloaded.session);
+    assert.equal(applied.session.thanksSent, true);
+    assert.equal(applied.session.thanksSentByMemberId, senderMemberId);
+    assert.equal(applied.preparationSession.thanksSent, true);
+    assert.equal(applied.preparationSession.items[0].dailyItemVersion, 5);
+    assert.equal(applied.checkView.items[0].observedQuantity, 2);
+  }
+
+  for (const invalidScope of [
+    { ...scope, familyId: childId },
+    { ...scope, childId: familyId },
+    { ...scope, sessionDate: "2026-07-30" },
+    { ...scope, dailySessionId: itemId },
+    { ...scope, expectedSessionVersion: 1 },
+    { ...scope, responseSessionVersion: 4 },
+    { ...scope, requestScopeKey: "stale" },
+    { ...scope, requestScopeGeneration: 3 },
+  ]) {
+    assert.equal(
+      applyThanksSessionToSharedDailyState(state, invalidScope, reloaded.session),
+      state,
+    );
+  }
+  assert.equal(
+    applyThanksSessionToSharedDailyState(state, scope, {
+      ...reloaded.session,
+      items: [reloaded.session.items[0], reloaded.session.items[0]],
+    }),
+    state,
+  );
+  assert.equal(
+    applyThanksSessionToSharedDailyState(state, scope, {
+      ...reloaded.session,
+      items: [{ ...reloaded.session.items[0], familyId: childId }],
+    }),
+    state,
+  );
+  assert.equal(
+    applyThanksSessionToSharedDailyState(state, scope, {
+      ...reloaded.session,
+      thanksReceivedByMemberId: senderMemberId,
+    }),
+    state,
+  );
+  assert.equal(
+    applyThanksSessionToSharedDailyState(state, scope, {
+      ...reloaded.session,
+      checkedByMemberId: null,
+    }),
+    state,
+  );
+  const incompleteCurrentState: SharedDailyState = {
+    ...state,
+    session: {
+      ...state.session,
+      isCompleted: false,
+      completedAt: null,
+    },
+  };
+  assert.equal(
+    applyThanksSessionToSharedDailyState(
+      incompleteCurrentState,
+      scope,
+      reloaded.session,
+    ),
+    incompleteCurrentState,
+  );
+});
+
+test("accepts a validated thanks no-op reload without expected-plus-one", async () => {
+  const preparerMemberId = "66666666-6666-4666-8666-666666666666";
+  const senderMemberId = "88888888-8888-4888-8888-888888888888";
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({
+        version: 2,
+        checked_by_member_id: senderMemberId,
+        checked_by_user_id: familyId,
+        checked_by_display_name: "Checker",
+        is_prepared: true,
+        prepared_at: "2026-07-29T00:10:00.000Z",
+        prepared_by_member_id: preparerMemberId,
+        prepared_by_user_id: childId,
+        prepared_by_display_name: "Preparer",
+      }),
+      items: [itemPayload({ is_prepared: true })],
+    }),
+    input,
+  );
+  const reloaded = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({
+        version: 12,
+        checked_by_member_id: senderMemberId,
+        checked_by_user_id: familyId,
+        checked_by_display_name: "Checker",
+        is_prepared: true,
+        prepared_at: "2026-07-29T00:10:00.000Z",
+        prepared_by_member_id: preparerMemberId,
+        prepared_by_user_id: childId,
+        prepared_by_display_name: "Preparer",
+        thanks_sent_at: "2026-07-29T00:15:00.000Z",
+        thanks_sent_by_member_id: senderMemberId,
+        thanks_sent_by_user_id: familyId,
+        thanks_sent_by_display_name: "Sender",
+        thanks_received_by_member_id: preparerMemberId,
+        thanks_received_by_user_id: childId,
+        thanks_received_by_display_name: "Preparer",
+      }),
+      items: [itemPayload({ is_prepared: true })],
+    }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  assert.equal(reloaded.status, "success");
+  if (state.status !== "success" || reloaded.status !== "success") return;
+  const applied = applyThanksSessionToSharedDailyState(
+    state,
+    {
+      familyId,
+      childId,
+      sessionDate,
+      dailySessionId: sessionId,
+      expectedSessionVersion: 2,
+      responseSessionVersion: 12,
+      changed: false,
+      requestScopeKey: "scope-a",
+      currentScopeKey: "scope-a",
+      requestScopeGeneration: 1,
+      currentScopeGeneration: 1,
+    },
+    reloaded.session,
+  );
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") assert.equal(applied.session.version, 12);
 });
 
 test("atomically applies changed batch items while preserving no-op and unrelated references", async () => {

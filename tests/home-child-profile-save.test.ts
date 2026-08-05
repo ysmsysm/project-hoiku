@@ -72,6 +72,7 @@ function sharedDataSource(): Exclude<HomeDataSource, { mode: "shared-error" }> {
   return {
     mode: "shared",
     familyId: "family-1",
+    currentMemberId: "11111111-1111-4111-8111-111111111111",
     initialData: sharedInitialData,
     initialDailyData: {
       status: "not_found",

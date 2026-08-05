@@ -70,6 +70,20 @@ export type SharedDailyCompletionScope = {
   changed: boolean;
 };
 
+export type SharedDailyThanksScope = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  dailySessionId: string;
+  expectedSessionVersion: number;
+  responseSessionVersion: number;
+  changed: boolean;
+  requestScopeKey: string;
+  currentScopeKey: string;
+  requestScopeGeneration: number;
+  currentScopeGeneration: number;
+};
+
 const uuidEquals = (left: string, right: string): boolean =>
   normalizeDailyDataUuid(left) === normalizeDailyDataUuid(right);
 
@@ -282,6 +296,94 @@ export function applyCompletedSessionToSharedDailyState(
       : state.session.version !== scope.expectedSessionVersion &&
         (!state.session.isCompleted ||
           state.session.version !== session.version))
+  ) {
+    return state;
+  }
+
+  const mapped = mapDailySessionToSharedDailyState(session, scope.sessionDate);
+  return mapped.status === "success" ? mapped : state;
+}
+
+export function applyThanksSessionToSharedDailyState(
+  state: SharedDailyState,
+  scope: SharedDailyThanksScope,
+  session: DailySession,
+): SharedDailyState {
+  const hasValidActors =
+    Boolean(session.checkedByMemberId) &&
+    Boolean(session.checkedByUserId) &&
+    session.checkedByDisplayName !== null &&
+    Boolean(session.completedByMemberId) &&
+    Boolean(session.completedByUserId) &&
+    session.completedByDisplayName !== null &&
+    Boolean(session.thanksSentByMemberId) &&
+    Boolean(session.thanksSentByUserId) &&
+    session.thanksSentByDisplayName !== null &&
+    Boolean(session.thanksReceivedByMemberId) &&
+    Boolean(session.thanksReceivedByUserId) &&
+    session.thanksReceivedByDisplayName !== null;
+  const recipientMatchesPreparer =
+    session.completedByMemberId !== null &&
+    session.thanksReceivedByMemberId !== null &&
+    uuidEquals(
+      session.completedByMemberId,
+      session.thanksReceivedByMemberId,
+    );
+  const senderDiffersFromRecipient =
+    session.thanksSentByMemberId !== null &&
+    session.thanksReceivedByMemberId !== null &&
+    !uuidEquals(
+      session.thanksSentByMemberId,
+      session.thanksReceivedByMemberId,
+    );
+
+  if (
+    state.status !== "success" ||
+    scope.requestScopeKey !== scope.currentScopeKey ||
+    scope.requestScopeGeneration !== scope.currentScopeGeneration ||
+    !uuidEquals(state.session.familyId, scope.familyId) ||
+    !uuidEquals(state.session.childId, scope.childId) ||
+    state.session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(state.session.dailySessionId, scope.dailySessionId) ||
+    state.session.version !== scope.expectedSessionVersion ||
+    !state.session.isChecked ||
+    !state.session.checkedAt ||
+    !state.session.checkedByMemberId ||
+    !state.session.checkedByUserId ||
+    state.session.checkedByDisplayName === null ||
+    !state.session.isCompleted ||
+    !state.session.completedAt ||
+    !state.session.completedByMemberId ||
+    state.session.thanksSent ||
+    !uuidEquals(session.familyId, scope.familyId) ||
+    !uuidEquals(session.childId, scope.childId) ||
+    session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(session.dailySessionId, scope.dailySessionId) ||
+    !uuidEquals(
+      state.session.completedByMemberId,
+      session.completedByMemberId ?? "",
+    ) ||
+    session.version !== scope.responseSessionVersion ||
+    (scope.changed
+      ? scope.responseSessionVersion !== scope.expectedSessionVersion + 1
+      : scope.responseSessionVersion < scope.expectedSessionVersion) ||
+    !session.isChecked ||
+    !session.checkedAt ||
+    !session.isCompleted ||
+    !session.completedAt ||
+    !session.thanksSent ||
+    !session.thanksSentAt ||
+    !hasValidActors ||
+    !recipientMatchesPreparer ||
+    !senderDiffersFromRecipient ||
+    session.items.some(
+      (item) =>
+        !uuidEquals(item.familyId, session.familyId) ||
+        !uuidEquals(item.dailySessionId, session.dailySessionId),
+    ) ||
+    new Set(
+      session.items.map((item) => normalizeDailyDataUuid(item.dailyItemId)),
+    ).size !== session.items.length
   ) {
     return state;
   }

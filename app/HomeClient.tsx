@@ -78,6 +78,7 @@ import {
   canRunHomeObservedQuantityMutation,
   canRunHomePreparationBulkMutation,
   canRunHomePreparationItemMutation,
+  canRunHomeSendThanksMutation,
   completeHomeLocalDailyHydration,
   createHomeLockerItems,
   createDefaultHomeCheckCounts,
@@ -91,6 +92,7 @@ import {
   getHomeSharedDailyStateSyncKey,
   initialHomeLocalDailyHydrationState,
   isHomeSharedDailyDisplayState,
+  isHomeSharedThanksSelf,
   isHomeLocalDailyHydrationReady,
   loadHomeLocalDailyInitialState,
   shouldRunHomeLocalDailyAutoEffects,
@@ -132,6 +134,7 @@ import {
   updateDailyPreparationItems,
 } from "../src/lib/family-sharing/update-daily-preparation-items";
 import { completeDailyPreparation } from "../src/lib/family-sharing/complete-daily-preparation";
+import { sendDailyThanks } from "../src/lib/family-sharing/send-daily-thanks";
 import { loadDailyData } from "../src/lib/family-sharing/daily-data";
 import {
   isDeferredDailyItemMutationNoOp,
@@ -143,6 +146,7 @@ import {
   applyUpdatedItemsToSharedDailyState,
   applyUpdatedItemToSharedDailyState,
   applyCompletedSessionToSharedDailyState,
+  applyThanksSessionToSharedDailyState,
   getSharedPreparationBulkMutationPlan,
 } from "../src/lib/family-sharing/shared-daily-data";
 import { useEditableSection } from "../src/hooks/useEditableSection";
@@ -151,6 +155,7 @@ import type { SpotAddition } from "../src/types/spot";
 import type { SharedDailyState } from "../src/types/shared-daily";
 import type {
   DailyDataClient,
+  SendDailyThanksClient,
   UpdateDailyItemClient,
   UpdateDailyItemInput,
 } from "../src/types/daily";
@@ -166,6 +171,14 @@ import type {
 
 const roughStateOrder = ["十分", "少ない", "補充"] as const;
 type RoughState = (typeof roughStateOrder)[number];
+type SharedSessionMutationOperation = "complete_preparation" | "send_thanks";
+type SharedSessionMutationRequest = {
+  operation: SharedSessionMutationOperation;
+  token: symbol;
+  scopeKey: string;
+  generation: number;
+  startVersion: number;
+};
 
 const itemCategories: CustomItemCategory[] = [
   "持ち物",
@@ -595,6 +608,7 @@ function HomeClientContent({
     canRunHomePreparationBulkMutation(dailyMode);
   const canRunCompletePreparationMutation =
     canRunHomeCompletePreparationMutation(dailyMode);
+  const canRunSendThanksMutation = canRunHomeSendThanksMutation(dailyMode);
   const sharedDailyStatusView =
     sharedDailyState && isHomeSharedDailyDisplayState(sharedDailyState)
       ? getHomeSharedDailyStatusView(sharedDailyState)
@@ -610,14 +624,22 @@ function HomeClientContent({
   const [pendingDailyItemMutationItemIds, setPendingDailyItemMutationItemIds] =
     useState<ReadonlySet<string>>(() => new Set());
   const pendingDailyItemMutationRequestsRef = useRef(new Map<string, symbol>());
-  const [isCompletePreparationPending, setIsCompletePreparationPending] =
-    useState(false);
-  const completePreparationRequestRef = useRef<symbol | null>(null);
+  const [sharedSessionMutationPendingOperation, setSharedSessionMutationPendingOperation] =
+    useState<SharedSessionMutationOperation | null>(null);
+  const sharedSessionMutationRequestRef =
+    useRef<SharedSessionMutationRequest | null>(null);
+  const isSharedSessionMutationPending =
+    sharedSessionMutationPendingOperation !== null;
+  const isCompletePreparationPending =
+    sharedSessionMutationPendingOperation === "complete_preparation";
+  const isSendThanksPending =
+    sharedSessionMutationPendingOperation === "send_thanks";
   const dailyMutationBrowserClientRef = useRef<ReturnType<
     typeof createSupabaseClient
   > | null>(null);
   const dailyItemMutationClientRef = useRef<UpdateDailyItemClient | null>(null);
   const dailyPreparationItemsClientRef = useRef<DailyDataClient | null>(null);
+  const dailyThanksClientRef = useRef<SendDailyThanksClient | null>(null);
   const dailyItemMutationMountedRef = useRef(true);
   const [dailyItemMutationError, setDailyItemMutationError] =
     useState<HomeDailyItemMutationErrorView | null>(null);
@@ -646,6 +668,7 @@ function HomeClientContent({
     dataSource.mode === "shared" && dailyItemMutationScopeState
       ? [
           dataSource.familyId,
+          dataSource.currentMemberId,
           dailyItemMutationScopeState.session.childId,
           dailyItemMutationScopeState.session.sessionDate,
           dailyItemMutationScopeState.session.dailySessionId,
@@ -655,6 +678,7 @@ function HomeClientContent({
         ? [
             dataSource.mode,
             dataSource.familyId,
+            dataSource.currentMemberId,
             dataSource.initialDailyData.status,
             "sessionDate" in dataSource.initialDailyData
               ? dataSource.initialDailyData.sessionDate
@@ -872,9 +896,9 @@ function HomeClientContent({
 
   useEffect(() => {
     pendingDailyItemMutationRequestsRef.current.clear();
-    completePreparationRequestRef.current = null;
+    sharedSessionMutationRequestRef.current = null;
     setPendingDailyItemMutationItemIds(new Set());
-    setIsCompletePreparationPending(false);
+    setSharedSessionMutationPendingOperation(null);
     setDailyItemMutationError(null);
   }, [dailyItemMutationScopeKey]);
 
@@ -884,7 +908,7 @@ function HomeClientContent({
     return () => {
       dailyItemMutationMountedRef.current = false;
       pendingRequests.clear();
-      completePreparationRequestRef.current = null;
+      sharedSessionMutationRequestRef.current = null;
     };
   }, []);
 
@@ -1149,7 +1173,7 @@ function HomeClientContent({
   const disabledObservedQuantityItemIds = useMemo(() => {
     const disabledIds = new Set(pendingDailyItemMutationItemIds);
     if (
-      isCompletePreparationPending ||
+      isSharedSessionMutationPending ||
       (dailyMode === "shared-success" && session?.completedAt)
     ) {
       lockerItems.forEach((item) => {
@@ -1166,7 +1190,7 @@ function HomeClientContent({
     return disabledIds;
   }, [
     dailyMode,
-    isCompletePreparationPending,
+    isSharedSessionMutationPending,
     lockerItems,
     pendingDailyItemMutationItemIds,
     session?.completedAt,
@@ -1206,7 +1230,7 @@ function HomeClientContent({
   const isPreparationBulkDisabled =
     !canRunPreparationBulkMutation ||
     isSharedDailyPreparationCompleted ||
-    isCompletePreparationPending ||
+    isSharedSessionMutationPending ||
     (dailyMode === "shared-success" &&
       (sharedPreparationBulkPlan?.status !== "ready" ||
         hasInvalidSharedPreparationBulkItem ||
@@ -1220,7 +1244,7 @@ function HomeClientContent({
     preparationBulkAvailabilityError ?? dailyItemMutationError;
   const disabledPreparationItemIds = useMemo(() => {
     const disabledIds = new Set(pendingDailyItemMutationItemIds);
-    if (isCompletePreparationPending || isSharedDailyPreparationCompleted) {
+    if (isSharedSessionMutationPending || isSharedDailyPreparationCompleted) {
       sessionItems.forEach((item) => {
         disabledIds.add(item.dailyItemId ?? item.id);
       });
@@ -1235,7 +1259,7 @@ function HomeClientContent({
     return disabledIds;
   }, [
     dailyMode,
-    isCompletePreparationPending,
+    isSharedSessionMutationPending,
     isSharedDailyPreparationCompleted,
     pendingDailyItemMutationItemIds,
     sessionItems,
@@ -1251,6 +1275,32 @@ function HomeClientContent({
     session !== null &&
     sessionItems.length > 0 &&
     isPreparationSessionCompleted(session);
+  const sharedThanksSession =
+    sharedDailyState?.status === "success" ? sharedDailyState.session : null;
+  const isUnsentSharedSelfThanks =
+    dailyMode === "shared-success" &&
+    dataSource.mode === "shared" &&
+    sharedThanksSession !== null &&
+    !sharedThanksSession.thanksSent &&
+    isHomeSharedThanksSelf(
+      dataSource.currentMemberId,
+      sharedThanksSession.completedByMemberId,
+    );
+  const shouldShowThanksButton =
+    canShowPreparationStatus &&
+    (dailyMode === "local" ||
+      (dailyMode === "shared-success" && !isUnsentSharedSelfThanks));
+  const isSharedThanksButtonDisabled =
+    dailyMode !== "shared-success" ||
+    !canRunSendThanksMutation ||
+    !sharedThanksSession?.isCompleted ||
+    !sharedThanksSession.completedAt ||
+    sharedThanksSession.thanksSent ||
+    !sharedThanksSession.completedByMemberId ||
+    !Number.isInteger(sharedThanksSession.version) ||
+    sharedThanksSession.version < 1 ||
+    pendingDailyItemMutationRequestsRef.current.size > 0 ||
+    isSharedSessionMutationPending;
   const canRunSharedCompletePreparation =
     dailyMode === "shared-success" &&
     canRunCompletePreparationMutation &&
@@ -1265,7 +1315,7 @@ function HomeClientContent({
     Number.isInteger(sharedDailyState.session.version) &&
     sharedDailyState.session.version >= 1 &&
     pendingDailyItemMutationRequestsRef.current.size === 0 &&
-    !isCompletePreparationPending;
+    !isSharedSessionMutationPending;
   const lastConfirmedDate = formatHistoryDate(session?.confirmedAt ?? null);
   const lastPreparedDate = formatHistoryDate(preparationCompletedAt);
   const updateSession = (nextSession: PreparationSession) => {
@@ -1304,7 +1354,7 @@ function HomeClientContent({
     input: UpdateDailyItemInput,
     operation: HomeDailyItemMutationOperation,
   ) => {
-    if (completePreparationRequestRef.current) {
+    if (sharedSessionMutationRequestRef.current) {
       return;
     }
     const dailyItemId = input.dailyItemId;
@@ -1417,7 +1467,7 @@ function HomeClientContent({
   };
 
   const runSharedDailyPreparationItemsMutation = async () => {
-    if (completePreparationRequestRef.current) {
+    if (sharedSessionMutationRequestRef.current) {
       return;
     }
     const currentSharedSession = getCurrentSharedDailySession();
@@ -2185,7 +2235,7 @@ function HomeClientContent({
       !Number.isInteger(currentSharedSession.version) ||
       currentSharedSession.version < 1 ||
       pendingDailyItemMutationRequestsRef.current.size > 0 ||
-      completePreparationRequestRef.current
+      sharedSessionMutationRequestRef.current
     ) {
       return;
     }
@@ -2200,8 +2250,14 @@ function HomeClientContent({
       sessionDate: currentSharedSession.sessionDate,
       expectedSessionVersion: currentSharedSession.version,
     };
-    completePreparationRequestRef.current = requestToken;
-    setIsCompletePreparationPending(true);
+    sharedSessionMutationRequestRef.current = {
+      operation: "complete_preparation",
+      token: requestToken,
+      scopeKey: requestScopeKey,
+      generation: requestScopeGeneration,
+      startVersion: currentSharedSession.version,
+    };
+    setSharedSessionMutationPendingOperation("complete_preparation");
     setDailyItemMutationError(null);
 
     try {
@@ -2222,7 +2278,7 @@ function HomeClientContent({
         dailyItemMutationScopeKeyRef.current !== requestScopeKey ||
         dailyItemMutationScopeGenerationRef.current !==
           requestScopeGeneration ||
-        completePreparationRequestRef.current !== requestToken
+        sharedSessionMutationRequestRef.current?.token !== requestToken
       ) {
         return;
       }
@@ -2246,7 +2302,7 @@ function HomeClientContent({
         dailyItemMutationScopeKeyRef.current !== requestScopeKey ||
         dailyItemMutationScopeGenerationRef.current !==
           requestScopeGeneration ||
-        completePreparationRequestRef.current !== requestToken
+        sharedSessionMutationRequestRef.current?.token !== requestToken
       ) {
         return;
       }
@@ -2294,7 +2350,7 @@ function HomeClientContent({
         dailyItemMutationScopeKeyRef.current === requestScopeKey &&
         dailyItemMutationScopeGenerationRef.current ===
           requestScopeGeneration &&
-        completePreparationRequestRef.current === requestToken
+        sharedSessionMutationRequestRef.current?.token === requestToken
       ) {
         setDailyItemMutationError({
           title: "通信に失敗しました",
@@ -2303,10 +2359,10 @@ function HomeClientContent({
         });
       }
     } finally {
-      if (completePreparationRequestRef.current === requestToken) {
-        completePreparationRequestRef.current = null;
+      if (sharedSessionMutationRequestRef.current?.token === requestToken) {
+        sharedSessionMutationRequestRef.current = null;
         if (dailyItemMutationMountedRef.current) {
-          setIsCompletePreparationPending(false);
+          setSharedSessionMutationPendingOperation(null);
         }
       }
     }
@@ -2406,7 +2462,210 @@ function HomeClientContent({
     );
   };
 
+  const runSharedSendThanks = async () => {
+    const currentSharedSession = getCurrentSharedDailySession();
+    if (
+      !canRunSendThanksMutation ||
+      dataSource.mode !== "shared" ||
+      !currentSharedSession ||
+      !currentSharedSession.isCompleted ||
+      !currentSharedSession.completedAt ||
+      currentSharedSession.thanksSent ||
+      !currentSharedSession.completedByMemberId ||
+      isHomeSharedThanksSelf(
+        dataSource.currentMemberId,
+        currentSharedSession.completedByMemberId,
+      ) ||
+      !Number.isInteger(currentSharedSession.version) ||
+      currentSharedSession.version < 1 ||
+      pendingDailyItemMutationRequestsRef.current.size > 0 ||
+      sharedSessionMutationRequestRef.current
+    ) {
+      return;
+    }
+
+    const requestScopeKey = dailyItemMutationScopeKeyRef.current;
+    const requestScopeGeneration =
+      dailyItemMutationScopeGenerationRef.current;
+    const requestToken = Symbol("send-thanks");
+    const input = {
+      familyId: currentSharedSession.familyId,
+      childId: currentSharedSession.childId,
+      sessionDate: currentSharedSession.sessionDate,
+      expectedSessionVersion: currentSharedSession.version,
+    };
+    const request: SharedSessionMutationRequest = {
+      operation: "send_thanks",
+      token: requestToken,
+      scopeKey: requestScopeKey,
+      generation: requestScopeGeneration,
+      startVersion: currentSharedSession.version,
+    };
+    sharedSessionMutationRequestRef.current = request;
+    setSharedSessionMutationPendingOperation("send_thanks");
+    setDailyItemMutationError(null);
+    let rpcSucceeded = false;
+
+    try {
+      const browserClient =
+        dailyMutationBrowserClientRef.current ?? createSupabaseClient();
+      dailyMutationBrowserClientRef.current = browserClient;
+      if (!dailyThanksClientRef.current) {
+        dailyThanksClientRef.current = {
+          rpc(functionName, args) {
+            return browserClient.rpc(functionName, args);
+          },
+        };
+      }
+      if (!dailyPreparationItemsClientRef.current) {
+        dailyPreparationItemsClientRef.current = {
+          rpc(functionName, args) {
+            return browserClient.rpc(functionName, args);
+          },
+        };
+      }
+
+      const result = await sendDailyThanks(dailyThanksClientRef.current, input);
+      if (
+        !dailyItemMutationMountedRef.current ||
+        sharedSessionMutationRequestRef.current !== request ||
+        dailyItemMutationScopeKeyRef.current !== request.scopeKey ||
+        dailyItemMutationScopeGenerationRef.current !== request.generation
+      ) {
+        return;
+      }
+      if (result.status !== "success") {
+        setDailyItemMutationError(
+          getHomeDailyItemMutationErrorView(result, "send_thanks"),
+        );
+        return;
+      }
+      rpcSucceeded = true;
+
+      const loaded = await loadDailyData(dailyPreparationItemsClientRef.current, {
+        familyId: input.familyId,
+        childId: input.childId,
+        sessionDate: input.sessionDate,
+      });
+      if (
+        !dailyItemMutationMountedRef.current ||
+        sharedSessionMutationRequestRef.current !== request ||
+        dailyItemMutationScopeKeyRef.current !== request.scopeKey ||
+        dailyItemMutationScopeGenerationRef.current !== request.generation
+      ) {
+        return;
+      }
+
+      const loadedSession = loaded.status === "success" ? loaded.session : null;
+      const isValidReload =
+        loadedSession !== null &&
+        loadedSession.familyId.toLowerCase() === input.familyId.toLowerCase() &&
+        loadedSession.childId.toLowerCase() === input.childId.toLowerCase() &&
+        loadedSession.sessionDate === input.sessionDate &&
+        loadedSession.dailySessionId.toLowerCase() ===
+          currentSharedSession.dailySessionId.toLowerCase() &&
+        loadedSession.dailySessionId.toLowerCase() ===
+          result.session.dailySessionId.toLowerCase() &&
+        loadedSession.version === result.session.version &&
+        loadedSession.isChecked &&
+        Boolean(loadedSession.checkedAt) &&
+        Boolean(loadedSession.checkedByMemberId) &&
+        Boolean(loadedSession.checkedByUserId) &&
+        loadedSession.checkedByDisplayName !== null &&
+        loadedSession.isCompleted &&
+        Boolean(loadedSession.completedAt) &&
+        Boolean(loadedSession.completedByMemberId) &&
+        Boolean(loadedSession.completedByUserId) &&
+        loadedSession.completedByDisplayName !== null &&
+        loadedSession.thanksSent &&
+        Boolean(loadedSession.thanksSentAt) &&
+        Boolean(loadedSession.thanksSentByMemberId) &&
+        Boolean(loadedSession.thanksSentByUserId) &&
+        loadedSession.thanksSentByDisplayName !== null &&
+        Boolean(loadedSession.thanksReceivedByMemberId) &&
+        Boolean(loadedSession.thanksReceivedByUserId) &&
+        loadedSession.thanksReceivedByDisplayName !== null &&
+        loadedSession.completedByMemberId?.toLowerCase() ===
+          loadedSession.thanksReceivedByMemberId?.toLowerCase() &&
+        loadedSession.thanksSentByMemberId?.toLowerCase() !==
+          loadedSession.thanksReceivedByMemberId?.toLowerCase() &&
+        loadedSession.items.every(
+          (item) =>
+            item.familyId.toLowerCase() === loadedSession.familyId.toLowerCase() &&
+            item.dailySessionId.toLowerCase() ===
+              loadedSession.dailySessionId.toLowerCase(),
+        ) &&
+        new Set(
+          loadedSession.items.map((item) => item.dailyItemId.toLowerCase()),
+        ).size === loadedSession.items.length;
+      if (!isValidReload || !loadedSession) {
+        setDailyItemMutationError({
+          title: "送信結果を確認できませんでした",
+          body: "最新の状態を確認するため、再読み込みしてください。",
+          canReload: true,
+        });
+        return;
+      }
+
+      setSharedDailyState((current) =>
+        current
+          ? applyThanksSessionToSharedDailyState(
+              current,
+              {
+                familyId: input.familyId,
+                childId: input.childId,
+                sessionDate: input.sessionDate,
+                dailySessionId: currentSharedSession.dailySessionId,
+                expectedSessionVersion: request.startVersion,
+                responseSessionVersion: result.session.version,
+                changed: result.changed,
+                requestScopeKey: request.scopeKey,
+                currentScopeKey: dailyItemMutationScopeKeyRef.current,
+                requestScopeGeneration: request.generation,
+                currentScopeGeneration:
+                  dailyItemMutationScopeGenerationRef.current,
+              },
+              loadedSession,
+            )
+          : current,
+      );
+      setDailyItemMutationError(null);
+    } catch {
+      if (
+        dailyItemMutationMountedRef.current &&
+        sharedSessionMutationRequestRef.current === request &&
+        dailyItemMutationScopeKeyRef.current === request.scopeKey &&
+        dailyItemMutationScopeGenerationRef.current === request.generation
+      ) {
+        setDailyItemMutationError(
+          rpcSucceeded
+            ? {
+                title: "送信結果を確認できませんでした",
+                body: "最新の状態を確認するため、再読み込みしてください。",
+                canReload: true,
+              }
+            : {
+                title: "通信に失敗しました",
+                body: "通信環境を確認して、もう一度操作してください。",
+                canReload: false,
+              },
+        );
+      }
+    } finally {
+      if (sharedSessionMutationRequestRef.current === request) {
+        sharedSessionMutationRequestRef.current = null;
+        if (dailyItemMutationMountedRef.current) {
+          setSharedSessionMutationPendingOperation(null);
+        }
+      }
+    }
+  };
+
   const sendThanks = () => {
+    if (dailyMode === "shared-success") {
+      void runSharedSendThanks();
+      return;
+    }
     if (!canRunLocalDailyMutation || !session) {
       return;
     }
@@ -3936,14 +4195,23 @@ function HomeClientContent({
             ) : null
           }
           rightFooterContent={
-            session && activeTab === "items" && canShowPreparationStatus ? (
+            session && activeTab === "items" && shouldShowThanksButton ? (
               <button
                 type="button"
                 onClick={sendThanks}
-                disabled={!canRunLocalDailyMutation}
+                disabled={
+                  dailyMode === "local"
+                    ? !canRunLocalDailyMutation
+                    : isSharedThanksButtonDisabled
+                }
+                aria-busy={isSendThanksPending || undefined}
                 className="rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc] disabled:cursor-not-allowed disabled:opacity-45"
               >
-                {session.thanksSent ? "✓ ありがとう済み" : "♡ ありがとう"}
+                {session.thanksSent
+                  ? "✓ ありがとう済み"
+                  : isSendThanksPending
+                    ? "送信中…"
+                    : "♡ ありがとう"}
               </button>
             ) : null
           }
@@ -4001,7 +4269,7 @@ function HomeClientContent({
               onChange={updateShortageCount}
               disabled={
                 !canRunObservedQuantityMutation ||
-                isCompletePreparationPending ||
+                isSharedSessionMutationPending ||
                 isSharedDailyPreparationCompleted
               }
               disabledItemIds={disabledObservedQuantityItemIds}
@@ -4126,7 +4394,7 @@ function HomeClientContent({
               onComplete={completePreparation}
               itemActionsDisabled={
                 !canRunPreparationItemMutation ||
-                isCompletePreparationPending ||
+                isSharedSessionMutationPending ||
                 isSharedDailyPreparationCompleted
               }
               bulkActionDisabled={isPreparationBulkDisabled}
