@@ -60,6 +60,7 @@ export async function loadSharedSettingsWithClient(
         "unit",
         "sort_order",
         "current_rough_state",
+        "updated_at",
       ].join(", "),
     )
     .eq("family_id", familyId)

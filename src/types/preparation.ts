@@ -43,6 +43,7 @@ export type CustomItemCategory = "持ち物" | "スポット追加" | "ざっく
 
 export type CustomizableItem = {
   id: string;
+  updatedAt?: string;
   name: string;
   unit: string;
   count: number;

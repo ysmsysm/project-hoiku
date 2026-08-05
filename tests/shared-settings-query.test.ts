@@ -31,6 +31,7 @@ test("loads only active templates and filters weekdays before mapping", async ()
         unit: "個",
         sort_order: 0,
         current_rough_state: null,
+        updated_at: "2026-08-05T00:00:00.000Z",
       },
       {
         id: "active-rough",
@@ -42,6 +43,7 @@ test("loads only active templates and filters weekdays before mapping", async ()
         unit: "pack",
         sort_order: 1,
         current_rough_state: "refill",
+        updated_at: "2026-08-05T00:00:00.000Z",
       },
     ],
     item_template_weekdays: [
@@ -76,6 +78,17 @@ test("loads only active templates and filters weekdays before mapping", async ()
     ),
     true,
   );
+  assert.equal(
+    calls.some(
+      (call) =>
+        Array.isArray(call) &&
+        call[0] === "select" &&
+        call[1] === "item_templates" &&
+        typeof call[2] === "string" &&
+        call[2].includes("updated_at"),
+    ),
+    true,
+  );
   assert.equal(result.ok, true);
   if (result.ok) {
     assert.deepEqual(
@@ -84,6 +97,7 @@ test("loads only active templates and filters weekdays before mapping", async ()
     );
     assert.deepEqual(result.data.customItems[0], {
       id: "active-spot",
+      updatedAt: "2026-08-05T00:00:00.000Z",
       name: "Water bottle",
       unit: "個",
       count: 0,

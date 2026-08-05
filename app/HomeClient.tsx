@@ -114,7 +114,6 @@ import {
   getHomeCustomItemDragTargetIndex,
   reorderHomeCustomItemsInCategory,
   saveHomeCustomItemAdd,
-  saveHomeCustomItemDelete,
   saveHomeCustomItemEdit,
   saveHomeCustomItemSortOrder,
   saveHomeRoughState,
@@ -123,7 +122,6 @@ import {
 import { homeItemQuantityMax } from "../src/lib/home-item-template-constraints";
 import {
   saveSharedItemTemplateAdd,
-  saveSharedItemTemplateDelete,
   saveSharedItemTemplateEdit,
   saveSharedItemTemplateSortOrders,
   saveSharedRoughState,
@@ -138,7 +136,9 @@ import {
 import { completeDailyPreparation } from "../src/lib/family-sharing/complete-daily-preparation";
 import { completeDailyCheck } from "../src/lib/family-sharing/complete-daily-check";
 import { sendDailyThanks } from "../src/lib/family-sharing/send-daily-thanks";
+import { deleteDailyItem } from "../src/lib/family-sharing/delete-daily-item";
 import { loadDailyData } from "../src/lib/family-sharing/daily-data";
+import { loadSharedSettingsWithClient } from "../src/lib/family-sharing/shared-settings-query";
 import {
   isDeferredDailyItemMutationNoOp,
   isPreparedDailyItemMutationNoOp,
@@ -151,6 +151,8 @@ import {
   applyCheckedSessionToSharedDailyState,
   applyCompletedSessionToSharedDailyState,
   applyThanksSessionToSharedDailyState,
+  applyDeletedItemReloadToSharedDailyState,
+  getSharedDailyItemDeletionTarget,
   getSharedPreparationBulkMutationPlan,
 } from "../src/lib/family-sharing/shared-daily-data";
 import { useEditableSection } from "../src/hooks/useEditableSection";
@@ -161,6 +163,7 @@ import type {
   CompleteDailyCheckClient,
   DailyDataClient,
   DailySession,
+  DeleteDailyItemClient,
   SendDailyThanksClient,
   UpdateDailyItemClient,
   UpdateDailyItemInput,
@@ -180,14 +183,28 @@ type RoughState = (typeof roughStateOrder)[number];
 type SharedSessionMutationOperation =
   | "complete_check"
   | "complete_preparation"
-  | "send_thanks";
-type SharedSessionMutationRequest = {
-  operation: SharedSessionMutationOperation;
+  | "send_thanks"
+  | "delete_item";
+type SharedSessionMutationRequestBase = {
   token: symbol;
   scopeKey: string;
   generation: number;
-  startVersion: number;
 };
+type SharedSessionMutationRequest = SharedSessionMutationRequestBase & ({
+  operation: Exclude<SharedSessionMutationOperation, "delete_item">;
+  startVersion: number;
+} | {
+  operation: "delete_item";
+  startVersion: number | null;
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  dailySessionId: string | null;
+  itemTemplateId: string;
+  templateUpdatedAt: string;
+  dailyItemId: string | null;
+  dailyItemVersion: number | null;
+});
 type SharedCompleteCheckNavigationRequest = {
   scopeKey: string;
   generation: number;
@@ -599,6 +616,8 @@ function HomeClientContent({
     useState<CustomizableItem[]>(initialCustomItems);
   const [sharedDailyState, setSharedDailyState] =
     useState<SharedDailyState | null>(dailyInitialState.sharedDailyState);
+  const sharedDailyStateRef = useRef<SharedDailyState | null>(sharedDailyState);
+  sharedDailyStateRef.current = sharedDailyState;
   const initialSharedDailyKeyRef = useRef<string | null>(
     dailyInitialState.sharedDailyState
       ? getHomeSharedDailyStateSyncKey(dailyInitialState.sharedDailyState)
@@ -654,6 +673,8 @@ function HomeClientContent({
     sharedSessionMutationPendingOperation === "complete_preparation";
   const isSendThanksPending =
     sharedSessionMutationPendingOperation === "send_thanks";
+  const isDeleteItemPending =
+    sharedSessionMutationPendingOperation === "delete_item";
   const dailyMutationBrowserClientRef = useRef<ReturnType<
     typeof createSupabaseClient
   > | null>(null);
@@ -661,6 +682,7 @@ function HomeClientContent({
   const dailyCheckClientRef = useRef<CompleteDailyCheckClient | null>(null);
   const dailyPreparationItemsClientRef = useRef<DailyDataClient | null>(null);
   const dailyThanksClientRef = useRef<SendDailyThanksClient | null>(null);
+  const dailyItemDeleteClientRef = useRef<DeleteDailyItemClient | null>(null);
   const sharedCompleteCheckNavigationRequestRef =
     useRef<SharedCompleteCheckNavigationRequest | null>(null);
   const dailyItemMutationMountedRef = useRef(true);
@@ -874,9 +896,44 @@ function HomeClientContent({
   const customItemSaveInFlightRef = useRef(false);
   const customItemAddInFlightRef = useRef(false);
   const customItemSortOrderSaveInFlightRef = useRef(false);
-  const customItemDeleteInFlightItemIdsRef = useRef(new Set<string>());
+  const customItemDeleteInFlightItemIdsRef = useRef(new Map<string, symbol>());
   const roughStateSaveInFlightItemIdsRef = useRef(new Set<string>());
   const roughStatesRef = useRef(initialRoughStates);
+  const customItemsRef = useRef(initialCustomItems);
+
+  const getHomeBrowserClient = () => {
+    const browserClient =
+      dailyMutationBrowserClientRef.current ?? createSupabaseClient();
+    dailyMutationBrowserClientRef.current = browserClient;
+    return browserClient;
+  };
+
+  const reloadSharedDurableSettings = async () => {
+    if (dataSource.mode !== "shared") {
+      return false;
+    }
+    let loaded: Awaited<ReturnType<typeof loadSharedSettingsWithClient>>;
+    try {
+      loaded = await loadSharedSettingsWithClient(
+        getHomeBrowserClient(),
+        dataSource.familyId,
+      );
+    } catch {
+      return false;
+    }
+    if (
+      loaded.ok === false ||
+      loaded.data.childId.toLowerCase() !==
+        dataSource.initialData.childId.toLowerCase()
+    ) {
+      return false;
+    }
+    customItemsRef.current = loaded.data.customItems;
+    setCustomItems(loaded.data.customItems);
+    roughStatesRef.current = loaded.data.roughStates;
+    setRoughStates(loaded.data.roughStates);
+    return true;
+  };
 
   const canInterruptCustomItemSorting = () =>
     canInterruptHomeCustomItemSorting(
@@ -924,14 +981,20 @@ function HomeClientContent({
     setPendingDailyItemMutationItemIds(new Set());
     setSharedSessionMutationPendingOperation(null);
     setDailyItemMutationError(null);
+    customItemDeleteInFlightItemIdsRef.current.clear();
+    setCustomItemDeletingItemIds(new Set());
+    setCustomItemDeleteError(null);
   }, [dailyItemMutationScopeKey]);
 
   useEffect(() => {
     dailyItemMutationMountedRef.current = true;
     const pendingRequests = pendingDailyItemMutationRequestsRef.current;
+    const pendingCustomItemDeletes =
+      customItemDeleteInFlightItemIdsRef.current;
     return () => {
       dailyItemMutationMountedRef.current = false;
       pendingRequests.clear();
+      pendingCustomItemDeletes.clear();
       sharedSessionMutationRequestRef.current = null;
       sharedCompleteCheckNavigationRequestRef.current = null;
     };
@@ -963,6 +1026,10 @@ function HomeClientContent({
   useEffect(() => {
     roughStatesRef.current = roughStates;
   }, [roughStates]);
+
+  useEffect(() => {
+    customItemsRef.current = customItems;
+  }, [customItems]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1404,11 +1471,12 @@ function HomeClientContent({
   };
 
   const getCurrentSharedDailySession = () => {
+    const currentSharedDailyState = sharedDailyStateRef.current;
     if (
       dailyMode !== "shared-success" ||
       dataSource.mode !== "shared" ||
       dataSource.initialDailyData.status !== "success" ||
-      sharedDailyState?.status !== "success"
+      currentSharedDailyState?.status !== "success"
     ) {
       return null;
     }
@@ -1416,19 +1484,20 @@ function HomeClientContent({
     const initialSession = dataSource.initialDailyData.session;
     if (
       dataSource.familyId.toLowerCase() !==
-        sharedDailyState.session.familyId.toLowerCase() ||
+        currentSharedDailyState.session.familyId.toLowerCase() ||
       initialSession.familyId.toLowerCase() !==
-        sharedDailyState.session.familyId.toLowerCase() ||
+        currentSharedDailyState.session.familyId.toLowerCase() ||
       initialSession.childId.toLowerCase() !==
-        sharedDailyState.session.childId.toLowerCase() ||
-      initialSession.sessionDate !== sharedDailyState.session.sessionDate ||
+        currentSharedDailyState.session.childId.toLowerCase() ||
+      initialSession.sessionDate !==
+        currentSharedDailyState.session.sessionDate ||
       initialSession.dailySessionId.toLowerCase() !==
-        sharedDailyState.session.dailySessionId.toLowerCase()
+        currentSharedDailyState.session.dailySessionId.toLowerCase()
     ) {
       return null;
     }
 
-    return sharedDailyState.session;
+    return currentSharedDailyState.session;
   };
 
   const runSharedDailyItemMutation = async (
@@ -1772,8 +1841,19 @@ function HomeClientContent({
         },
         saveLocalRoughStates: appRepository.saveRoughStates,
         saveSharedRoughState: (input) =>
-          saveSharedRoughState(createSupabaseClient(), input),
+          saveSharedRoughState(getHomeBrowserClient(), input),
       });
+      if (
+        dataSource.mode === "shared" &&
+        !(await reloadSharedDurableSettings())
+      ) {
+        setCustomItems((current) =>
+          current.map((item) =>
+            item.id === itemId ? { ...item, updatedAt: undefined } : item,
+          ),
+        );
+        throw new Error("shared_settings_reload_failed");
+      }
     } catch (error) {
       console.error("Failed to save rough state", error);
       setRoughStateSaveError("保存できませんでした。もう一度お試しください");
@@ -2087,7 +2167,7 @@ function HomeClientContent({
 
   const runSharedCompleteCheck = async () => {
     const currentSharedSession = getCurrentSharedDailySession();
-    const currentSharedState = sharedDailyState;
+    const currentSharedState = sharedDailyStateRef.current;
     if (
       !canRunCompleteCheckMutation ||
       dataSource.mode !== "shared" ||
@@ -3046,15 +3126,21 @@ function HomeClientContent({
           saveLocalRoughStates: appRepository.saveRoughStates,
           saveSharedItemTemplateAdd: (input) =>
             saveSharedItemTemplateAdd(
-              createSupabaseClient() as unknown as SharedItemTemplateAddClient,
+              getHomeBrowserClient() as unknown as SharedItemTemplateAddClient,
               input,
             ),
         },
       );
 
-      setCustomItems((currentItems) =>
-        appendHomeCustomItemToCategory(currentItems, result.item),
-      );
+      if (dataSource.mode === "shared") {
+        if (!(await reloadSharedDurableSettings())) {
+          throw new Error("shared_settings_reload_failed");
+        }
+      } else {
+        setCustomItems((currentItems) =>
+          appendHomeCustomItemToCategory(currentItems, result.item),
+        );
+      }
       if (dataSource.mode === "local" && category === "持ち物") {
         setShortageCounts((current) => {
           const nextCounts = { ...current, [result.item.id]: 0 };
@@ -3063,7 +3149,7 @@ function HomeClientContent({
         });
       }
 
-      if (result.initialRoughState !== null) {
+      if (dataSource.mode === "local" && result.initialRoughState !== null) {
         roughStatesRef.current = applyHomeRoughStateChange(
           roughStatesRef.current,
           result.item.id,
@@ -3156,6 +3242,246 @@ function HomeClientContent({
     );
   };
 
+  const runSharedCustomItemDelete = async (itemId: string) => {
+    if (
+      dataSource.mode !== "shared" ||
+      pendingDailyItemMutationRequestsRef.current.size > 0 ||
+      sharedSessionMutationRequestRef.current
+    ) {
+      return;
+    }
+
+    const currentItem = customItemsRef.current.find((item) => item.id === itemId);
+    if (!currentItem?.updatedAt) {
+      setCustomItemDeleteError({
+        itemId,
+        message: "最新の項目情報を確認できませんでした。再読み込みしてください。",
+      });
+      return;
+    }
+
+    const currentSharedState = sharedDailyStateRef.current;
+    let dailySessionId: string | null = null;
+    let startVersion: number | null = null;
+    let dailyItemId: string | null = null;
+    let dailyItemVersion: number | null = null;
+    let sessionDate: string;
+
+    if (currentSharedState?.status === "success") {
+      const currentSession = getCurrentSharedDailySession();
+      const target = getSharedDailyItemDeletionTarget(
+        currentSharedState,
+        itemId,
+      );
+      if (!currentSession || target.status === "invalid") {
+        setCustomItemDeleteError({
+          itemId,
+          message: "最新の状態を確認できませんでした。再読み込みしてください。",
+        });
+        return;
+      }
+      dailySessionId = currentSession.dailySessionId;
+      startVersion = currentSession.version;
+      sessionDate = currentSession.sessionDate;
+      if (target.status === "ready") {
+        dailyItemId = target.dailyItemId;
+        dailyItemVersion = target.expectedDailyItemVersion;
+      }
+    } else if (
+      currentSharedState?.status === "not_found" &&
+      dataSource.initialDailyData.status === "not_found" &&
+      currentSharedState.sessionDate === dataSource.initialDailyData.sessionDate
+    ) {
+      sessionDate = currentSharedState.sessionDate;
+    } else {
+      return;
+    }
+
+    const request: SharedSessionMutationRequest = {
+      operation: "delete_item",
+      token: Symbol("delete-item"),
+      scopeKey: dailyItemMutationScopeKeyRef.current,
+      generation: dailyItemMutationScopeGenerationRef.current,
+      startVersion,
+      familyId: dataSource.familyId,
+      childId: dataSource.initialData.childId,
+      sessionDate,
+      dailySessionId,
+      itemTemplateId: itemId,
+      templateUpdatedAt: currentItem.updatedAt,
+      dailyItemId,
+      dailyItemVersion,
+    };
+    sharedSessionMutationRequestRef.current = request;
+    setSharedSessionMutationPendingOperation("delete_item");
+    setDailyItemMutationError(null);
+    setCustomItemDeleteError(null);
+    let rpcSucceeded = false;
+
+    try {
+      const browserClient =
+        dailyMutationBrowserClientRef.current ?? createSupabaseClient();
+      dailyMutationBrowserClientRef.current = browserClient;
+      if (!dailyItemDeleteClientRef.current) {
+        dailyItemDeleteClientRef.current = {
+          rpc(functionName, args) {
+            return browserClient.rpc(functionName, args);
+          },
+        };
+      }
+      if (!dailyPreparationItemsClientRef.current) {
+        dailyPreparationItemsClientRef.current = {
+          rpc(functionName, args) {
+            return browserClient.rpc(functionName, args);
+          },
+        };
+      }
+
+      const result = await deleteDailyItem(dailyItemDeleteClientRef.current, {
+        familyId: request.familyId,
+        childId: request.childId,
+        sessionDate: request.sessionDate,
+        itemTemplateId: request.itemTemplateId,
+        expectedTemplateUpdatedAt: request.templateUpdatedAt,
+        dailyItemId: request.dailyItemId,
+        expectedDailyItemVersion: request.dailyItemVersion,
+      });
+      if (
+        !dailyItemMutationMountedRef.current ||
+        sharedSessionMutationRequestRef.current !== request ||
+        dailyItemMutationScopeKeyRef.current !== request.scopeKey ||
+        dailyItemMutationScopeGenerationRef.current !== request.generation
+      ) {
+        return;
+      }
+      if (result.status !== "success") {
+        setCustomItemDeleteError({
+          itemId,
+          message: getHomeDailyItemMutationErrorView(result, "delete_item").body,
+        });
+        return;
+      }
+      if (
+        request.dailySessionId !== null &&
+        request.dailyItemId !== null &&
+        result.dailyItem?.dailySessionId.toLowerCase() !==
+          request.dailySessionId.toLowerCase()
+      ) {
+        setCustomItemDeleteError({
+          itemId,
+          message: "削除結果を確認できませんでした。再読み込みしてください。",
+        });
+        return;
+      }
+      rpcSucceeded = true;
+
+      const loaded = await loadDailyData(dailyPreparationItemsClientRef.current, {
+        familyId: request.familyId,
+        childId: request.childId,
+        sessionDate: request.sessionDate,
+      });
+      if (
+        !dailyItemMutationMountedRef.current ||
+        sharedSessionMutationRequestRef.current !== request ||
+        dailyItemMutationScopeKeyRef.current !== request.scopeKey ||
+        dailyItemMutationScopeGenerationRef.current !== request.generation ||
+        customItemsRef.current.find((item) => item.id === itemId)?.updatedAt !==
+          request.templateUpdatedAt
+      ) {
+        return;
+      }
+
+      if (request.dailySessionId === null) {
+        if (
+          loaded.status !== "not_found" ||
+          sharedDailyStateRef.current?.status !== "not_found" ||
+          sharedDailyStateRef.current.sessionDate !== request.sessionDate
+        ) {
+          setCustomItemDeleteError({
+            itemId,
+            message: "削除結果を確認できませんでした。再読み込みしてください。",
+          });
+          return;
+        }
+      } else {
+        if (loaded.status !== "success" || request.startVersion === null) {
+          setCustomItemDeleteError({
+            itemId,
+            message: "削除結果を確認できませんでした。再読み込みしてください。",
+          });
+          return;
+        }
+        const scope = {
+          familyId: request.familyId,
+          childId: request.childId,
+          sessionDate: request.sessionDate,
+          dailySessionId: request.dailySessionId,
+          startSessionVersion: request.startVersion,
+          itemTemplateId: request.itemTemplateId,
+          dailyItemId: request.dailyItemId,
+          expectedDailyItemVersion: request.dailyItemVersion,
+          requestScopeKey: request.scopeKey,
+          currentScopeKey: dailyItemMutationScopeKeyRef.current,
+          requestScopeGeneration: request.generation,
+          currentScopeGeneration: dailyItemMutationScopeGenerationRef.current,
+        };
+        const latestSharedState = sharedDailyStateRef.current;
+        const nextState = latestSharedState
+          ? applyDeletedItemReloadToSharedDailyState(
+              latestSharedState,
+              scope,
+              loaded.session,
+            )
+          : latestSharedState;
+        if (!latestSharedState || nextState === latestSharedState) {
+          setCustomItemDeleteError({
+            itemId,
+            message: "削除結果を確認できませんでした。再読み込みしてください。",
+          });
+          return;
+        }
+        setSharedDailyState((current) =>
+          current
+            ? applyDeletedItemReloadToSharedDailyState(
+                current,
+                {
+                  ...scope,
+                  currentScopeKey: dailyItemMutationScopeKeyRef.current,
+                  currentScopeGeneration:
+                    dailyItemMutationScopeGenerationRef.current,
+                },
+                loaded.session,
+              )
+            : current,
+        );
+      }
+
+      applyCustomItemDeletion(itemId, false);
+      setCustomItemDeleteError(null);
+    } catch {
+      if (
+        dailyItemMutationMountedRef.current &&
+        sharedSessionMutationRequestRef.current === request &&
+        dailyItemMutationScopeKeyRef.current === request.scopeKey &&
+        dailyItemMutationScopeGenerationRef.current === request.generation
+      ) {
+        setCustomItemDeleteError({
+          itemId,
+          message: rpcSucceeded
+            ? "削除結果を確認できませんでした。再読み込みしてください。"
+            : "通信に失敗しました。通信環境を確認して、もう一度お試しください。",
+        });
+      }
+    } finally {
+      if (sharedSessionMutationRequestRef.current === request) {
+        sharedSessionMutationRequestRef.current = null;
+        if (dailyItemMutationMountedRef.current) {
+          setSharedSessionMutationPendingOperation(null);
+        }
+      }
+    }
+  };
+
   const deleteCustomItem = async (itemId: string) => {
     if (!durableItemsDeletable) {
       return;
@@ -3165,7 +3491,8 @@ function HomeClientContent({
       return;
     }
 
-    customItemDeleteInFlightItemIdsRef.current.add(itemId);
+    const deleteToken = Symbol(itemId);
+    customItemDeleteInFlightItemIdsRef.current.set(itemId, deleteToken);
     setCustomItemDeletingItemIds((current) => {
       const next = new Set(current);
       next.add(itemId);
@@ -3176,40 +3503,48 @@ function HomeClientContent({
     );
 
     try {
-      const saveResult = saveHomeCustomItemDelete(
-        dataSource,
-        itemId,
-        customItems.filter((item) => item.id !== itemId),
-        {
-          saveLocalCustomItems: appRepository.saveCustomItems,
-          saveSharedItemTemplateDelete: (input) =>
-            saveSharedItemTemplateDelete(createSupabaseClient(), input),
-        },
-      );
-
-      if (saveResult) {
-        await saveResult;
+      if (dataSource.mode === "shared") {
+        await runSharedCustomItemDelete(itemId);
+        return;
       }
 
-      applyCustomItemDeletion(itemId, dataSource.mode === "local");
-    } catch (error) {
-      console.error("Failed to delete custom item", error);
-      setCustomItemDeleteError({
-        itemId,
-        message: "保存できませんでした。もう一度お試しください",
-      });
+      const nextItems = customItems.filter((item) => item.id !== itemId);
+      appRepository.saveCustomItems(nextItems);
+      applyCustomItemDeletion(itemId, true);
+    } catch {
+      if (
+        dailyItemMutationMountedRef.current &&
+        customItemDeleteInFlightItemIdsRef.current.get(itemId) === deleteToken
+      ) {
+        setCustomItemDeleteError({
+          itemId,
+          message: "保存できませんでした。もう一度お試しください",
+        });
+      }
     } finally {
-      customItemDeleteInFlightItemIdsRef.current.delete(itemId);
-      setCustomItemDeletingItemIds((current) => {
-        const next = new Set(current);
-        next.delete(itemId);
-        return next;
-      });
+      if (
+        customItemDeleteInFlightItemIdsRef.current.get(itemId) === deleteToken
+      ) {
+        customItemDeleteInFlightItemIdsRef.current.delete(itemId);
+      }
+      if (
+        dailyItemMutationMountedRef.current &&
+        !customItemDeleteInFlightItemIdsRef.current.has(itemId)
+      ) {
+        setCustomItemDeletingItemIds((current) => {
+          const next = new Set(current);
+          next.delete(itemId);
+          return next;
+        });
+      }
     }
   };
 
   const requestCustomItemDelete = (itemId: string) => {
-    if (customItemDeleteInFlightItemIdsRef.current.has(itemId)) {
+    if (
+      customItemDeleteInFlightItemIdsRef.current.has(itemId) ||
+      (dataSource.mode === "shared" && sharedSessionMutationRequestRef.current)
+    ) {
       return;
     }
 
@@ -3223,7 +3558,11 @@ function HomeClientContent({
 
   const confirmCustomItemDelete = () => {
     const itemId = customItemDeleteConfirmItemId;
-    if (!itemId || customItemDeleteInFlightItemIdsRef.current.has(itemId)) {
+    if (
+      !itemId ||
+      customItemDeleteInFlightItemIdsRef.current.has(itemId) ||
+      (dataSource.mode === "shared" && sharedSessionMutationRequestRef.current)
+    ) {
       return;
     }
 
@@ -3364,8 +3703,21 @@ function HomeClientContent({
         applyCustomItems: setCustomItems,
         saveLocalCustomItems: appRepository.saveCustomItems,
         saveSharedItemTemplateEdit: (input) =>
-          saveSharedItemTemplateEdit(createSupabaseClient(), input),
+          saveSharedItemTemplateEdit(getHomeBrowserClient(), input),
       });
+      if (
+        dataSource.mode === "shared" &&
+        !(await reloadSharedDurableSettings())
+      ) {
+        setCustomItems((current) =>
+          current.map((currentItem) =>
+            currentItem.id === item.id
+              ? { ...currentItem, updatedAt: undefined }
+              : currentItem,
+          ),
+        );
+        throw new Error("shared_settings_reload_failed");
+      }
 
       if (nextCount === 0 && item.count !== 0) {
         showZeroQuantityToast();
@@ -3656,10 +4008,19 @@ function HomeClientContent({
         saveLocalCustomItems: appRepository.saveCustomItems,
         saveSharedItemTemplateSortOrders: (input) =>
           saveSharedItemTemplateSortOrders(
-            createSupabaseClient() as unknown as SharedItemTemplateSortOrderClient,
+            getHomeBrowserClient() as unknown as SharedItemTemplateSortOrderClient,
             input,
           ),
       });
+      if (
+        dataSource.mode === "shared" &&
+        !(await reloadSharedDurableSettings())
+      ) {
+        setCustomItems((current) =>
+          current.map((item) => ({ ...item, updatedAt: undefined })),
+        );
+        throw new Error("shared_settings_reload_failed");
+      }
 
       setSortingCategory(null);
       setSortingDraftItems(null);
@@ -4176,7 +4537,9 @@ function HomeClientContent({
     const isRoughItem = customItem.category === "ざっくり管理";
     const isEditing = editingCustomItemId === customItem.id;
     const isDragging = draggingCustomItemId === customItem.id;
-    const isDeleting = customItemDeletingItemIds.has(customItem.id);
+    const isDeleting =
+      customItemDeletingItemIds.has(customItem.id) ||
+      (dataSource.mode === "shared" && isSharedSessionMutationPending);
     const canInteract =
       existingItemDetailsEditable && !isSorting && !isDeleting;
 
@@ -4972,6 +5335,8 @@ function HomeClientContent({
               <button
                 type="button"
                 onClick={confirmCustomItemDelete}
+                disabled={isSharedSessionMutationPending}
+                aria-busy={isDeleteItemPending || undefined}
                 className="h-11 rounded-button bg-primary text-number font-normal text-surface shadow-button transition active:scale-95"
               >
                 削除する

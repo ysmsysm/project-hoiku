@@ -31,6 +31,7 @@ const baseRows = (): SharedSettingsRows => ({
       unit: "pack",
       sort_order: 30,
       current_rough_state: "refill",
+      updated_at: "2026-08-05T00:00:00.000Z",
     },
     {
       id: "template-spot",
@@ -42,6 +43,7 @@ const baseRows = (): SharedSettingsRows => ({
       unit: "",
       sort_order: 20,
       current_rough_state: null,
+      updated_at: "2026-08-05T00:00:00.000Z",
     },
     {
       id: "template-regular",
@@ -53,6 +55,7 @@ const baseRows = (): SharedSettingsRows => ({
       unit: "pcs",
       sort_order: 10,
       current_rough_state: null,
+      updated_at: "2026-08-05T00:00:00.000Z",
     },
   ],
   itemTemplateWeekdays: [
@@ -105,6 +108,7 @@ test("maps regular, spot, rough, weekdays, sort order, rough states, and default
   );
   assert.deepEqual(result.data.customItems[0], {
     id: "template-regular",
+    updatedAt: "2026-08-05T00:00:00.000Z",
     name: "Shirt",
     unit: "pcs",
     count: 3,
@@ -113,6 +117,7 @@ test("maps regular, spot, rough, weekdays, sort order, rough states, and default
   });
   assert.deepEqual(result.data.customItems[1], {
     id: "template-spot",
+    updatedAt: "2026-08-05T00:00:00.000Z",
     name: "Letter",
     unit: "",
     count: 1,
@@ -123,6 +128,22 @@ test("maps regular, spot, rough, weekdays, sort order, rough states, and default
   assert.deepEqual(result.data.roughStates, {
     "template-rough": defaultRoughStates["rough-tissue"],
   });
+});
+
+test("keeps the server template updated_at token and rejects malformed timestamps", () => {
+  const result = mapSharedSettingsRowsToAppData(baseRows());
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(
+      result.data.customItems.every(
+        (item) => item.updatedAt === "2026-08-05T00:00:00.000Z",
+      ),
+      true,
+    );
+  }
+  const invalid = baseRows();
+  invalid.itemTemplates[0].updated_at = "client-clock";
+  assertIssue(invalid, "invalid_item_updated_at");
 });
 
 test("maps image icon to iconUrl and photoUrl", () => {

@@ -98,6 +98,30 @@ export type SharedDailyCheckCompletionScope = {
   currentScopeGeneration: number;
 };
 
+export type SharedDailyItemDeletionTarget =
+  | { status: "invalid" }
+  | { status: "none"; dailyItemId: null; expectedDailyItemVersion: null }
+  | {
+      status: "ready";
+      dailyItemId: string;
+      expectedDailyItemVersion: number;
+    };
+
+export type SharedDailyItemDeletionScope = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  dailySessionId: string;
+  startSessionVersion: number;
+  itemTemplateId: string;
+  dailyItemId: string | null;
+  expectedDailyItemVersion: number | null;
+  requestScopeKey: string;
+  currentScopeKey: string;
+  requestScopeGeneration: number;
+  currentScopeGeneration: number;
+};
+
 const uuidEquals = (left: string, right: string): boolean =>
   normalizeDailyDataUuid(left) === normalizeDailyDataUuid(right);
 
@@ -138,6 +162,44 @@ export function getSharedPreparationBulkMutationPlan(
       isPrepared: desiredPrepared,
     })),
     currentItems: targets,
+  };
+}
+
+export function getSharedDailyItemDeletionTarget(
+  state: SharedDailyState,
+  itemTemplateId: string,
+): SharedDailyItemDeletionTarget {
+  if (state.status !== "success" || !isDailyDataUuid(itemTemplateId)) {
+    return { status: "invalid" };
+  }
+  const matches = state.session.items.filter(
+    (item) =>
+      item.itemTemplateId !== null &&
+      uuidEquals(item.itemTemplateId, itemTemplateId),
+  );
+  if (matches.length > 1) {
+    return { status: "invalid" };
+  }
+  if (matches.length === 0) {
+    return {
+      status: "none",
+      dailyItemId: null,
+      expectedDailyItemVersion: null,
+    };
+  }
+  const [item] = matches;
+  if (
+    item.isAdHoc ||
+    !isDailyDataUuid(item.dailyItemId) ||
+    !isPostgresInteger(item.version) ||
+    item.version < 1
+  ) {
+    return { status: "invalid" };
+  }
+  return {
+    status: "ready",
+    dailyItemId: item.dailyItemId,
+    expectedDailyItemVersion: item.version,
   };
 }
 
@@ -496,6 +558,77 @@ export function applyThanksSessionToSharedDailyState(
     new Set(
       session.items.map((item) => normalizeDailyDataUuid(item.dailyItemId)),
     ).size !== session.items.length
+  ) {
+    return state;
+  }
+
+  const mapped = mapDailySessionToSharedDailyState(session, scope.sessionDate);
+  return mapped.status === "success" ? mapped : state;
+}
+
+export function applyDeletedItemReloadToSharedDailyState(
+  state: SharedDailyState,
+  scope: SharedDailyItemDeletionScope,
+  session: DailySession,
+): SharedDailyState {
+  const targetPairIsValid =
+    (scope.dailyItemId === null &&
+      scope.expectedDailyItemVersion === null) ||
+    (isDailyDataUuid(scope.dailyItemId) &&
+      isPostgresInteger(scope.expectedDailyItemVersion) &&
+      scope.expectedDailyItemVersion >= 1);
+  const currentTarget =
+    state.status === "success"
+      ? getSharedDailyItemDeletionTarget(state, scope.itemTemplateId)
+      : { status: "invalid" as const };
+  const currentTargetMatches =
+    scope.dailyItemId === null
+      ? currentTarget.status === "none"
+      : currentTarget.status === "ready" &&
+        uuidEquals(currentTarget.dailyItemId, scope.dailyItemId) &&
+        currentTarget.expectedDailyItemVersion ===
+          scope.expectedDailyItemVersion;
+  const loadedIds = new Set<string>();
+  let hasInvalidLoadedItem = false;
+  let targetStillPresent = false;
+  for (const item of session.items) {
+    const id = normalizeDailyDataUuid(item.dailyItemId);
+    if (
+      !isDailyDataUuid(item.dailyItemId) ||
+      loadedIds.has(id) ||
+      !uuidEquals(item.familyId, session.familyId) ||
+      !uuidEquals(item.dailySessionId, session.dailySessionId)
+    ) {
+      hasInvalidLoadedItem = true;
+      break;
+    }
+    loadedIds.add(id);
+    if (
+      item.itemTemplateId !== null &&
+      uuidEquals(item.itemTemplateId, scope.itemTemplateId)
+    ) {
+      targetStillPresent = true;
+    }
+  }
+
+  if (
+    state.status !== "success" ||
+    !targetPairIsValid ||
+    !currentTargetMatches ||
+    scope.requestScopeKey !== scope.currentScopeKey ||
+    scope.requestScopeGeneration !== scope.currentScopeGeneration ||
+    !uuidEquals(state.session.familyId, scope.familyId) ||
+    !uuidEquals(state.session.childId, scope.childId) ||
+    state.session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(state.session.dailySessionId, scope.dailySessionId) ||
+    state.session.version !== scope.startSessionVersion ||
+    !uuidEquals(session.familyId, scope.familyId) ||
+    !uuidEquals(session.childId, scope.childId) ||
+    session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(session.dailySessionId, scope.dailySessionId) ||
+    session.version < scope.startSessionVersion ||
+    hasInvalidLoadedItem ||
+    targetStillPresent
   ) {
     return state;
   }

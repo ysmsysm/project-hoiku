@@ -4,6 +4,7 @@ import type {
   CustomizableItem,
   CustomItemCategory,
 } from "../../types/preparation";
+import { isDailyDataIsoDateTime } from "./daily-data";
 
 export type SharedSettingsChildRow = {
   id: string;
@@ -24,6 +25,7 @@ export type SharedSettingsItemTemplateRow = {
   unit: string | null;
   sort_order: number;
   current_rough_state: string | null;
+  updated_at: string;
 };
 
 export type SharedSettingsWeekdayRow = {
@@ -159,6 +161,7 @@ export function mapSharedSettingsRowsToAppData(
   );
   const customItems: CustomizableItem[] = sortedItems.map((item) => ({
     id: item.id,
+    updatedAt: item.updated_at,
     name: item.name,
     unit: item.unit as string,
     count: item.default_quantity,
@@ -292,6 +295,10 @@ function validateItemTemplate(
     addIssue(issues, `${path}.id`, "duplicate_item_id");
   } else {
     itemIds.add(item.id);
+  }
+
+  if (!isDailyDataIsoDateTime(item.updated_at)) {
+    addIssue(issues, `${path}.updated_at`, "invalid_item_updated_at");
   }
 
   if (!isKnownKind(item.kind)) {

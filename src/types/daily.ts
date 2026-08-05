@@ -237,6 +237,79 @@ export type SendDailyThanksResult =
   | SendDailyThanksBusinessResult
   | DailyDataFailure;
 
+export type DeleteDailyItemInput = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  itemTemplateId: string;
+  expectedTemplateUpdatedAt: string;
+  dailyItemId: string | null;
+  expectedDailyItemVersion: number | null;
+};
+
+export type DeletedItemTemplateMetadata = {
+  itemTemplateId: string;
+  familyId: string;
+  childId: string;
+  isActive: boolean;
+  updatedAt: string;
+};
+
+export type DeletedDailyItemMetadata = {
+  dailyItemId: string;
+  dailySessionId: string;
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  itemTemplateId: string;
+  version: number;
+  deletedAt: string | null;
+  updatedAt: string;
+  updatedByMemberId: string | null;
+  updatedByUserId: string | null;
+  updatedByDisplayName: string | null;
+};
+
+export type DeleteDailyItemReason =
+  | "invalid_input"
+  | "daily_item_mismatch"
+  | "session_completed"
+  | "carryover_linked";
+
+export type DeleteDailyItemBusinessResult =
+  | {
+      status: "success";
+      changed: boolean;
+      template: DeletedItemTemplateMetadata;
+      dailyItem: DeletedDailyItemMetadata | null;
+    }
+  | {
+      status: "conflict";
+      changed: false;
+      template: DeletedItemTemplateMetadata;
+      dailyItem: DeletedDailyItemMetadata | null;
+    }
+  | {
+      status: "forbidden";
+      changed: false;
+    }
+  | {
+      status: "not_found";
+      changed: false;
+      template?: DeletedItemTemplateMetadata;
+    }
+  | {
+      status: "invalid_state";
+      changed: false;
+      reason: DeleteDailyItemReason;
+      template?: DeletedItemTemplateMetadata;
+      dailyItem?: DeletedDailyItemMetadata;
+    };
+
+export type DeleteDailyItemResult =
+  | DeleteDailyItemBusinessResult
+  | DailyDataFailure;
+
 export type DailyDataValidationIssue = {
   path: string;
   code: string;
@@ -487,6 +560,24 @@ export type SendDailyThanksClient = {
       p_child_id: string;
       p_session_date: string;
       p_expected_version: number;
+    },
+  ) => PromiseLike<{
+    data: unknown;
+    error: unknown;
+  }>;
+};
+
+export type DeleteDailyItemClient = {
+  rpc: (
+    functionName: "delete_family_item_template_for_day",
+    args: {
+      p_family_id: string;
+      p_child_id: string;
+      p_session_date: string;
+      p_item_template_id: string;
+      p_expected_template_updated_at: string;
+      p_daily_item_id: string | null;
+      p_expected_daily_item_version: number | null;
     },
   ) => PromiseLike<{
     data: unknown;

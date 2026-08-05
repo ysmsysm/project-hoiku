@@ -15,6 +15,7 @@ import type {
   CompleteDailyCheckResult,
   CompleteDailyPreparationResult,
   DailySession,
+  DeleteDailyItemResult,
   SendDailyThanksResult,
   UpdateDailyItemResult,
   UpdateDailyPreparationItemsResult,
@@ -57,7 +58,8 @@ export type HomeDailyItemMutationOperation =
   | "bulk_prepared"
   | "complete_check"
   | "complete_preparation"
-  | "send_thanks";
+  | "send_thanks"
+  | "delete_item";
 
 export type HomeDailyItemMutationErrorView = {
   title: string;
@@ -434,7 +436,8 @@ export function getHomeDailyItemMutationErrorView(
     | UpdateDailyPreparationItemsResult
     | CompleteDailyCheckResult
     | CompleteDailyPreparationResult
-    | SendDailyThanksResult,
+    | SendDailyThanksResult
+    | DeleteDailyItemResult,
     { status: "success" }
   >,
   operation: HomeDailyItemMutationOperation,
@@ -449,6 +452,76 @@ export function getHomeDailyItemMutationErrorView(
           : operation === "bulk_prepared"
             ? "一括の準備状態"
             : "準備完了";
+
+  if (operation === "delete_item") {
+    if (result.status === "conflict") {
+      return {
+        title: "ほかの端末で変更されています",
+        body: "再読み込みして最新の状態を確認してください。",
+        canReload: true,
+      };
+    }
+    if (result.status === "invalid_state") {
+      if (result.reason === "session_completed") {
+        return {
+          title: "この項目を削除できません",
+          body: "準備完了後はこの項目を削除できません。",
+          canReload: false,
+        };
+      }
+      if (result.reason === "carryover_linked") {
+        return {
+          title: "この項目を削除できません",
+          body: "持ち越し中の項目は削除できません。",
+          canReload: false,
+        };
+      }
+      if (result.reason === "daily_item_mismatch") {
+        return {
+          title: "最新の状態を確認できませんでした",
+          body: "再読み込みして最新の状態を確認してください。",
+          canReload: true,
+        };
+      }
+      return {
+        title: "この項目を削除できません",
+        body: "現在の状態では削除できません。",
+        canReload: false,
+      };
+    }
+    if (result.status === "not_found") {
+      return {
+        title: "対象を確認できませんでした",
+        body: "再読み込みして最新の状態を確認してください。",
+        canReload: true,
+      };
+    }
+    if (result.status === "forbidden") {
+      return {
+        title: "削除権限を確認できませんでした",
+        body: "家族の共有設定を確認してください。",
+        canReload: false,
+      };
+    }
+    if (result.status === "transport_error") {
+      return result.error.kind === "invalid_response"
+        ? {
+            title: "削除結果を確認できませんでした",
+            body: "再読み込みして最新の状態を確認してください。",
+            canReload: true,
+          }
+        : {
+            title: "通信に失敗しました",
+            body: "通信環境を確認して、もう一度お試しください。",
+            canReload: false,
+          };
+    }
+    return {
+      title: "この項目を削除できません",
+      body: "現在の状態では削除できません。",
+      canReload: false,
+    };
+  }
 
   if (operation === "complete_check") {
     if (result.status === "conflict") {

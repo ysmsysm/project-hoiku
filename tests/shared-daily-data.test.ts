@@ -3,10 +3,12 @@ import test from "node:test";
 import {
   applyCheckedSessionToSharedDailyState,
   applyCompletedSessionToSharedDailyState,
+  applyDeletedItemReloadToSharedDailyState,
   applyThanksSessionToSharedDailyState,
   applyUpdatedItemsToSharedDailyState,
   applyUpdatedItemToSharedDailyState,
   getSharedPreparationBulkMutationPlan,
+  getSharedDailyItemDeletionTarget,
   loadSharedDailyDataForDate,
   mapLoadDailyDataResultToSharedDailyState,
 } from "../src/lib/family-sharing/shared-daily-data";
@@ -308,6 +310,7 @@ test("applies one validated item to the canonical session and re-derives views",
     assert.equal(applied.preparationSession.items[0].count, 1);
     assert.equal(applied.preparationSession.items[0].dailyItemVersion, 5);
   }
+
 });
 
 test("applies prepared and deferred item transitions through the shared mapper", async () => {
@@ -1250,5 +1253,190 @@ test("atomically applies changed batch items while preserving no-op and unrelate
       1,
     ).status,
     "not_found",
+  );
+});
+
+test("resolves one active template-backed daily deletion target from canonical state", async () => {
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload(),
+      items: [itemPayload()],
+    }),
+    input,
+  );
+  assert.equal(getSharedDailyItemDeletionTarget(state, templateId).status, "ready");
+  assert.deepEqual(
+    getSharedDailyItemDeletionTarget(state, "88888888-8888-4888-8888-888888888888"),
+    { status: "none", dailyItemId: null, expectedDailyItemVersion: null },
+  );
+  if (state.status !== "success") return;
+  assert.equal(
+    getSharedDailyItemDeletionTarget(
+      {
+        ...state,
+        session: {
+          ...state.session,
+          items: [...state.session.items, { ...state.session.items[0] }],
+        },
+      },
+      templateId,
+    ).status,
+    "invalid",
+  );
+  assert.equal(
+    getSharedDailyItemDeletionTarget(
+      {
+        ...state,
+        session: {
+          ...state.session,
+          items: [{ ...state.session.items[0], version: 0 }],
+        },
+      },
+      templateId,
+    ).status,
+    "invalid",
+  );
+});
+
+test("applies a full deletion reload only when target, scope, generation, and session version remain current", async () => {
+  const otherItemId = "88888888-8888-4888-8888-888888888888";
+  const otherTemplateId = "99999999-9999-4999-8999-999999999999";
+  const state = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload(),
+      items: [
+        itemPayload(),
+        itemPayload({
+          id: otherItemId,
+          daily_item_id: otherItemId,
+          item_template_id: otherTemplateId,
+          version: 8,
+        }),
+      ],
+    }),
+    input,
+  );
+  const reloaded = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload(),
+      items: [
+        itemPayload({
+          id: otherItemId,
+          daily_item_id: otherItemId,
+          item_template_id: otherTemplateId,
+          version: 9,
+          observed_quantity: 2,
+          shortage_count: 1,
+        }),
+      ],
+    }),
+    input,
+  );
+  assert.equal(state.status, "success");
+  assert.equal(reloaded.status, "success");
+  if (state.status !== "success" || reloaded.status !== "success") return;
+  const scope = {
+    familyId,
+    childId,
+    sessionDate,
+    dailySessionId: sessionId,
+    startSessionVersion: 2,
+    itemTemplateId: templateId,
+    dailyItemId: itemId,
+    expectedDailyItemVersion: 4,
+    requestScopeKey: "scope-a",
+    currentScopeKey: "scope-a",
+    requestScopeGeneration: 4,
+    currentScopeGeneration: 4,
+  };
+  const applied = applyDeletedItemReloadToSharedDailyState(
+    state,
+    scope,
+    reloaded.session,
+  );
+  assert.notEqual(applied, state);
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") {
+    assert.deepEqual(
+      applied.session.items.map((item) => item.dailyItemId),
+      [otherItemId],
+    );
+    assert.equal(applied.session.items[0].version, 9);
+    assert.equal(applied.checkView.items[0].observedQuantity, 2);
+    assert.equal(applied.preparationSession.items[0].dailyItemVersion, 9);
+  }
+
+  const targetOnlyState = {
+    ...state,
+    session: { ...state.session, items: [state.session.items[0]] },
+  };
+  const emptyReload = { ...reloaded.session, items: [] };
+  assert.equal(
+    applyDeletedItemReloadToSharedDailyState(
+      targetOnlyState,
+      scope,
+      emptyReload,
+    ).status,
+    "success",
+  );
+
+  const invalidScopes = [
+    { ...scope, familyId: otherItemId },
+    { ...scope, childId: otherItemId },
+    { ...scope, sessionDate: "2026-07-30" },
+    { ...scope, dailySessionId: otherItemId },
+    { ...scope, startSessionVersion: 3 },
+    { ...scope, dailyItemId: otherItemId },
+    { ...scope, expectedDailyItemVersion: 5 },
+    { ...scope, currentScopeKey: "scope-b" },
+    { ...scope, currentScopeGeneration: 5 },
+  ];
+  for (const invalidScope of invalidScopes) {
+    assert.equal(
+      applyDeletedItemReloadToSharedDailyState(
+        state,
+        invalidScope,
+        reloaded.session,
+      ),
+      state,
+    );
+  }
+  assert.equal(
+    applyDeletedItemReloadToSharedDailyState(
+      state,
+      scope,
+      { ...reloaded.session, items: [...reloaded.session.items, state.session.items[0]] },
+    ),
+    state,
+  );
+  const newerReload = {
+    ...reloaded.session,
+    version: scope.startSessionVersion + 1,
+  };
+  assert.notEqual(
+    applyDeletedItemReloadToSharedDailyState(state, scope, newerReload),
+    state,
+  );
+  assert.equal(
+    applyDeletedItemReloadToSharedDailyState(
+      state,
+      scope,
+      { ...reloaded.session, version: scope.startSessionVersion - 1 },
+    ),
+    state,
+  );
+  assert.equal(
+    applyDeletedItemReloadToSharedDailyState(
+      state,
+      scope,
+      {
+        ...reloaded.session,
+        items: [reloaded.session.items[0], { ...reloaded.session.items[0] }],
+      },
+    ),
+    state,
   );
 });

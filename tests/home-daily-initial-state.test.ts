@@ -1315,10 +1315,10 @@ test("thanks UI prioritizes sent state, hides unsent self thanks, and disables p
   assert.match(homeClientSource, /"送信中…"/);
 });
 
-test("session mutation generalization keeps check, complete, and thanks mutually exclusive", () => {
+test("session mutation generalization keeps check, complete, thanks, and delete mutually exclusive", () => {
   assert.match(
     homeClientSource,
-    /type SharedSessionMutationOperation =\s*\| "complete_check"\s*\| "complete_preparation"\s*\| "send_thanks"/,
+    /type SharedSessionMutationOperation =\s*\| "complete_check"\s*\| "complete_preparation"\s*\| "send_thanks"\s*\| "delete_item"/,
   );
   assert.match(
     homeClientSource,
@@ -1334,11 +1334,15 @@ test("session mutation generalization keeps check, complete, and thanks mutually
   );
   assert.match(
     homeClientSource,
+    /sharedSessionMutationPendingOperation === "delete_item"/,
+  );
+  assert.match(
+    homeClientSource,
     /sharedSessionMutationRequestRef\.current = null[\s\S]*?setSharedSessionMutationPendingOperation\(null\)/,
   );
   assert.equal(
     homeClientSource.match(/dailyMutationBrowserClientRef\.current \?\? createSupabaseClient\(\)/g)?.length,
-    5,
+    7,
   );
 });
 
@@ -1418,8 +1422,141 @@ test("local daily save boundaries and template cleanup are mode guarded", () => 
   );
   assert.match(
     homeClientSource,
-    /applyCustomItemDeletion\(itemId, dataSource\.mode === "local"\)/,
+    /appRepository\.saveCustomItems\(nextItems\);\s*applyCustomItemDeletion\(itemId, true\)/,
   );
+});
+
+test("shared durable deletion uses only the atomic RPC, reloads canonical daily data, and preserves local and ad-hoc boundaries", () => {
+  assert.match(
+    homeClientSource,
+    /const runSharedCustomItemDelete = async[\s\S]*?getSharedDailyItemDeletionTarget\([\s\S]*?deleteDailyItem\([\s\S]*?loadDailyData\([\s\S]*?applyDeletedItemReloadToSharedDailyState\(/,
+  );
+  assert.match(
+    homeClientSource,
+    /expectedTemplateUpdatedAt: request\.templateUpdatedAt[\s\S]*?dailyItemId: request\.dailyItemId[\s\S]*?expectedDailyItemVersion: request\.dailyItemVersion/,
+  );
+  assert.match(
+    homeClientSource,
+    /let dailyItemId: string \| null = null;[\s\S]*?currentSharedState\?\.status === "not_found"/,
+  );
+  assert.match(
+    homeClientSource,
+    /const currentSharedState = sharedDailyStateRef\.current;[\s\S]*?request\.dailySessionId !== null &&[\s\S]*?request\.dailyItemId !== null &&[\s\S]*?result\.dailyItem\?\.dailySessionId/,
+  );
+  assert.match(homeClientSource, /loaded\.status !== "not_found"/);
+  assert.match(
+    homeClientSource,
+    /sharedSessionMutationRequestRef\.current !== request[\s\S]*?dailyItemMutationScopeKeyRef\.current !== request\.scopeKey[\s\S]*?dailyItemMutationScopeGenerationRef\.current !== request\.generation/,
+  );
+  assert.match(
+    homeClientSource,
+    /customItemsRef\.current\.find\([\s\S]*?updatedAt !==\s*request\.templateUpdatedAt/,
+  );
+  assert.match(
+    homeClientSource,
+    /if \(sharedSessionMutationRequestRef\.current === request\)[\s\S]*?setSharedSessionMutationPendingOperation\(null\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /const deleteToken = Symbol\(itemId\)[\s\S]*?\.set\(itemId, deleteToken\)[\s\S]*?\.get\(itemId\) === deleteToken[\s\S]*?\.delete\(itemId\)/,
+  );
+  assert.match(homeClientSource, /applyCustomItemDeletion\(itemId, false\)/);
+  assert.doesNotMatch(homeClientSource, /saveSharedItemTemplateDelete/);
+  assert.doesNotMatch(homeClientSource, /deleteDailyItem\([\s\S]{0,900}appRepository/);
+
+  const localDeleteStart = homeClientSource.indexOf(
+    "const deleteCustomItem = async",
+  );
+  const todayOnlyStart = homeClientSource.indexOf(
+    "const toggleNewCustomItemWeekday",
+  );
+  const deleteSource = homeClientSource.slice(localDeleteStart, todayOnlyStart);
+  assert.match(
+    deleteSource,
+    /dataSource\.mode === "shared"[\s\S]*?await runSharedCustomItemDelete\(itemId\);[\s\S]*?return;[\s\S]*?appRepository\.saveCustomItems/,
+  );
+  assert.doesNotMatch(deleteSource, /setSpotAdditions|setTemporaryTodayOnlyItems/);
+  assert.match(
+    homeClientSource,
+    /disabled=\{isSharedSessionMutationPending\}[\s\S]*?aria-busy=\{isDeleteItemPending \|\| undefined\}/,
+  );
+});
+
+test("shared durable deletion errors are classified into safe settings messages", () => {
+  const conflict = getHomeDailyItemMutationErrorView(
+    {
+      status: "conflict",
+      changed: false,
+      template: {
+        itemTemplateId: familyId,
+        familyId,
+        childId,
+        isActive: true,
+        updatedAt: "2026-08-05T00:00:00.000Z",
+      },
+      dailyItem: null,
+    },
+    "delete_item",
+  );
+  const completed = getHomeDailyItemMutationErrorView(
+    {
+      status: "invalid_state",
+      changed: false,
+      reason: "session_completed",
+    },
+    "delete_item",
+  );
+  const carryover = getHomeDailyItemMutationErrorView(
+    {
+      status: "invalid_state",
+      changed: false,
+      reason: "carryover_linked",
+    },
+    "delete_item",
+  );
+  const reloadFailure = getHomeDailyItemMutationErrorView(
+    {
+      status: "transport_error",
+      error: {
+        kind: "invalid_response",
+        message: "delete_family_item_template_for_day raw",
+        issues: [{ path: familyId, code: "version_3" }],
+      },
+    },
+    "delete_item",
+  );
+  assert.equal(conflict.canReload, true);
+  assert.equal(completed.canReload, false);
+  assert.equal(carryover.canReload, false);
+  assert.equal(reloadFailure.canReload, true);
+  assert.doesNotMatch(
+    JSON.stringify([conflict, completed, carryover, reloadFailure]),
+    /delete_family_item_template_for_day|11111111|version_3|carryover_linked/,
+  );
+});
+
+test("shared settings saves reload server updated_at tokens before later deletion", () => {
+  assert.match(
+    homeClientSource,
+    /const reloadSharedDurableSettings = async[\s\S]*?loadSharedSettingsWithClient\([\s\S]*?setCustomItems\(loaded\.data\.customItems\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /saveHomeCustomItemAdd\([\s\S]*?await reloadSharedDurableSettings\(\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /saveHomeRoughState\([\s\S]*?await reloadSharedDurableSettings\(\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /saveHomeCustomItemEdit\([\s\S]*?await reloadSharedDurableSettings\(\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /saveHomeCustomItemSortOrder\([\s\S]*?await reloadSharedDurableSettings\(\)/,
+  );
+  assert.match(homeClientSource, /updatedAt: undefined/);
 });
 
 test("shared success renders but cannot run the local complete-check action", () => {
