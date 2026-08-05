@@ -12,7 +12,9 @@ import type {
 } from "../types/preparation";
 import type { SpotAddition } from "../types/spot";
 import type {
+  CompleteDailyCheckResult,
   CompleteDailyPreparationResult,
+  DailySession,
   SendDailyThanksResult,
   UpdateDailyItemResult,
   UpdateDailyPreparationItemsResult,
@@ -53,6 +55,7 @@ export type HomeDailyItemMutationOperation =
   | "prepared"
   | "deferred"
   | "bulk_prepared"
+  | "complete_check"
   | "complete_preparation"
   | "send_thanks";
 
@@ -60,6 +63,16 @@ export type HomeDailyItemMutationErrorView = {
   title: string;
   body: string;
   canReload: boolean;
+};
+
+export type HomeSharedCompleteCheckNavigationState = {
+  requestScopeKey: string;
+  currentScopeKey: string;
+  requestScopeGeneration: number;
+  currentScopeGeneration: number;
+  dailySessionId: string;
+  responseVersion: number;
+  appliedSession: DailySession;
 };
 
 type HomeLocalDailyRepository = Pick<
@@ -338,6 +351,29 @@ export function canRunHomeLocalCompleteCheck({
   );
 }
 
+export function canRunHomeCompleteCheckMutation(
+  dailyMode: HomeDailyInitialState["mode"],
+): boolean {
+  return dailyMode === "local" || dailyMode === "shared-success";
+}
+
+export function canNavigateHomeAfterSharedCompleteCheck(
+  state: SharedDailyState | null,
+  navigation: HomeSharedCompleteCheckNavigationState,
+): boolean {
+  return (
+    state?.status === "success" &&
+    navigation.requestScopeKey === navigation.currentScopeKey &&
+    navigation.requestScopeGeneration === navigation.currentScopeGeneration &&
+    state.session === navigation.appliedSession &&
+    state.session.dailySessionId.toLowerCase() ===
+      navigation.dailySessionId.toLowerCase() &&
+    state.session.version === navigation.responseVersion &&
+    state.session.isChecked &&
+    Boolean(state.session.checkedAt)
+  );
+}
+
 export function canRunHomeLocalDailyMutation(
   dailyMode: HomeDailyInitialState["mode"],
 ): boolean {
@@ -396,6 +432,7 @@ export function getHomeDailyItemMutationErrorView(
   result: Exclude<
     | UpdateDailyItemResult
     | UpdateDailyPreparationItemsResult
+    | CompleteDailyCheckResult
     | CompleteDailyPreparationResult
     | SendDailyThanksResult,
     { status: "success" }
@@ -412,6 +449,57 @@ export function getHomeDailyItemMutationErrorView(
           : operation === "bulk_prepared"
             ? "一括の準備状態"
             : "準備完了";
+
+  if (operation === "complete_check") {
+    if (result.status === "conflict") {
+      return {
+        title: "ほかの端末で状態が更新されています",
+        body: "最新の状態を確認するため、再読み込みしてください。",
+        canReload: true,
+      };
+    }
+    if (result.status === "forbidden") {
+      return {
+        title: "確認完了の権限を確認できません",
+        body: "家族の共有設定を確認してください。",
+        canReload: false,
+      };
+    }
+    if (result.status === "not_found") {
+      return {
+        title: "対象のデータが見つかりません",
+        body: "最新の状態を確認するため、再読み込みしてください。",
+        canReload: true,
+      };
+    }
+    if (result.status === "invalid_state") {
+      return {
+        title: "確認完了できる状態ではありません",
+        body: "最新の状態を確認するため、再読み込みしてください。",
+        canReload: true,
+      };
+    }
+    if (result.status === "client_error") {
+      return {
+        title: "確認完了できる状態ではありません",
+        body: "現在の画面の状態を確認してください。",
+        canReload: false,
+      };
+    }
+    if (result.status === "transport_error") {
+      return result.error.kind === "invalid_response"
+        ? {
+            title: "確認結果を確認できませんでした",
+            body: "最新の状態を確認するため、再読み込みしてください。",
+            canReload: true,
+          }
+        : {
+            title: "通信に失敗しました",
+            body: "通信環境を確認して、もう一度操作してください。",
+            canReload: false,
+          };
+    }
+  }
 
   if (operation === "send_thanks") {
     if (result.status === "invalid_state") {

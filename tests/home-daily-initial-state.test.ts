@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   canApplyHomeLocalDailyHydration,
+  canNavigateHomeAfterSharedCompleteCheck,
   canRenderHomeCompleteCheckAction,
+  canRunHomeCompleteCheckMutation,
   canRunHomeLocalCompleteCheck,
   canRunHomeCompletePreparationMutation,
   canRunHomeLocalDailyMutation,
@@ -618,6 +620,55 @@ test("complete preparation capability includes only local and shared success", (
   assert.equal(canRunHomeCompletePreparationMutation("shared-error"), false);
 });
 
+test("complete check capability includes only local and shared success", () => {
+  assert.equal(canRunHomeCompleteCheckMutation("local"), true);
+  assert.equal(canRunHomeCompleteCheckMutation("shared-success"), true);
+  assert.equal(canRunHomeCompleteCheckMutation("shared-non-success"), false);
+  assert.equal(canRunHomeCompleteCheckMutation("shared-error"), false);
+});
+
+test("complete check navigation requires the actually applied session and current scope", () => {
+  const state = successState();
+  const navigation = {
+    requestScopeKey: "scope-a",
+    currentScopeKey: "scope-a",
+    requestScopeGeneration: 3,
+    currentScopeGeneration: 3,
+    dailySessionId: state.session.dailySessionId,
+    responseVersion: state.session.version,
+    appliedSession: state.session,
+  };
+  assert.equal(canNavigateHomeAfterSharedCompleteCheck(state, navigation), true);
+  assert.equal(
+    canNavigateHomeAfterSharedCompleteCheck(state, {
+      ...navigation,
+      appliedSession: { ...state.session },
+    }),
+    false,
+  );
+  for (const invalid of [
+    { ...navigation, currentScopeKey: "scope-b" },
+    { ...navigation, currentScopeGeneration: 4 },
+    { ...navigation, dailySessionId: dailyItemId },
+    { ...navigation, responseVersion: state.session.version + 1 },
+  ]) {
+    assert.equal(canNavigateHomeAfterSharedCompleteCheck(state, invalid), false);
+  }
+  const uncheckedSession = {
+    ...state.session,
+    isChecked: false,
+    checkedAt: null,
+  };
+  assert.equal(
+    canNavigateHomeAfterSharedCompleteCheck(
+      { ...state, session: uncheckedSession },
+      { ...navigation, appliedSession: uncheckedSession },
+    ),
+    false,
+  );
+  assert.equal(canNavigateHomeAfterSharedCompleteCheck(null, navigation), false);
+});
+
 test("send thanks capability includes only local and shared success", () => {
   assert.equal(canRunHomeSendThanksMutation("local"), true);
   assert.equal(canRunHomeSendThanksMutation("shared-success"), true);
@@ -774,6 +825,49 @@ test("thanks mutation errors are safe and classify refresh availability", () => 
   assert.doesNotMatch(
     JSON.stringify(invalidResponse),
     /send_daily_thanks|11111111|version_4/,
+  );
+});
+
+test("complete check errors are generic, safe, and refresh only when useful", () => {
+  const conflict = getHomeDailyItemMutationErrorView(
+    { status: "conflict", changed: false, session: dailySession() },
+    "complete_check",
+  );
+  const invalidState = getHomeDailyItemMutationErrorView(
+    { status: "invalid_state", changed: false },
+    "complete_check",
+  );
+  const invalidInput = getHomeDailyItemMutationErrorView(
+    {
+      status: "client_error",
+      error: {
+        kind: "invalid_input",
+        message: "complete_daily_check raw input",
+        issues: [{ path: familyId, code: "version_4" }],
+      },
+    },
+    "complete_check",
+  );
+  const invalidResponse = getHomeDailyItemMutationErrorView(
+    {
+      status: "transport_error",
+      error: {
+        kind: "invalid_response",
+        message: "complete_daily_check raw response",
+        issues: [{ path: familyId, code: "version_4" }],
+      },
+    },
+    "complete_check",
+  );
+  assert.equal(conflict.canReload, true);
+  assert.equal(invalidState.canReload, true);
+  assert.equal(invalidInput.canReload, false);
+  assert.equal(invalidResponse.canReload, true);
+  assert.match(invalidState.title, /確認完了できる状態/);
+  assert.match(invalidResponse.title, /確認結果を確認できません/);
+  assert.doesNotMatch(
+    JSON.stringify([conflict, invalidState, invalidInput, invalidResponse]),
+    /complete_daily_check|11111111|version_4|invalid_state/,
   );
 });
 
@@ -1087,6 +1181,87 @@ test("complete pending is a bidirectional item and batch mutation lock", () => {
   );
 });
 
+test("shared complete check uses guarded session pending, full reload, and apply-confirmed navigation", () => {
+  const sharedRunner = homeClientSource.slice(
+    homeClientSource.indexOf("const runSharedCompleteCheck = async"),
+    homeClientSource.indexOf("const completeCheck = ()"),
+  );
+  const completeHandler = homeClientSource.slice(
+    homeClientSource.indexOf("const completeCheck = ()"),
+    homeClientSource.indexOf("const togglePreparationItem"),
+  );
+  assert.match(sharedRunner, /getCurrentSharedDailySession\(\)/);
+  assert.match(sharedRunner, /currentSharedSession\.isChecked/);
+  assert.match(sharedRunner, /currentSharedSession\.checkedAt !== null/);
+  assert.match(sharedRunner, /currentSharedSession\.isCompleted/);
+  assert.match(sharedRunner, /currentSharedSession\.completedAt !== null/);
+  assert.match(sharedRunner, /pendingDailyItemMutationRequestsRef\.current\.size > 0/);
+  assert.match(sharedRunner, /sharedSessionMutationRequestRef\.current/);
+  assert.doesNotMatch(
+    sharedRunner.slice(0, sharedRunner.indexOf("const requestScopeKey")),
+    /items\.length|isDeferred|shortageCount|observedQuantity/,
+  );
+  assert.match(sharedRunner, /operation: "complete_check"/);
+  assert.match(sharedRunner, /Symbol\("complete-check"\)/);
+  assert.match(sharedRunner, /scopeKey: requestScopeKey/);
+  assert.match(sharedRunner, /generation: requestScopeGeneration/);
+  assert.match(sharedRunner, /startVersion: currentSharedSession\.version/);
+  assert.match(
+    sharedRunner,
+    /completeDailyCheck\(dailyCheckClientRef\.current, input\)/,
+  );
+  assert.match(
+    sharedRunner,
+    /await loadDailyData\(dailyPreparationItemsClientRef\.current/,
+  );
+  assert.match(sharedRunner, /applyCheckedSessionToSharedDailyState/);
+  assert.match(sharedRunner, /nextState === currentSharedState/);
+  assert.match(sharedRunner, /sharedCompleteCheckNavigationRequestRef\.current =/);
+  assert.match(sharedRunner, /setSharedDailyState\(\(current\) =>/);
+  assert.match(sharedRunner, /sharedSessionMutationRequestRef\.current !== request/);
+  assert.match(sharedRunner, /sharedSessionMutationRequestRef\.current === request/);
+  assert.match(sharedRunner, /title: "確認結果を確認できませんでした"/);
+  assert.doesNotMatch(
+    sharedRunner,
+    /router\.refresh|appRepository|updateSession\(|ensure_daily_session|process_daily_carryovers/,
+  );
+  assert.match(
+    completeHandler,
+    /dailyMode === "shared-success"[\s\S]*?void runSharedCompleteCheck\(\)/,
+  );
+  assert.match(completeHandler, /appRepository\.createPreparationSession/);
+  assert.match(completeHandler, /buildPreparationItems/);
+  assert.match(completeHandler, /updateSession\(nextSession\)/);
+  assert.match(completeHandler, /setActiveTab\("items"\)/);
+});
+
+test("complete check navigation and button wait for canonical apply", () => {
+  const navigationEffect = homeClientSource.slice(
+    homeClientSource.indexOf(
+      "const navigation = sharedCompleteCheckNavigationRequestRef.current",
+    ),
+    homeClientSource.indexOf("roughStatesRef.current = roughStates"),
+  );
+  assert.match(navigationEffect, /canNavigateHomeAfterSharedCompleteCheck/);
+  assert.match(navigationEffect, /currentScopeKey: dailyItemMutationScopeKeyRef\.current/);
+  assert.match(
+    navigationEffect,
+    /currentScopeGeneration: dailyItemMutationScopeGenerationRef\.current/,
+  );
+  assert.match(navigationEffect, /appliedSession: navigation\.appliedSession/);
+  assert.match(navigationEffect, /setActiveTab\("items"\)/);
+
+  assert.match(homeClientSource, /sharedDailyState\.session\.version < 2_147_483_647/);
+  assert.match(homeClientSource, /pendingDailyItemMutationItemIds\.size === 0/);
+  assert.match(homeClientSource, /aria-busy=\{isCompleteCheckPending \|\| undefined\}/);
+  assert.match(homeClientSource, /"✓ 確認済み"/);
+  assert.match(homeClientSource, /"保存中…"/);
+  assert.match(
+    homeClientSource,
+    /dailyMode === "local"[\s\S]{0,100}\? !canRunLocalCompleteCheck[\s\S]{0,100}: !canRunSharedCompleteCheck/,
+  );
+});
+
 test("shared thanks uses a guarded session mutation, full reload, and canonical replacement", () => {
   const sharedRunner = homeClientSource.slice(
     homeClientSource.indexOf("const runSharedSendThanks = async"),
@@ -1140,10 +1315,14 @@ test("thanks UI prioritizes sent state, hides unsent self thanks, and disables p
   assert.match(homeClientSource, /"送信中…"/);
 });
 
-test("session mutation generalization keeps complete and thanks mutually exclusive", () => {
+test("session mutation generalization keeps check, complete, and thanks mutually exclusive", () => {
   assert.match(
     homeClientSource,
-    /type SharedSessionMutationOperation = "complete_preparation" \| "send_thanks"/,
+    /type SharedSessionMutationOperation =\s*\| "complete_check"\s*\| "complete_preparation"\s*\| "send_thanks"/,
+  );
+  assert.match(
+    homeClientSource,
+    /sharedSessionMutationPendingOperation === "complete_check"/,
   );
   assert.match(
     homeClientSource,
@@ -1159,7 +1338,7 @@ test("session mutation generalization keeps complete and thanks mutually exclusi
   );
   assert.equal(
     homeClientSource.match(/dailyMutationBrowserClientRef\.current \?\? createSupabaseClient\(\)/g)?.length,
-    4,
+    5,
   );
 });
 

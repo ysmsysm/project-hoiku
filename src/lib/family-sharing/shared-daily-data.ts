@@ -84,6 +84,20 @@ export type SharedDailyThanksScope = {
   currentScopeGeneration: number;
 };
 
+export type SharedDailyCheckCompletionScope = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  dailySessionId: string;
+  expectedSessionVersion: number;
+  responseSessionVersion: number;
+  changed: boolean;
+  requestScopeKey: string;
+  currentScopeKey: string;
+  requestScopeGeneration: number;
+  currentScopeGeneration: number;
+};
+
 const uuidEquals = (left: string, right: string): boolean =>
   normalizeDailyDataUuid(left) === normalizeDailyDataUuid(right);
 
@@ -296,6 +310,104 @@ export function applyCompletedSessionToSharedDailyState(
       : state.session.version !== scope.expectedSessionVersion &&
         (!state.session.isCompleted ||
           state.session.version !== session.version))
+  ) {
+    return state;
+  }
+
+  const mapped = mapDailySessionToSharedDailyState(session, scope.sessionDate);
+  return mapped.status === "success" ? mapped : state;
+}
+
+const hasCoherentSessionActorTuples = (session: DailySession): boolean => {
+  const preparedActors = [
+    session.completedByMemberId,
+    session.completedByUserId,
+    session.completedByDisplayName,
+  ];
+  const thanksActors = [
+    session.thanksSentByMemberId,
+    session.thanksSentByUserId,
+    session.thanksSentByDisplayName,
+    session.thanksReceivedByMemberId,
+    session.thanksReceivedByUserId,
+    session.thanksReceivedByDisplayName,
+  ];
+  const hasCheckedActors =
+    Boolean(session.checkedByMemberId) &&
+    Boolean(session.checkedByUserId) &&
+    session.checkedByDisplayName !== null;
+  const hasPreparedActors = preparedActors.every((value) => value !== null);
+  const hasNoPreparedActors = preparedActors.every((value) => value === null);
+  const hasThanksActors = thanksActors.every((value) => value !== null);
+  const hasNoThanksActors = thanksActors.every((value) => value === null);
+
+  if (!session.isChecked || !session.checkedAt || !hasCheckedActors) {
+    return false;
+  }
+  if (
+    session.isCompleted
+      ? !session.completedAt || !hasPreparedActors
+      : session.completedAt !== null || !hasNoPreparedActors
+  ) {
+    return false;
+  }
+  if (
+    session.thanksSent
+      ? !session.thanksSentAt ||
+        !session.isCompleted ||
+        !hasThanksActors ||
+        !uuidEquals(
+          session.completedByMemberId ?? "",
+          session.thanksReceivedByMemberId ?? "",
+        ) ||
+        uuidEquals(
+          session.thanksSentByMemberId ?? "",
+          session.thanksReceivedByMemberId ?? "",
+        )
+      : session.thanksSentAt !== null || !hasNoThanksActors
+  ) {
+    return false;
+  }
+  return true;
+};
+
+export function applyCheckedSessionToSharedDailyState(
+  state: SharedDailyState,
+  scope: SharedDailyCheckCompletionScope,
+  session: DailySession,
+): SharedDailyState {
+  if (
+    state.status !== "success" ||
+    scope.requestScopeKey !== scope.currentScopeKey ||
+    scope.requestScopeGeneration !== scope.currentScopeGeneration ||
+    !uuidEquals(state.session.familyId, scope.familyId) ||
+    !uuidEquals(state.session.childId, scope.childId) ||
+    state.session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(state.session.dailySessionId, scope.dailySessionId) ||
+    state.session.version !== scope.expectedSessionVersion ||
+    state.session.isChecked ||
+    state.session.checkedAt !== null ||
+    state.session.isCompleted ||
+    state.session.completedAt !== null ||
+    state.session.thanksSent ||
+    !uuidEquals(session.familyId, scope.familyId) ||
+    !uuidEquals(session.childId, scope.childId) ||
+    session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(session.dailySessionId, scope.dailySessionId) ||
+    session.version !== scope.responseSessionVersion ||
+    (scope.changed
+      ? scope.expectedSessionVersion >= 2_147_483_647 ||
+        scope.responseSessionVersion !== scope.expectedSessionVersion + 1
+      : scope.responseSessionVersion !== scope.expectedSessionVersion) ||
+    !hasCoherentSessionActorTuples(session) ||
+    session.items.some(
+      (item) =>
+        !uuidEquals(item.familyId, session.familyId) ||
+        !uuidEquals(item.dailySessionId, session.dailySessionId),
+    ) ||
+    new Set(
+      session.items.map((item) => normalizeDailyDataUuid(item.dailyItemId)),
+    ).size !== session.items.length
   ) {
     return state;
   }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyCheckedSessionToSharedDailyState,
   applyCompletedSessionToSharedDailyState,
   applyThanksSessionToSharedDailyState,
   applyUpdatedItemsToSharedDailyState,
@@ -15,6 +16,10 @@ import type {
   DailySession,
 } from "../src/types/daily";
 import type { SharedDailyState } from "../src/types/shared-daily";
+import {
+  createHomeLockerItems,
+  deriveHomeSharedDailyState,
+} from "../src/lib/home-daily-initial-state";
 
 const familyId = "11111111-1111-4111-8111-111111111111";
 const childId = "22222222-2222-4222-8222-222222222222";
@@ -732,6 +737,215 @@ test("accepts retry-safe no-op completion without requiring expected plus one", 
   );
   assert.equal(applied.status, "success");
   if (applied.status === "success") assert.equal(applied.session.version, 8);
+});
+
+test("replaces the full canonical session only after validated daily check completion", async () => {
+  const unchecked = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({
+        version: 2,
+        is_checked: false,
+        checked_at: null,
+        checked_by_member_id: null,
+        checked_by_user_id: null,
+        checked_by_display_name: null,
+      }),
+      items: [itemPayload({ is_checked: false, observed_quantity: 0 })],
+    }),
+    input,
+  );
+  const checked = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({
+        version: 3,
+        checked_by_member_id: familyId,
+        checked_by_user_id: childId,
+        checked_by_display_name: "パパ",
+      }),
+      items: [
+        itemPayload({
+          version: 7,
+          is_checked: false,
+          observed_quantity: 2,
+          shortage_count: 1,
+        }),
+      ],
+    }),
+    input,
+  );
+  assert.equal(unchecked.status, "success");
+  assert.equal(checked.status, "success");
+  if (unchecked.status !== "success" || checked.status !== "success") return;
+
+  const scope = {
+    familyId,
+    childId,
+    sessionDate,
+    dailySessionId: sessionId,
+    expectedSessionVersion: 2,
+    responseSessionVersion: 3,
+    changed: true,
+    requestScopeKey: "scope-a",
+    currentScopeKey: "scope-a",
+    requestScopeGeneration: 4,
+    currentScopeGeneration: 4,
+  };
+  const applied = applyCheckedSessionToSharedDailyState(
+    unchecked,
+    scope,
+    checked.session,
+  );
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") {
+    assert.equal(applied.session, checked.session);
+    assert.equal(applied.session.checkedAt, "2026-07-29T00:05:00.000Z");
+    assert.equal(applied.session.checkedByMemberId, familyId);
+    assert.equal(applied.checkView.items[0].observedQuantity, 2);
+    assert.equal(applied.checkView.items[0].version, 7);
+    assert.equal(applied.preparationSession.confirmedAt, checked.session.checkedAt);
+    assert.equal(applied.preparationSession.checkedBy, "パパ");
+    assert.equal(applied.preparationSession.items[0].count, 1);
+    assert.equal(applied.preparationSession.items[0].dailyItemVersion, 7);
+    const derived = deriveHomeSharedDailyState(applied);
+    assert.equal(derived.checkCounts[templateId], 2);
+    assert.equal(
+      createHomeLockerItems({
+        mode: "shared-success",
+        checkView: derived.checkView,
+      })[0].shortageCount,
+      2,
+    );
+  }
+
+  for (const invalidScope of [
+    { ...scope, familyId: childId },
+    { ...scope, childId: familyId },
+    { ...scope, sessionDate: "2026-07-30" },
+    { ...scope, dailySessionId: itemId },
+    { ...scope, expectedSessionVersion: 1 },
+    { ...scope, responseSessionVersion: 4 },
+    { ...scope, requestScopeKey: "stale" },
+    { ...scope, requestScopeGeneration: 3 },
+  ]) {
+    assert.equal(
+      applyCheckedSessionToSharedDailyState(
+        unchecked,
+        invalidScope,
+        checked.session,
+      ),
+      unchecked,
+    );
+  }
+  assert.equal(
+    applyCheckedSessionToSharedDailyState(unchecked, scope, {
+      ...checked.session,
+      items: [checked.session.items[0], checked.session.items[0]],
+    }),
+    unchecked,
+  );
+  assert.equal(
+    applyCheckedSessionToSharedDailyState(unchecked, scope, {
+      ...checked.session,
+      items: [{ ...checked.session.items[0], familyId: childId }],
+    }),
+    unchecked,
+  );
+  assert.equal(
+    applyCheckedSessionToSharedDailyState(unchecked, scope, {
+      ...checked.session,
+      dailySessionId: itemId,
+    }),
+    unchecked,
+  );
+  assert.equal(
+    applyCheckedSessionToSharedDailyState(unchecked, scope, {
+      ...checked.session,
+      checkedByMemberId: null,
+    }),
+    unchecked,
+  );
+  assert.equal(
+    applyCheckedSessionToSharedDailyState(unchecked, scope, {
+      ...checked.session,
+      completedByMemberId: familyId,
+    }),
+    unchecked,
+  );
+  assert.equal(
+    applyCheckedSessionToSharedDailyState(unchecked, scope, {
+      ...checked.session,
+      thanksSentByMemberId: familyId,
+    }),
+    unchecked,
+  );
+});
+
+test("accepts checked no-op and empty full item collections only at the start version", async () => {
+  const unchecked = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({
+        version: 2,
+        is_checked: false,
+        checked_at: null,
+        checked_by_member_id: null,
+        checked_by_user_id: null,
+        checked_by_display_name: null,
+      }),
+      items: [],
+    }),
+    input,
+  );
+  const checked = await loadSharedDailyDataForDate(
+    clientReturning({
+      status: "success",
+      session: sessionPayload({
+        version: 2,
+        checked_by_member_id: familyId,
+        checked_by_user_id: childId,
+        checked_by_display_name: "パパ",
+      }),
+      items: [],
+    }),
+    input,
+  );
+  assert.equal(unchecked.status, "success");
+  assert.equal(checked.status, "success");
+  if (unchecked.status !== "success" || checked.status !== "success") return;
+  const scope = {
+    familyId,
+    childId,
+    sessionDate,
+    dailySessionId: sessionId,
+    expectedSessionVersion: 2,
+    responseSessionVersion: 2,
+    changed: false,
+    requestScopeKey: "scope-a",
+    currentScopeKey: "scope-a",
+    requestScopeGeneration: 1,
+    currentScopeGeneration: 1,
+  };
+  const applied = applyCheckedSessionToSharedDailyState(
+    unchecked,
+    scope,
+    checked.session,
+  );
+  assert.equal(applied.status, "success");
+  if (applied.status === "success") {
+    assert.deepEqual(applied.session.items, []);
+    assert.deepEqual(applied.checkView.items, []);
+    assert.deepEqual(applied.preparationSession.items, []);
+  }
+  assert.equal(
+    applyCheckedSessionToSharedDailyState(
+      unchecked,
+      { ...scope, responseSessionVersion: 3 },
+      { ...checked.session, version: 3 },
+    ),
+    unchecked,
+  );
 });
 
 test("replaces the whole canonical state with a validated thanks reload", async () => {

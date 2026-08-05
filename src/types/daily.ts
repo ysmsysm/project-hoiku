@@ -133,6 +133,34 @@ export type DailySession = {
 
 export type DailySessionMetadata = Omit<DailySession, "items">;
 
+export type CompleteDailyCheckInput = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  expectedSessionVersion: number;
+};
+
+export type CompleteDailyCheckBusinessResult =
+  | {
+      status: "success";
+      changed: boolean;
+      session: DailySessionMetadata;
+    }
+  | {
+      status: "conflict";
+      changed: false;
+      session: DailySessionMetadata;
+    }
+  | {
+      status: "forbidden" | "not_found" | "invalid_state";
+      changed: false;
+      reason?: never;
+    };
+
+export type CompleteDailyCheckResult =
+  | CompleteDailyCheckBusinessResult
+  | DailyDataFailure;
+
 export type CompleteDailyPreparationInput = {
   familyId: string;
   childId: string;
@@ -415,6 +443,21 @@ export type UpdateDailyItemClient = {
           p_action: "set_deferred";
           p_value: { is_deferred: boolean };
         },
+  ) => PromiseLike<{
+    data: unknown;
+    error: unknown;
+  }>;
+};
+
+export type CompleteDailyCheckClient = {
+  rpc: (
+    functionName: "complete_daily_check",
+    args: {
+      p_family_id: string;
+      p_child_id: string;
+      p_session_date: string;
+      p_expected_version: number;
+    },
   ) => PromiseLike<{
     data: unknown;
     error: unknown;
