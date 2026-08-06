@@ -6,11 +6,14 @@ import {
 import type {
   SaveSharedItemTemplateAddInput,
   SaveSharedItemTemplateAddResult,
-  SaveSharedItemTemplateDeleteInput,
-  SaveSharedItemTemplateEditInput,
   SaveSharedItemTemplateSortOrderInput,
-  SaveSharedRoughStateInput,
 } from "./family-sharing/save-item-template";
+import type {
+  SharedTemplateMutationResult,
+  UpdateSharedItemTemplateInput,
+  UpdateSharedRoughItemStateInput,
+  UpdateSharedSpotItemTemplateInput,
+} from "./family-sharing/update-item-template";
 import type {
   CustomizableItem,
   CustomItemCategory,
@@ -42,15 +45,11 @@ type SaveHomeCustomItemEditDependencies = {
   applyCustomItems: (items: CustomizableItem[]) => void;
   saveLocalCustomItems: (items: CustomizableItem[]) => void;
   saveSharedItemTemplateEdit: (
-    input: SaveSharedItemTemplateEditInput,
-  ) => Promise<void>;
-};
-
-type SaveHomeCustomItemDeleteDependencies = {
-  saveLocalCustomItems: (items: CustomizableItem[]) => void;
-  saveSharedItemTemplateDelete: (
-    input: SaveSharedItemTemplateDeleteInput,
-  ) => Promise<void>;
+    input: UpdateSharedItemTemplateInput,
+  ) => Promise<SharedTemplateMutationResult>;
+  saveSharedSpotItemTemplate: (
+    input: UpdateSharedSpotItemTemplateInput,
+  ) => Promise<SharedTemplateMutationResult>;
 };
 
 type SaveHomeCustomItemSortOrderDependencies = {
@@ -64,12 +63,61 @@ type SaveHomeCustomItemSortOrderDependencies = {
 type SaveHomeRoughStateDependencies<RoughState extends string> = {
   applyRoughStates: (states: Record<string, RoughState>) => void;
   saveLocalRoughStates: (states: Record<string, RoughState>) => void;
-  saveSharedRoughState: (input: SaveSharedRoughStateInput) => Promise<void>;
+  saveSharedRoughState: (
+    input: UpdateSharedRoughItemStateInput,
+  ) => Promise<SharedTemplateMutationResult>;
 };
 
 export const homeCustomItemDragReverseDeadZonePx = 6;
 
 export type HomeCustomItemDragMoveDirection = "up" | "down";
+
+export type HomeSharedSettingsRequestGuard = {
+  mounted: boolean;
+  requestToken: symbol;
+  currentToken: symbol | null | undefined;
+  requestScopeKey: string;
+  currentScopeKey: string;
+  requestScopeGeneration: number;
+  currentScopeGeneration: number;
+};
+
+export function isCurrentHomeSharedSettingsRequest({
+  mounted,
+  requestToken,
+  currentToken,
+  requestScopeKey,
+  currentScopeKey,
+  requestScopeGeneration,
+  currentScopeGeneration,
+}: HomeSharedSettingsRequestGuard) {
+  return (
+    mounted &&
+    requestToken === currentToken &&
+    requestScopeKey === currentScopeKey &&
+    requestScopeGeneration === currentScopeGeneration
+  );
+}
+
+export function canApplyHomeSharedSettingsReload(input: {
+  mounted: boolean;
+  requestScopeKey: string;
+  currentScopeKey: string;
+  requestScopeGeneration: number;
+  currentScopeGeneration: number;
+  requestSequence: number;
+  currentSequence: number;
+  expectedChildId: string;
+  loadedChildId: string;
+}) {
+  return (
+    input.mounted &&
+    input.requestScopeKey === input.currentScopeKey &&
+    input.requestScopeGeneration === input.currentScopeGeneration &&
+    input.requestSequence === input.currentSequence &&
+    input.expectedChildId.toLowerCase() === input.loadedChildId.toLowerCase()
+  );
+}
 
 export type HomeCustomItemDragRowRect = {
   top: number;
@@ -300,46 +348,32 @@ export async function saveHomeCustomItemEdit(
   dataSource: Exclude<HomeDataSource, { mode: "shared-error" }>,
   itemId: string,
   nextItems: CustomizableItem[],
-  sharedChanges: SaveSharedItemTemplateEditInput["changes"],
+  sharedInput:
+    | Omit<UpdateSharedItemTemplateInput, "familyId" | "childId" | "itemTemplateId">
+    | Omit<
+        UpdateSharedSpotItemTemplateInput,
+        "familyId" | "childId" | "itemTemplateId"
+      >,
   dependencies: SaveHomeCustomItemEditDependencies,
 ) {
-  if (sharedChanges.count !== undefined) {
-    assertValidHomeItemQuantity(sharedChanges.count);
-  }
-  if (sharedChanges.unit !== undefined) {
-    assertValidHomeRoughUnit(sharedChanges.unit);
+  assertValidHomeItemQuantity(sharedInput.defaultQuantity);
+  if ("unit" in sharedInput && sharedInput.unit !== null) {
+    assertValidHomeRoughUnit(sharedInput.unit);
   }
 
   if (dataSource.mode === "shared") {
-    await dependencies.saveSharedItemTemplateEdit({
+    const common = {
       familyId: dataSource.familyId,
       childId: dataSource.initialData.childId,
-      itemId,
-      changes: sharedChanges,
-    });
-    dependencies.applyCustomItems(nextItems);
-    return;
+      itemTemplateId: itemId,
+    };
+    return "weekdays" in sharedInput
+      ? dependencies.saveSharedSpotItemTemplate({ ...common, ...sharedInput })
+      : dependencies.saveSharedItemTemplateEdit({ ...common, ...sharedInput });
   }
 
   dependencies.saveLocalCustomItems(nextItems);
   dependencies.applyCustomItems(nextItems);
-}
-
-export function saveHomeCustomItemDelete(
-  dataSource: Exclude<HomeDataSource, { mode: "shared-error" }>,
-  itemId: string,
-  nextItems: CustomizableItem[],
-  dependencies: SaveHomeCustomItemDeleteDependencies,
-) {
-  if (dataSource.mode === "shared") {
-    return dependencies.saveSharedItemTemplateDelete({
-      familyId: dataSource.familyId,
-      childId: dataSource.initialData.childId,
-      itemId,
-    });
-  }
-
-  dependencies.saveLocalCustomItems(nextItems);
 }
 
 export async function saveHomeCustomItemSortOrder(
@@ -368,20 +402,27 @@ export async function saveHomeRoughState<RoughState extends string>(
   dataSource: Exclude<HomeDataSource, { mode: "shared-error" }>,
   itemId: string,
   roughState: RoughState,
+  expectedUpdatedAt: string,
   nextStates: Record<string, RoughState>,
   dependencies: SaveHomeRoughStateDependencies<RoughState>,
 ) {
   if (dataSource.mode === "shared") {
-    await dependencies.saveSharedRoughState({
+    return dependencies.saveSharedRoughState({
       familyId: dataSource.familyId,
       childId: dataSource.initialData.childId,
-      itemId,
-      roughState,
+      itemTemplateId: itemId,
+      expectedUpdatedAt,
+      currentRoughState: toSharedRoughState(roughState),
     });
-    dependencies.applyRoughStates(nextStates);
-    return;
   }
 
   dependencies.saveLocalRoughStates(nextStates);
   dependencies.applyRoughStates(nextStates);
+}
+
+function toSharedRoughState(value: string): "enough" | "low" | "refill" {
+  if (value === "十分") return "enough";
+  if (value === "少ない") return "low";
+  if (value === "補充") return "refill";
+  throw new Error("invalid_rough_state");
 }

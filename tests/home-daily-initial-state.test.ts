@@ -1478,7 +1478,7 @@ test("shared durable deletion uses only the atomic RPC, reloads canonical daily 
   assert.doesNotMatch(deleteSource, /setSpotAdditions|setTemporaryTodayOnlyItems/);
   assert.match(
     homeClientSource,
-    /disabled=\{isSharedSessionMutationPending\}[\s\S]*?aria-busy=\{isDeleteItemPending \|\| undefined\}/,
+    /disabled=\{[\s\S]*?isSharedSessionMutationPending[\s\S]*?isItemSettingsMutationPending[\s\S]*?\}[\s\S]*?aria-busy=\{isDeleteItemPending \|\| undefined\}/,
   );
 });
 
@@ -1556,7 +1556,54 @@ test("shared settings saves reload server updated_at tokens before later deletio
     homeClientSource,
     /saveHomeCustomItemSortOrder\([\s\S]*?await reloadSharedDurableSettings\(\)/,
   );
-  assert.match(homeClientSource, /updatedAt: undefined/);
+  assert.match(
+    homeClientSource,
+    /canApplyHomeSharedSettingsReload\([\s\S]*?requestSequence: reloadSequence[\s\S]*?currentSequence: sharedSettingsReloadSequenceRef\.current/,
+  );
+  assert.match(
+    homeClientSource,
+    /requestScopeGeneration,[\s\S]*?currentScopeGeneration: dailyItemMutationScopeGenerationRef\.current/,
+  );
+  assert.doesNotMatch(homeClientSource, /updatedAt: undefined/);
+});
+
+test("shared template edits use locked RPC clients, current tokens, and request guards", () => {
+  assert.match(homeClientSource, /updateSharedItemTemplate\(/);
+  assert.match(homeClientSource, /updateSharedRoughItemState\(/);
+  assert.match(homeClientSource, /updateSharedSpotItemTemplate\(/);
+  assert.match(
+    homeClientSource,
+    /customItemsRef\.current\.find\([\s\S]*?isDailyDataIsoDateTime\(currentItem\.updatedAt\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /customItemEditStartTokenRef\.current\.updatedAt !== currentItem\.updatedAt/,
+  );
+  assert.match(
+    homeClientSource,
+    /isCurrentHomeSharedSettingsRequest\([\s\S]*?currentToken: settingsMutationInFlightItemIdsRef\.current\.get\(item\.id\)/,
+  );
+  assert.match(
+    homeClientSource,
+    /isCurrentHomeSharedSettingsRequest\([\s\S]*?currentToken: settingsMutationInFlightItemIdsRef\.current\.get\(itemId\)/,
+  );
+  assert.match(homeClientSource, /getSharedTemplateMutationErrorMessage\(/);
+  assert.match(
+    homeClientSource,
+    /customItemAddInFlightRef\.current !== null \|\|[\s\S]*?customItemSortOrderSaveInFlightRef\.current !== null/,
+  );
+  assert.match(
+    homeClientSource,
+    /requestToken: addRequestToken[\s\S]*?requestScopeGeneration: addRequestScopeGeneration/,
+  );
+  assert.match(
+    homeClientSource,
+    /requestToken: sortRequestToken[\s\S]*?requestScopeGeneration: sortRequestScopeGeneration/,
+  );
+  assert.doesNotMatch(
+    homeClientSource,
+    /update_family_spot_item_template_weekdays/,
+  );
 });
 
 test("shared success renders but cannot run the local complete-check action", () => {

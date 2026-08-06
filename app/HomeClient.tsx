@@ -109,9 +109,11 @@ import {
   applyHomeRoughStateChange,
   appendHomeCustomItemToCategory,
   canUpdateHomeCustomItemDragPointer,
+  canApplyHomeSharedSettingsReload,
   canInterruptHomeCustomItemSorting,
   getHomeCustomItemDragCenterY,
   getHomeCustomItemDragTargetIndex,
+  isCurrentHomeSharedSettingsRequest,
   reorderHomeCustomItemsInCategory,
   saveHomeCustomItemAdd,
   saveHomeCustomItemEdit,
@@ -122,12 +124,17 @@ import {
 import { homeItemQuantityMax } from "../src/lib/home-item-template-constraints";
 import {
   saveSharedItemTemplateAdd,
-  saveSharedItemTemplateEdit,
   saveSharedItemTemplateSortOrders,
-  saveSharedRoughState,
   type SharedItemTemplateAddClient,
   type SharedItemTemplateSortOrderClient,
 } from "../src/lib/family-sharing/save-item-template";
+import {
+  getSharedTemplateMutationErrorMessage,
+  updateSharedItemTemplate,
+  updateSharedRoughItemState,
+  updateSharedSpotItemTemplate,
+  type SharedTemplateUpdateClient,
+} from "../src/lib/family-sharing/update-item-template";
 import { clampSpotQuantity, formatSpotItemName } from "../src/lib/spotQuantity";
 import { createClient as createSupabaseClient } from "../src/lib/supabase/client";
 import {
@@ -137,7 +144,10 @@ import { completeDailyPreparation } from "../src/lib/family-sharing/complete-dai
 import { completeDailyCheck } from "../src/lib/family-sharing/complete-daily-check";
 import { sendDailyThanks } from "../src/lib/family-sharing/send-daily-thanks";
 import { deleteDailyItem } from "../src/lib/family-sharing/delete-daily-item";
-import { loadDailyData } from "../src/lib/family-sharing/daily-data";
+import {
+  isDailyDataIsoDateTime,
+  loadDailyData,
+} from "../src/lib/family-sharing/daily-data";
 import { loadSharedSettingsWithClient } from "../src/lib/family-sharing/shared-settings-query";
 import {
   isDeferredDailyItemMutationNoOp,
@@ -862,6 +872,10 @@ function HomeClientContent({
   const [roughStateSaveError, setRoughStateSaveError] = useState<string | null>(
     null,
   );
+  const isItemSettingsMutationPending =
+    savingCustomItemId !== null ||
+    roughStateSavingItemIds.length > 0 ||
+    customItemDeletingItemIds.size > 0;
   const [expandedWeekdayItemId, setExpandedWeekdayItemId] = useState<
     string | null
   >(null);
@@ -893,11 +907,17 @@ function HomeClientContent({
   const customItemDragStartTimeoutRef = useRef<number | null>(null);
   const customItemDragFrameRef = useRef<number | null>(null);
   const previousActiveTabRef = useRef<AppTab>(activeTab);
-  const customItemSaveInFlightRef = useRef(false);
-  const customItemAddInFlightRef = useRef(false);
-  const customItemSortOrderSaveInFlightRef = useRef(false);
+  const customItemSaveInFlightRef = useRef<symbol | null>(null);
+  const customItemEditStartTokenRef = useRef<{
+    itemId: string;
+    updatedAt: string | undefined;
+  } | null>(null);
+  const customItemAddInFlightRef = useRef<symbol | null>(null);
+  const customItemSortOrderSaveInFlightRef = useRef<symbol | null>(null);
   const customItemDeleteInFlightItemIdsRef = useRef(new Map<string, symbol>());
   const roughStateSaveInFlightItemIdsRef = useRef(new Set<string>());
+  const settingsMutationInFlightItemIdsRef = useRef(new Map<string, symbol>());
+  const sharedSettingsReloadSequenceRef = useRef(0);
   const roughStatesRef = useRef(initialRoughStates);
   const customItemsRef = useRef(initialCustomItems);
 
@@ -912,6 +932,9 @@ function HomeClientContent({
     if (dataSource.mode !== "shared") {
       return false;
     }
+    const requestScopeKey = dailyItemMutationScopeKeyRef.current;
+    const requestScopeGeneration = dailyItemMutationScopeGenerationRef.current;
+    const reloadSequence = ++sharedSettingsReloadSequenceRef.current;
     let loaded: Awaited<ReturnType<typeof loadSharedSettingsWithClient>>;
     try {
       loaded = await loadSharedSettingsWithClient(
@@ -921,10 +944,21 @@ function HomeClientContent({
     } catch {
       return false;
     }
+    if (loaded.ok === false) {
+      return false;
+    }
     if (
-      loaded.ok === false ||
-      loaded.data.childId.toLowerCase() !==
-        dataSource.initialData.childId.toLowerCase()
+      !canApplyHomeSharedSettingsReload({
+        mounted: dailyItemMutationMountedRef.current,
+        requestScopeKey,
+        currentScopeKey: dailyItemMutationScopeKeyRef.current,
+        requestScopeGeneration,
+        currentScopeGeneration: dailyItemMutationScopeGenerationRef.current,
+        requestSequence: reloadSequence,
+        currentSequence: sharedSettingsReloadSequenceRef.current,
+        expectedChildId: dataSource.initialData.childId,
+        loadedChildId: loaded.data.childId,
+      })
     ) {
       return false;
     }
@@ -937,7 +971,7 @@ function HomeClientContent({
 
   const canInterruptCustomItemSorting = () =>
     canInterruptHomeCustomItemSorting(
-      customItemSortOrderSaveInFlightRef.current,
+      customItemSortOrderSaveInFlightRef.current !== null,
     );
 
   const cancelCustomItemDragFrame = () => {
@@ -955,6 +989,7 @@ function HomeClientContent({
     setChildProfile(sharedInitialData.childProfile);
     setSavedChildName(sharedInitialData.childProfile.name);
     setChildNameDraft(sharedInitialData.childProfile.name);
+    customItemsRef.current = sharedInitialData.customItems;
     setCustomItems(sharedInitialData.customItems);
     roughStatesRef.current = sharedInitialData.roughStates;
     setRoughStates(sharedInitialData.roughStates);
@@ -982,6 +1017,20 @@ function HomeClientContent({
     setSharedSessionMutationPendingOperation(null);
     setDailyItemMutationError(null);
     customItemDeleteInFlightItemIdsRef.current.clear();
+    settingsMutationInFlightItemIdsRef.current.clear();
+    roughStateSaveInFlightItemIdsRef.current.clear();
+    sharedSettingsReloadSequenceRef.current += 1;
+    customItemSaveInFlightRef.current = null;
+    customItemAddInFlightRef.current = null;
+    customItemSortOrderSaveInFlightRef.current = null;
+    customItemEditStartTokenRef.current = null;
+    setSavingCustomItemId(null);
+    setRoughStateSavingItemIds([]);
+    setIsAddingCustomItem(false);
+    setIsSavingCustomItemSortOrder(false);
+    setEditingCustomItemId(null);
+    setCustomItemEditError(null);
+    setRoughStateSaveError(null);
     setCustomItemDeletingItemIds(new Set());
     setCustomItemDeleteError(null);
   }, [dailyItemMutationScopeKey]);
@@ -991,10 +1040,15 @@ function HomeClientContent({
     const pendingRequests = pendingDailyItemMutationRequestsRef.current;
     const pendingCustomItemDeletes =
       customItemDeleteInFlightItemIdsRef.current;
+    const pendingSettingsMutations = settingsMutationInFlightItemIdsRef.current;
+    const pendingRoughStateSaves = roughStateSaveInFlightItemIdsRef.current;
     return () => {
       dailyItemMutationMountedRef.current = false;
       pendingRequests.clear();
       pendingCustomItemDeletes.clear();
+      pendingSettingsMutations.clear();
+      pendingRoughStateSaves.clear();
+      sharedSettingsReloadSequenceRef.current += 1;
       sharedSessionMutationRequestRef.current = null;
       sharedCompleteCheckNavigationRequestRef.current = null;
     };
@@ -1807,7 +1861,29 @@ function HomeClientContent({
       return;
     }
 
-    if (roughStateSaveInFlightItemIdsRef.current.has(itemId)) {
+    if (
+      roughStateSaveInFlightItemIdsRef.current.has(itemId) ||
+      settingsMutationInFlightItemIdsRef.current.has(itemId) ||
+      customItemAddInFlightRef.current !== null ||
+      customItemSortOrderSaveInFlightRef.current !== null ||
+      customItemDeleteInFlightItemIdsRef.current.has(itemId) ||
+      (sharedSessionMutationRequestRef.current?.operation === "delete_item" &&
+        sharedSessionMutationRequestRef.current.itemTemplateId === itemId)
+    ) {
+      return;
+    }
+
+    const currentItem = customItemsRef.current.find(
+      (candidate) => candidate.id === itemId,
+    );
+    if (
+      dataSource.mode === "shared" &&
+      (currentItem?.category !== "ざっくり管理" ||
+        !isDailyDataIsoDateTime(currentItem.updatedAt))
+    ) {
+      setRoughStateSaveError(
+        "最新の項目情報を確認できませんでした。再読み込みしてください。",
+      );
       return;
     }
 
@@ -1822,46 +1898,95 @@ function HomeClientContent({
       nextState,
     );
 
+    const requestToken = Symbol(itemId);
+    const requestScopeKey = dailyItemMutationScopeKeyRef.current;
+    const requestScopeGeneration = dailyItemMutationScopeGenerationRef.current;
     roughStateSaveInFlightItemIdsRef.current.add(itemId);
+    settingsMutationInFlightItemIdsRef.current.set(itemId, requestToken);
     setRoughStateSavingItemIds((current) => [...current, itemId]);
     setRoughStateSaveError(null);
 
     try {
-      await saveHomeRoughState(dataSource, itemId, nextState, nextStates, {
-        applyRoughStates: (states) => {
-          roughStatesRef.current = applyHomeRoughStateChange(
-            roughStatesRef.current,
-            itemId,
-            states[itemId],
-          );
-          setRoughStates((current) => ({
-            ...current,
-            [itemId]: states[itemId],
-          }));
+      const result = await saveHomeRoughState(
+        dataSource,
+        itemId,
+        nextState,
+        currentItem?.updatedAt ?? "",
+        nextStates,
+        {
+          applyRoughStates: (states) => {
+            roughStatesRef.current = applyHomeRoughStateChange(
+              roughStatesRef.current,
+              itemId,
+              states[itemId],
+            );
+            setRoughStates((current) => ({
+              ...current,
+              [itemId]: states[itemId],
+            }));
+          },
+          saveLocalRoughStates: appRepository.saveRoughStates,
+          saveSharedRoughState: (input) =>
+            updateSharedRoughItemState(
+              getHomeBrowserClient() as unknown as SharedTemplateUpdateClient,
+              input,
+            ),
         },
-        saveLocalRoughStates: appRepository.saveRoughStates,
-        saveSharedRoughState: (input) =>
-          saveSharedRoughState(getHomeBrowserClient(), input),
-      });
+      );
+      if (
+        dataSource.mode === "shared" &&
+        !isCurrentHomeSharedSettingsRequest({
+          mounted: dailyItemMutationMountedRef.current,
+          requestToken,
+          currentToken: settingsMutationInFlightItemIdsRef.current.get(itemId),
+          requestScopeKey,
+          currentScopeKey: dailyItemMutationScopeKeyRef.current,
+          requestScopeGeneration,
+          currentScopeGeneration: dailyItemMutationScopeGenerationRef.current,
+        })
+      ) {
+        return;
+      }
+      if (dataSource.mode === "shared" && result?.status !== "success") {
+        setRoughStateSaveError(
+          getSharedTemplateMutationErrorMessage(result),
+        );
+        return;
+      }
       if (
         dataSource.mode === "shared" &&
         !(await reloadSharedDurableSettings())
       ) {
-        setCustomItems((current) =>
-          current.map((item) =>
-            item.id === itemId ? { ...item, updatedAt: undefined } : item,
-          ),
-        );
         throw new Error("shared_settings_reload_failed");
       }
-    } catch (error) {
-      console.error("Failed to save rough state", error);
-      setRoughStateSaveError("保存できませんでした。もう一度お試しください");
+    } catch {
+      if (
+        isCurrentHomeSharedSettingsRequest({
+          mounted: dailyItemMutationMountedRef.current,
+          requestToken,
+          currentToken: settingsMutationInFlightItemIdsRef.current.get(itemId),
+          requestScopeKey,
+          currentScopeKey: dailyItemMutationScopeKeyRef.current,
+          requestScopeGeneration,
+          currentScopeGeneration: dailyItemMutationScopeGenerationRef.current,
+        })
+      ) {
+        setRoughStateSaveError(
+          "保存結果を確認できませんでした。再読み込みしてください。",
+        );
+      }
     } finally {
-      roughStateSaveInFlightItemIdsRef.current.delete(itemId);
-      setRoughStateSavingItemIds((current) =>
-        current.filter((savingItemId) => savingItemId !== itemId),
-      );
+      if (
+        settingsMutationInFlightItemIdsRef.current.get(itemId) === requestToken
+      ) {
+        settingsMutationInFlightItemIdsRef.current.delete(itemId);
+        roughStateSaveInFlightItemIdsRef.current.delete(itemId);
+        if (dailyItemMutationMountedRef.current) {
+          setRoughStateSavingItemIds((current) =>
+            current.filter((savingItemId) => savingItemId !== itemId),
+          );
+        }
+      }
     }
   };
 
@@ -3084,7 +3209,13 @@ function HomeClientContent({
       return false;
     }
 
-    if (customItemAddInFlightRef.current) {
+    if (
+      customItemAddInFlightRef.current ||
+      customItemSortOrderSaveInFlightRef.current ||
+      settingsMutationInFlightItemIdsRef.current.size > 0 ||
+      customItemDeleteInFlightItemIdsRef.current.size > 0 ||
+      sharedSessionMutationRequestRef.current !== null
+    ) {
       return false;
     }
 
@@ -3104,7 +3235,11 @@ function HomeClientContent({
           ? "個"
           : "枚";
 
-    customItemAddInFlightRef.current = true;
+    const addRequestToken = Symbol("add-item");
+    const addRequestScopeKey = dailyItemMutationScopeKeyRef.current;
+    const addRequestScopeGeneration =
+      dailyItemMutationScopeGenerationRef.current;
+    customItemAddInFlightRef.current = addRequestToken;
     setIsAddingCustomItem(true);
 
     try {
@@ -3131,6 +3266,21 @@ function HomeClientContent({
             ),
         },
       );
+
+      if (
+        dataSource.mode === "shared" &&
+        !isCurrentHomeSharedSettingsRequest({
+          mounted: dailyItemMutationMountedRef.current,
+          requestToken: addRequestToken,
+          currentToken: customItemAddInFlightRef.current,
+          requestScopeKey: addRequestScopeKey,
+          currentScopeKey: dailyItemMutationScopeKeyRef.current,
+          requestScopeGeneration: addRequestScopeGeneration,
+          currentScopeGeneration: dailyItemMutationScopeGenerationRef.current,
+        })
+      ) {
+        return false;
+      }
 
       if (dataSource.mode === "shared") {
         if (!(await reloadSharedDurableSettings())) {
@@ -3165,13 +3315,24 @@ function HomeClientContent({
       }
 
       return true;
-    } catch (error) {
-      console.error("Failed to add custom item", error);
-      setCustomItemAddError("保存できませんでした。もう一度お試しください");
+    } catch {
+      if (
+        dailyItemMutationMountedRef.current &&
+        customItemAddInFlightRef.current === addRequestToken &&
+        dailyItemMutationScopeKeyRef.current === addRequestScopeKey &&
+        dailyItemMutationScopeGenerationRef.current ===
+          addRequestScopeGeneration
+      ) {
+        setCustomItemAddError("保存できませんでした。もう一度お試しください");
+      }
       return false;
     } finally {
-      customItemAddInFlightRef.current = false;
-      setIsAddingCustomItem(false);
+      if (customItemAddInFlightRef.current === addRequestToken) {
+        customItemAddInFlightRef.current = null;
+        if (dailyItemMutationMountedRef.current) {
+          setIsAddingCustomItem(false);
+        }
+      }
     }
   };
 
@@ -3246,7 +3407,10 @@ function HomeClientContent({
     if (
       dataSource.mode !== "shared" ||
       pendingDailyItemMutationRequestsRef.current.size > 0 ||
-      sharedSessionMutationRequestRef.current
+      sharedSessionMutationRequestRef.current ||
+      settingsMutationInFlightItemIdsRef.current.has(itemId) ||
+      customItemAddInFlightRef.current !== null ||
+      customItemSortOrderSaveInFlightRef.current !== null
     ) {
       return;
     }
@@ -3543,6 +3707,9 @@ function HomeClientContent({
   const requestCustomItemDelete = (itemId: string) => {
     if (
       customItemDeleteInFlightItemIdsRef.current.has(itemId) ||
+      settingsMutationInFlightItemIdsRef.current.has(itemId) ||
+      customItemAddInFlightRef.current !== null ||
+      customItemSortOrderSaveInFlightRef.current !== null ||
       (dataSource.mode === "shared" && sharedSessionMutationRequestRef.current)
     ) {
       return;
@@ -3561,6 +3728,9 @@ function HomeClientContent({
     if (
       !itemId ||
       customItemDeleteInFlightItemIdsRef.current.has(itemId) ||
+      settingsMutationInFlightItemIdsRef.current.has(itemId) ||
+      customItemAddInFlightRef.current !== null ||
+      customItemSortOrderSaveInFlightRef.current !== null ||
       (dataSource.mode === "shared" && sharedSessionMutationRequestRef.current)
     ) {
       return;
@@ -3624,7 +3794,13 @@ function HomeClientContent({
   });
 
   const startCustomItemEditing = (item: CustomizableItem) => {
-    if (!existingItemDetailsEditable || !canInterruptCustomItemSorting()) {
+    if (
+      !existingItemDetailsEditable ||
+      !canInterruptCustomItemSorting() ||
+      customItemAddInFlightRef.current !== null ||
+      settingsMutationInFlightItemIdsRef.current.has(item.id) ||
+      customItemDeleteInFlightItemIdsRef.current.has(item.id)
+    ) {
       return;
     }
 
@@ -3633,11 +3809,16 @@ function HomeClientContent({
     setSortingCategory(null);
     setExpandedWeekdayItemId(null);
     setCustomItemEditError(null);
+    customItemEditStartTokenRef.current = {
+      itemId: item.id,
+      updatedAt: item.updatedAt,
+    };
     setEditingCustomItemId(item.id);
     setCustomItemEditDraft(getCustomItemDraft(item));
   };
 
   const cancelCustomItemEditing = () => {
+    customItemEditStartTokenRef.current = null;
     setEditingCustomItemId(null);
     setExpandedWeekdayItemId(null);
     setCustomItemEditError(null);
@@ -3654,7 +3835,36 @@ function HomeClientContent({
       return;
     }
 
-    if (customItemSaveInFlightRef.current) {
+    if (
+      customItemSaveInFlightRef.current ||
+      customItemAddInFlightRef.current ||
+      customItemSortOrderSaveInFlightRef.current ||
+      settingsMutationInFlightItemIdsRef.current.has(item.id) ||
+      customItemDeleteInFlightItemIdsRef.current.has(item.id) ||
+      (sharedSessionMutationRequestRef.current?.operation === "delete_item" &&
+        sharedSessionMutationRequestRef.current.itemTemplateId === item.id)
+    ) {
+      return;
+    }
+
+    const currentItem = customItemsRef.current.find(
+      (candidate) => candidate.id === item.id,
+    );
+    if (!currentItem || currentItem.category !== item.category) {
+      setCustomItemEditError(
+        "この項目は削除または変更されています。最新の状態を確認してください。",
+      );
+      return;
+    }
+    if (
+      dataSource.mode === "shared" &&
+      (!isDailyDataIsoDateTime(currentItem.updatedAt) ||
+        customItemEditStartTokenRef.current?.itemId !== item.id ||
+        customItemEditStartTokenRef.current.updatedAt !== currentItem.updatedAt)
+    ) {
+      setCustomItemEditError(
+        "最新の項目情報を確認できませんでした。再読み込みしてください。",
+      );
       return;
     }
 
@@ -3680,42 +3890,86 @@ function HomeClientContent({
           ? customItemEditDraft.weekdays
           : (item.weekdays ?? []),
     };
-    const nextItems = customItems.map((customItem) =>
+    const nextItems = customItemsRef.current.map((customItem) =>
       customItem.id === item.id ? { ...customItem, ...nextChanges } : customItem,
     );
-    const sharedChanges = {
-      name: trimmedName,
-      count: nextCount,
-      ...(item.category === "ざっくり管理" && roughItemUnitEditable
-        ? { unit: customItemEditDraft.unit }
-        : {}),
-      ...(item.category === defaultCustomItems[6].category && itemWeekdaysEditable
-        ? { weekdays: customItemEditDraft.weekdays }
-        : {}),
-    };
+    const sharedInput =
+      item.category === "スポット追加"
+        ? {
+            expectedUpdatedAt: currentItem.updatedAt ?? "",
+            name: trimmedName,
+            defaultQuantity: nextCount,
+            weekdays: [...customItemEditDraft.weekdays],
+          }
+        : {
+            expectedUpdatedAt: currentItem.updatedAt ?? "",
+            kind:
+              item.category === "ざっくり管理"
+                ? ("rough" as const)
+                : ("regular" as const),
+            name: trimmedName,
+            defaultQuantity: nextCount,
+            unit:
+              item.category === "ざっくり管理"
+                ? customItemEditDraft.unit
+                : null,
+          };
 
-    customItemSaveInFlightRef.current = true;
+    const requestToken = Symbol(item.id);
+    const requestScopeKey = dailyItemMutationScopeKeyRef.current;
+    const requestScopeGeneration = dailyItemMutationScopeGenerationRef.current;
+    customItemSaveInFlightRef.current = requestToken;
+    settingsMutationInFlightItemIdsRef.current.set(item.id, requestToken);
     setSavingCustomItemId(item.id);
     setCustomItemEditError(null);
 
     try {
-      await saveHomeCustomItemEdit(dataSource, item.id, nextItems, sharedChanges, {
-        applyCustomItems: setCustomItems,
-        saveLocalCustomItems: appRepository.saveCustomItems,
-        saveSharedItemTemplateEdit: (input) =>
-          saveSharedItemTemplateEdit(getHomeBrowserClient(), input),
-      });
+      const result = await saveHomeCustomItemEdit(
+        dataSource,
+        item.id,
+        nextItems,
+        sharedInput,
+        {
+          applyCustomItems: setCustomItems,
+          saveLocalCustomItems: appRepository.saveCustomItems,
+          saveSharedItemTemplateEdit: (input) =>
+            updateSharedItemTemplate(
+              getHomeBrowserClient() as unknown as SharedTemplateUpdateClient,
+              input,
+            ),
+          saveSharedSpotItemTemplate: (input) =>
+            updateSharedSpotItemTemplate(
+              getHomeBrowserClient() as unknown as SharedTemplateUpdateClient,
+              input,
+            ),
+        },
+      );
+      if (
+        dataSource.mode === "shared" &&
+        (!isCurrentHomeSharedSettingsRequest({
+          mounted: dailyItemMutationMountedRef.current,
+          requestToken,
+          currentToken: settingsMutationInFlightItemIdsRef.current.get(item.id),
+          requestScopeKey,
+          currentScopeKey: dailyItemMutationScopeKeyRef.current,
+          requestScopeGeneration,
+          currentScopeGeneration: dailyItemMutationScopeGenerationRef.current,
+        }) ||
+          customItemsRef.current.find((candidate) => candidate.id === item.id)
+            ?.updatedAt !== currentItem.updatedAt)
+      ) {
+        return;
+      }
+      if (dataSource.mode === "shared" && result?.status !== "success") {
+        setCustomItemEditError(
+          getSharedTemplateMutationErrorMessage(result),
+        );
+        return;
+      }
       if (
         dataSource.mode === "shared" &&
         !(await reloadSharedDurableSettings())
       ) {
-        setCustomItems((current) =>
-          current.map((currentItem) =>
-            currentItem.id === item.id
-              ? { ...currentItem, updatedAt: undefined }
-              : currentItem,
-          ),
-        );
         throw new Error("shared_settings_reload_failed");
       }
 
@@ -3724,12 +3978,34 @@ function HomeClientContent({
       }
 
       cancelCustomItemEditing();
-    } catch (error) {
-      console.error("Failed to save custom item", error);
-      setCustomItemEditError("保存できませんでした。もう一度お試しください");
+    } catch {
+      if (
+        isCurrentHomeSharedSettingsRequest({
+          mounted: dailyItemMutationMountedRef.current,
+          requestToken,
+          currentToken: settingsMutationInFlightItemIdsRef.current.get(item.id),
+          requestScopeKey,
+          currentScopeKey: dailyItemMutationScopeKeyRef.current,
+          requestScopeGeneration,
+          currentScopeGeneration: dailyItemMutationScopeGenerationRef.current,
+        })
+      ) {
+        setCustomItemEditError(
+          "保存結果を確認できませんでした。再読み込みしてください。",
+        );
+      }
     } finally {
-      customItemSaveInFlightRef.current = false;
-      setSavingCustomItemId(null);
+      if (customItemSaveInFlightRef.current === requestToken) {
+        customItemSaveInFlightRef.current = null;
+      }
+      if (
+        settingsMutationInFlightItemIdsRef.current.get(item.id) === requestToken
+      ) {
+        settingsMutationInFlightItemIdsRef.current.delete(item.id);
+        if (dailyItemMutationMountedRef.current) {
+          setSavingCustomItemId(null);
+        }
+      }
     }
   };
 
@@ -3738,7 +4014,11 @@ function HomeClientContent({
     activeItemId: string,
     targetIndex: number,
   ) => {
-    if (!durableItemsSortable || customItemSortOrderSaveInFlightRef.current) {
+    if (
+      !durableItemsSortable ||
+      customItemSortOrderSaveInFlightRef.current ||
+      settingsMutationInFlightItemIdsRef.current.size > 0
+    ) {
       return;
     }
 
@@ -3893,7 +4173,11 @@ function HomeClientContent({
     item: CustomizableItem,
     isSorting: boolean,
   ) => {
-    if (!durableItemsSortable || customItemSortOrderSaveInFlightRef.current) {
+    if (
+      !durableItemsSortable ||
+      customItemSortOrderSaveInFlightRef.current ||
+      settingsMutationInFlightItemIdsRef.current.size > 0
+    ) {
       return;
     }
 
@@ -3965,7 +4249,14 @@ function HomeClientContent({
   };
 
   const startCustomItemSorting = (category: CustomItemCategory) => {
-    if (!durableItemsSortable || !canInterruptCustomItemSorting()) {
+    if (
+      !durableItemsSortable ||
+      !canInterruptCustomItemSorting() ||
+      settingsMutationInFlightItemIdsRef.current.size > 0 ||
+      customItemAddInFlightRef.current !== null ||
+      customItemDeleteInFlightItemIdsRef.current.size > 0 ||
+      sharedSessionMutationRequestRef.current !== null
+    ) {
       return;
     }
 
@@ -3982,7 +4273,14 @@ function HomeClientContent({
   };
 
   const finishCustomItemSorting = async () => {
-    if (!durableItemsSortable || customItemSortOrderSaveInFlightRef.current) {
+    if (
+      !durableItemsSortable ||
+      customItemSortOrderSaveInFlightRef.current ||
+      settingsMutationInFlightItemIdsRef.current.size > 0 ||
+      customItemAddInFlightRef.current !== null ||
+      customItemDeleteInFlightItemIdsRef.current.size > 0 ||
+      sharedSessionMutationRequestRef.current !== null
+    ) {
       return;
     }
 
@@ -3998,7 +4296,11 @@ function HomeClientContent({
       return;
     }
 
-    customItemSortOrderSaveInFlightRef.current = true;
+    const sortRequestToken = Symbol("sort-items");
+    const sortRequestScopeKey = dailyItemMutationScopeKeyRef.current;
+    const sortRequestScopeGeneration =
+      dailyItemMutationScopeGenerationRef.current;
+    customItemSortOrderSaveInFlightRef.current = sortRequestToken;
     setIsSavingCustomItemSortOrder(true);
     setCustomItemSortOrderError(null);
 
@@ -4014,11 +4316,22 @@ function HomeClientContent({
       });
       if (
         dataSource.mode === "shared" &&
+        !isCurrentHomeSharedSettingsRequest({
+          mounted: dailyItemMutationMountedRef.current,
+          requestToken: sortRequestToken,
+          currentToken: customItemSortOrderSaveInFlightRef.current,
+          requestScopeKey: sortRequestScopeKey,
+          currentScopeKey: dailyItemMutationScopeKeyRef.current,
+          requestScopeGeneration: sortRequestScopeGeneration,
+          currentScopeGeneration: dailyItemMutationScopeGenerationRef.current,
+        })
+      ) {
+        return;
+      }
+      if (
+        dataSource.mode === "shared" &&
         !(await reloadSharedDurableSettings())
       ) {
-        setCustomItems((current) =>
-          current.map((item) => ({ ...item, updatedAt: undefined })),
-        );
         throw new Error("shared_settings_reload_failed");
       }
 
@@ -4026,19 +4339,33 @@ function HomeClientContent({
       setSortingDraftItems(null);
       setDraggingCustomItemId(null);
       setCustomItemDragState(null);
-    } catch (error) {
-      console.error("Failed to save custom item sort order", error);
-      setCustomItemSortOrderError("保存できませんでした。もう一度お試しください");
+    } catch {
+      if (
+        dailyItemMutationMountedRef.current &&
+        customItemSortOrderSaveInFlightRef.current === sortRequestToken &&
+        dailyItemMutationScopeKeyRef.current === sortRequestScopeKey &&
+        dailyItemMutationScopeGenerationRef.current ===
+          sortRequestScopeGeneration
+      ) {
+        setCustomItemSortOrderError(
+          "保存できませんでした。もう一度お試しください",
+        );
+      }
     } finally {
-      customItemSortOrderSaveInFlightRef.current = false;
-      setIsSavingCustomItemSortOrder(false);
+      if (customItemSortOrderSaveInFlightRef.current === sortRequestToken) {
+        customItemSortOrderSaveInFlightRef.current = null;
+        if (dailyItemMutationMountedRef.current) {
+          setIsSavingCustomItemSortOrder(false);
+        }
+      }
     }
   };
 
   const startCustomItemAdding = (category: CustomItemCategory) => {
     if (
       !canAddHomeDurableItem(dataSource, category) ||
-      !canInterruptCustomItemSorting()
+      !canInterruptCustomItemSorting() ||
+      settingsMutationInFlightItemIdsRef.current.size > 0
     ) {
       return;
     }
@@ -4539,6 +4866,10 @@ function HomeClientContent({
     const isDragging = draggingCustomItemId === customItem.id;
     const isDeleting =
       customItemDeletingItemIds.has(customItem.id) ||
+      roughStateSavingItemIds.includes(customItem.id) ||
+      savingCustomItemId === customItem.id ||
+      isAddingCustomItem ||
+      isSavingCustomItemSortOrder ||
       (dataSource.mode === "shared" && isSharedSessionMutationPending);
     const canInteract =
       existingItemDetailsEditable && !isSorting && !isDeleting;
@@ -4636,7 +4967,7 @@ function HomeClientContent({
         type="button"
         aria-label="戻る"
         onClick={closeCustomItemEdit}
-        disabled={isSavingCustomItemSortOrder}
+        disabled={isSavingCustomItemSortOrder || isItemSettingsMutationPending}
         className="grid h-10 w-10 shrink-0 place-items-center rounded-button bg-surface text-text-tertiary transition active:scale-95 disabled:opacity-50"
       >
         <ChevronRight size={20} strokeWidth={2.2} className="rotate-180" />
@@ -4724,6 +5055,7 @@ function HomeClientContent({
                 {durableItemsSortable ? (
                   <IconButton
                     label="並び替え"
+                    disabled={isItemSettingsMutationPending}
                     onClick={() => startCustomItemSorting(category)}
                     className="h-10 w-10 text-text-secondary"
                   >
@@ -4733,7 +5065,7 @@ function HomeClientContent({
                 {durableItemAddable ? (
                   <IconButton
                     label="追加"
-                    disabled={isAddingCustomItem}
+                    disabled={isAddingCustomItem || isItemSettingsMutationPending}
                     onClick={() =>
                       isAdding ? cancelCustomItemAdding() : startCustomItemAdding(category)
                     }
@@ -5335,7 +5667,12 @@ function HomeClientContent({
               <button
                 type="button"
                 onClick={confirmCustomItemDelete}
-                disabled={isSharedSessionMutationPending}
+                disabled={
+                  isSharedSessionMutationPending ||
+                  isItemSettingsMutationPending ||
+                  isAddingCustomItem ||
+                  isSavingCustomItemSortOrder
+                }
                 aria-busy={isDeleteItemPending || undefined}
                 className="h-11 rounded-button bg-primary text-number font-normal text-surface shadow-button transition active:scale-95"
               >

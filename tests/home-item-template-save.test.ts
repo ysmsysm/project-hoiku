@@ -4,13 +4,14 @@ import test from "node:test";
 import {
   applyHomeRoughStateChange,
   appendHomeCustomItemToCategory,
+  canApplyHomeSharedSettingsReload,
   canInterruptHomeCustomItemSorting,
   canUpdateHomeCustomItemDragPointer,
   getHomeCustomItemDragCenterY,
   getHomeCustomItemDragTargetIndex,
+  isCurrentHomeSharedSettingsRequest,
   reorderHomeCustomItemsInCategory,
   saveHomeCustomItemAdd,
-  saveHomeCustomItemDelete,
   saveHomeCustomItemEdit,
   saveHomeCustomItemSortOrder,
   saveHomeRoughState,
@@ -38,6 +39,49 @@ const fiveDragItems: CustomizableItem[] = [
   { id: "D", name: "D", unit: "unit", count: 1, category: regularCategory },
   { id: "E", name: "E", unit: "unit", count: 1, category: regularCategory },
 ];
+
+test("shared settings request guard rejects unmount, stale tokens, and A-B-A generations", () => {
+  const token = Symbol("request");
+  const current = {
+    mounted: true,
+    requestToken: token,
+    currentToken: token,
+    requestScopeKey: "family-a:child-a",
+    currentScopeKey: "family-a:child-a",
+    requestScopeGeneration: 4,
+    currentScopeGeneration: 4,
+  };
+  assert.equal(isCurrentHomeSharedSettingsRequest(current), true);
+  assert.equal(isCurrentHomeSharedSettingsRequest({ ...current, mounted: false }), false);
+  assert.equal(
+    isCurrentHomeSharedSettingsRequest({ ...current, currentToken: Symbol("later") }),
+    false,
+  );
+  assert.equal(
+    isCurrentHomeSharedSettingsRequest({ ...current, currentScopeGeneration: 6 }),
+    false,
+  );
+});
+
+test("shared settings reload guard rejects stale order, scope, child, and unmount", () => {
+  const current = {
+    mounted: true,
+    requestScopeKey: "scope-a",
+    currentScopeKey: "scope-a",
+    requestScopeGeneration: 2,
+    currentScopeGeneration: 2,
+    requestSequence: 8,
+    currentSequence: 8,
+    expectedChildId: regularUuid.toUpperCase(),
+    loadedChildId: regularUuid,
+  };
+  assert.equal(canApplyHomeSharedSettingsReload(current), true);
+  assert.equal(canApplyHomeSharedSettingsReload({ ...current, currentSequence: 9 }), false);
+  assert.equal(canApplyHomeSharedSettingsReload({ ...current, currentScopeKey: "scope-b" }), false);
+  assert.equal(canApplyHomeSharedSettingsReload({ ...current, currentScopeGeneration: 4 }), false);
+  assert.equal(canApplyHomeSharedSettingsReload({ ...current, loadedChildId: roughUuid }), false);
+  assert.equal(canApplyHomeSharedSettingsReload({ ...current, mounted: false }), false);
+});
 const homeClientSource = readFileSync("app/HomeClient.tsx", "utf8");
 
 const customItems: CustomizableItem[] = [
@@ -940,52 +984,52 @@ test("local item edit save uses existing local storage path and then applies sta
     { mode: "local" },
     "template-regular",
     limitItems,
-    { name: "Towel", count: 5, unit: "u".repeat(10) },
+    { expectedUpdatedAt: "", kind: "rough", name: "Towel", defaultQuantity: 5, unit: "u".repeat(10) },
     {
       applyCustomItems: () => calls.push("apply"),
       saveLocalCustomItems: () => calls.push("local"),
       saveSharedItemTemplateEdit: async () => {
         calls.push("shared");
+        return sharedMutationSuccess("rough");
       },
+      saveSharedSpotItemTemplate: async () => sharedMutationSuccess("spot"),
     },
   );
 
   assert.deepEqual(calls, ["local", "apply"]);
 });
 
-test("shared item edit save uses Supabase path and then applies state", async () => {
+test("shared regular edit builds the locked RPC input without applying local state", async () => {
   const calls: string[] = [];
 
   await saveHomeCustomItemEdit(
     sharedDataSource(),
     "template-regular",
     nextCustomItems,
-    { name: "Towel", count: 5, unit: "u".repeat(10) },
+    { expectedUpdatedAt: "2026-08-06T00:00:00Z", kind: "regular", name: "Towel", defaultQuantity: 5, unit: null },
     {
       applyCustomItems: () => calls.push("apply"),
       saveLocalCustomItems: () => calls.push("local"),
       saveSharedItemTemplateEdit: async (input) => {
         calls.push(
-          `${input.familyId}:${input.childId}:${input.itemId}:${input.changes.name}`,
+          `${input.familyId}:${input.childId}:${input.itemTemplateId}:${input.name}:${input.unit}`,
         );
+        return sharedMutationSuccess("regular");
       },
+      saveSharedSpotItemTemplate: async () => sharedMutationSuccess("spot"),
     },
   );
 
-  assert.deepEqual(calls, ["family-1:child-1:template-regular:Towel", "apply"]);
+  assert.deepEqual(calls, ["family-1:child-1:template-regular:Towel:null"]);
 });
 
 test("local and shared item edits reject invalid write values without applying state", async () => {
   for (const dataSource of [{ mode: "local" } as const, sharedDataSource()]) {
-    for (const changes of [
-      { count: -1 },
-      { count: 1.5 },
-      { count: 6 },
-      { count: 10 },
-      { count: 11 },
-      { count: 999 },
-      { count: 1000 },
-      { unit: "u".repeat(11) },
+    for (const sharedInput of [
+      { expectedUpdatedAt: "", kind: "rough" as const, name: "Towel", defaultQuantity: -1, unit: "枚" },
+      { expectedUpdatedAt: "", kind: "rough" as const, name: "Towel", defaultQuantity: 1.5, unit: "枚" },
+      { expectedUpdatedAt: "", kind: "rough" as const, name: "Towel", defaultQuantity: 6, unit: "枚" },
+      { expectedUpdatedAt: "", kind: "rough" as const, name: "Towel", defaultQuantity: 2, unit: "u".repeat(11) },
     ]) {
       const calls: string[] = [];
       await assert.rejects(
@@ -993,13 +1037,15 @@ test("local and shared item edits reject invalid write values without applying s
           dataSource,
           "template-regular",
           nextCustomItems,
-          changes,
+          sharedInput,
           {
             applyCustomItems: () => calls.push("apply"),
             saveLocalCustomItems: () => calls.push("local"),
             saveSharedItemTemplateEdit: async () => {
               calls.push("shared");
+              return sharedMutationSuccess("rough");
             },
+            saveSharedSpotItemTemplate: async () => sharedMutationSuccess("spot"),
           },
         ),
         /invalid_home_/,
@@ -1018,7 +1064,7 @@ test("shared item edit save does not apply state or local fallback when Supabase
       sharedDataSource(),
       "template-regular",
       nextCustomItems,
-      { name: "Towel", count: 4 },
+      { expectedUpdatedAt: "2026-08-06T00:00:00Z", kind: "regular", name: "Towel", defaultQuantity: 4, unit: null },
       {
         applyCustomItems: () => calls.push("apply"),
         saveLocalCustomItems: () => calls.push("local"),
@@ -1026,6 +1072,7 @@ test("shared item edit save does not apply state or local fallback when Supabase
           calls.push("shared");
           throw error;
         },
+        saveSharedSpotItemTemplate: async () => sharedMutationSuccess("spot"),
       },
     ),
     error,
@@ -1051,21 +1098,23 @@ test("local item edit preserves weekday changes through the local storage path",
     { mode: "local" },
     "template-spot",
     nextItemsWithWeekdays,
-    { name: "Bottle", count: 1, weekdays: [1, 3] },
+    { expectedUpdatedAt: "", name: "Bottle", defaultQuantity: 1, weekdays: [1, 3] },
     {
       applyCustomItems: (items) => calls.push(`apply:${items[0].weekdays?.join(",")}`),
       saveLocalCustomItems: (items) =>
         calls.push(`local:${items[0].weekdays?.join(",")}`),
       saveSharedItemTemplateEdit: async () => {
         calls.push("shared");
+        return sharedMutationSuccess("regular");
       },
+      saveSharedSpotItemTemplate: async () => sharedMutationSuccess("spot"),
     },
   );
 
   assert.deepEqual(calls, ["local:1,3", "apply:1,3"]);
 });
 
-test("shared item edit passes weekday changes to Supabase before applying state", async () => {
+test("shared spot edit routes to the timestamp locked spot RPC", async () => {
   const calls: string[] = [];
   const nextItemsWithWeekdays: CustomizableItem[] = [
     {
@@ -1082,19 +1131,22 @@ test("shared item edit passes weekday changes to Supabase before applying state"
     sharedDataSource(),
     "template-spot",
     nextItemsWithWeekdays,
-    { name: "Bottle", count: 2, weekdays: [0, 1, 2, 3, 4, 5, 6] },
+    { expectedUpdatedAt: "2026-08-06T00:00:00Z", name: "Bottle", defaultQuantity: 2, weekdays: [0, 1, 2, 3, 4, 5, 6] },
     {
       applyCustomItems: (items) => calls.push(`apply:${items[0].weekdays?.length}`),
       saveLocalCustomItems: () => calls.push("local"),
       saveSharedItemTemplateEdit: async (input) => {
-        calls.push(
-          `${input.familyId}:${input.childId}:${input.itemId}:${input.changes.weekdays?.length}`,
-        );
+        calls.push(`wrong:${input.itemTemplateId}`);
+        return sharedMutationSuccess("regular");
+      },
+      saveSharedSpotItemTemplate: async (input) => {
+        calls.push(`${input.familyId}:${input.childId}:${input.itemTemplateId}:${input.weekdays.length}:${input.expectedUpdatedAt}`);
+        return sharedMutationSuccess("spot");
       },
     },
   );
 
-  assert.deepEqual(calls, ["family-1:child-1:template-spot:7", "apply:7"]);
+  assert.deepEqual(calls, ["family-1:child-1:template-spot:7:2026-08-06T00:00:00Z"]);
 });
 
 test("shared weekday edit failure keeps state unapplied and skips local fallback", async () => {
@@ -1116,74 +1168,14 @@ test("shared weekday edit failure keeps state unapplied and skips local fallback
       sharedDataSource(),
       "template-spot",
       nextItemsWithWeekdays,
-      { name: "Bottle", count: 1, weekdays: [] },
+      { expectedUpdatedAt: "2026-08-06T00:00:00Z", name: "Bottle", defaultQuantity: 1, weekdays: [] },
       {
         applyCustomItems: () => calls.push("apply"),
         saveLocalCustomItems: () => calls.push("local"),
         saveSharedItemTemplateEdit: async () => {
-          calls.push("shared");
-          throw error;
+          return sharedMutationSuccess("regular");
         },
-      },
-    ),
-    error,
-  );
-
-  assert.deepEqual(calls, ["shared"]);
-});
-
-test("local item delete uses the existing local durable settings path", () => {
-  const calls: string[] = [];
-
-  const result = saveHomeCustomItemDelete(
-    { mode: "local" },
-    "template-regular",
-    [],
-    {
-      saveLocalCustomItems: (items) => calls.push(`local:${items.length}`),
-      saveSharedItemTemplateDelete: async () => {
-        calls.push("shared");
-      },
-    },
-  );
-
-  assert.equal(result, undefined);
-  assert.deepEqual(calls, ["local:0"]);
-});
-
-test("shared item delete uses Supabase without local durable settings", async () => {
-  const calls: string[] = [];
-
-  await saveHomeCustomItemDelete(
-    sharedDataSource(),
-    "template-regular",
-    [],
-    {
-      saveLocalCustomItems: () => calls.push("local"),
-      saveSharedItemTemplateDelete: async (input) => {
-        calls.push(`${input.familyId}:${input.childId}:${input.itemId}`);
-      },
-    },
-  );
-
-  assert.deepEqual(calls, ["family-1:child-1:template-regular"]);
-});
-
-test("shared item delete does not fall back to local storage when Supabase fails", async () => {
-  const calls: string[] = [];
-  const error = new Error("delete failed");
-
-  await assert.rejects(
-    saveHomeCustomItemDelete(
-      sharedDataSource(),
-      "template-regular",
-      [],
-      {
-        saveLocalCustomItems: () => calls.push("local"),
-        saveSharedItemTemplateDelete: async () => {
-          calls.push("shared");
-          throw error;
-        },
+        saveSharedSpotItemTemplate: async () => { calls.push("shared"); throw error; },
       },
     ),
     error,
@@ -1283,12 +1275,14 @@ test("local rough state save uses existing local storage path and then applies s
     { mode: "local" },
     "template-rough",
     "補充",
+    "",
     { "template-rough": "補充" },
     {
       applyRoughStates: () => calls.push("apply"),
       saveLocalRoughStates: () => calls.push("local"),
       saveSharedRoughState: async () => {
         calls.push("shared");
+        return sharedMutationSuccess("rough");
       },
     },
   );
@@ -1324,6 +1318,7 @@ test("local rough state saves consecutive different item changes from the latest
     { mode: "local" },
     "template-rough-a",
     "少ない",
+    "",
     firstStates,
     dependencies,
   );
@@ -1337,6 +1332,7 @@ test("local rough state saves consecutive different item changes from the latest
     { mode: "local" },
     "template-rough-b",
     "補充",
+    "",
     secondStates,
     dependencies,
   );
@@ -1355,19 +1351,21 @@ test("shared rough state save uses Supabase path and then applies state", async 
     sharedDataSource(),
     "template-rough",
     "補充",
+    "2026-08-06T00:00:00Z",
     { "template-rough": "補充" },
     {
       applyRoughStates: () => calls.push("apply"),
       saveLocalRoughStates: () => calls.push("local"),
       saveSharedRoughState: async (input) => {
         calls.push(
-          `${input.familyId}:${input.childId}:${input.itemId}:${input.roughState}`,
+          `${input.familyId}:${input.childId}:${input.itemTemplateId}:${input.currentRoughState}:${input.expectedUpdatedAt}`,
         );
+        return sharedMutationSuccess("rough");
       },
     },
   );
 
-  assert.deepEqual(calls, ["family-1:child-1:template-rough:補充", "apply"]);
+  assert.deepEqual(calls, ["family-1:child-1:template-rough:refill:2026-08-06T00:00:00Z"]);
 });
 
 test("shared rough state save does not apply state or local fallback when Supabase fails", async () => {
@@ -1379,6 +1377,7 @@ test("shared rough state save does not apply state or local fallback when Supaba
       sharedDataSource(),
       "template-rough",
       "補充",
+      "2026-08-06T00:00:00Z",
       { "template-rough": "補充" },
       {
         applyRoughStates: () => calls.push("apply"),
@@ -1394,6 +1393,26 @@ test("shared rough state save does not apply state or local fallback when Supaba
 
   assert.deepEqual(calls, ["shared"]);
 });
+
+function sharedMutationSuccess(kind: "regular" | "rough" | "spot") {
+  return {
+    status: "success" as const,
+    changed: true,
+    reason: null,
+    familyId: "family-1",
+    childId: "child-1",
+    itemTemplateId: "template-1",
+    kind,
+    name: "Item",
+    defaultQuantity: 1,
+    unit: "個",
+    currentRoughState: kind === "rough" ? ("enough" as const) : null,
+    weekdays: kind === "spot" ? [1] : [],
+    sortOrder: 0,
+    isActive: true,
+    updatedAt: "2026-08-06T00:00:01Z",
+  };
+}
 
 function sharedDataSource(): Exclude<HomeDataSource, { mode: "shared-error" }> {
   return {

@@ -2,1136 +2,254 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   saveSharedItemTemplateAdd,
-  saveSharedItemTemplateDelete,
-  saveSharedItemTemplateEdit,
   saveSharedItemTemplateSortOrders,
-  saveSharedRoughState,
-  toDbRoughState,
-  toItemTemplateEditUpdate,
-  type SaveSharedItemTemplateAddInput,
-  type SaveSharedItemTemplateEditInput,
   type SharedItemTemplateAddClient,
-  type SharedItemTemplateClient,
   type SharedItemTemplateSortOrderClient,
 } from "../src/lib/family-sharing/save-item-template";
+import {
+  getSharedTemplateMutationErrorMessage,
+  updateSharedItemTemplate,
+  updateSharedRoughItemState,
+  updateSharedSpotItemTemplate,
+  type SharedTemplateUpdateClient,
+} from "../src/lib/family-sharing/update-item-template";
 
-const regularUuid = "11111111-1111-4111-8111-111111111111";
-const roughUuid = "22222222-2222-4222-8222-222222222222";
-const anotherUuid = "33333333-3333-4333-8333-333333333333";
-const spotUuid = "44444444-4444-4444-8444-444444444444";
+const familyId = "11111111-1111-4111-8111-111111111111";
+const childId = "22222222-2222-4222-8222-222222222222";
+const itemId = "33333333-3333-4333-8333-333333333333";
+const updatedAt = "2026-08-06T01:02:03.123456+00:00";
+const nextUpdatedAt = "2026-08-06T01:02:04.123456+00:00";
 
-test("adds a regular item template through the atomic RPC", async () => {
-  const calls: unknown[] = [];
-  const client = createItemAddMockClient(calls, {
-    data: [{ id: regularUuid, sort_order: 8 }],
-    error: null,
-  });
+const success = (kind: "regular" | "rough" | "spot", changed = true) => ({
+  status: "success",
+  changed,
+  reason: null,
+  family_id: familyId,
+  child_id: childId,
+  item_template_id: itemId,
+  kind,
+  name: "タオル",
+  default_quantity: 2,
+  unit: kind === "rough" ? "組" : kind === "spot" ? "個" : "枚",
+  current_rough_state: kind === "rough" ? "low" : null,
+  weekdays: kind === "spot" ? [1, 3] : [],
+  sort_order: 4,
+  is_active: true,
+  updated_at: changed ? nextUpdatedAt : updatedAt,
+});
 
-  const result = await saveSharedItemTemplateAdd(client, {
-    familyId: "family-1",
-    childId: "child-1",
+function rpcClient(data: unknown, error: unknown = null) {
+  const calls: Array<[string, Record<string, unknown>]> = [];
+  const client: SharedTemplateUpdateClient = {
+    async rpc(name, args) {
+      calls.push([name, args]);
+      return { data, error };
+    },
+  };
+  return { client, calls };
+}
+
+test("regular edit uses the locked RPC with exact arguments and null unit", async () => {
+  const { client, calls } = rpcClient(success("regular"));
+  const result = await updateSharedItemTemplate(client, {
+    familyId,
+    childId,
+    itemTemplateId: itemId,
+    expectedUpdatedAt: updatedAt,
     kind: "regular",
-    name: "Towel",
+    name: "タオル",
     defaultQuantity: 2,
-    unit: "枚",
-    currentRoughState: null,
+    unit: null,
   });
-
-  assert.deepEqual(result, { id: regularUuid, sortOrder: 8 });
-  assert.deepEqual(calls, [
-    [
-      "rpc",
-      "add_family_item_template",
-      {
-        p_family_id: "family-1",
-        p_child_id: "child-1",
-        p_kind: "regular",
-        p_name: "Towel",
-        p_default_quantity: 2,
-        p_unit: "枚",
-        p_current_rough_state: null,
-      },
-    ],
-  ]);
-  assert.equal(hasFromCall(calls), false);
-  assert.equal(hasInsertCall(calls), false);
+  assert.equal(result.status, "success");
+  assert.deepEqual(calls, [["update_family_item_template", {
+    p_family_id: familyId,
+    p_child_id: childId,
+    p_item_template_id: itemId,
+    p_expected_updated_at: updatedAt,
+    p_name: "タオル",
+    p_default_quantity: 2,
+    p_unit: null,
+  }]]);
 });
 
-test("adds a rough item through the atomic RPC with enough state", async () => {
-  const calls: unknown[] = [];
-  const client = createItemAddMockClient(calls, {
-    data: [{ id: roughUuid, sort_order: 0 }],
-    error: null,
+test("rough edit and state use their exact RPC contracts", async () => {
+  const edit = rpcClient(success("rough"));
+  await updateSharedItemTemplate(edit.client, {
+    familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt,
+    kind: "rough", name: "タオル", defaultQuantity: 2, unit: "組",
   });
+  assert.equal(edit.calls[0][0], "update_family_item_template");
+  assert.equal(Object.keys(edit.calls[0][1]).length, 7);
 
-  const result = await saveSharedItemTemplateAdd(client, {
-    familyId: "family-1",
-    childId: "child-1",
-    kind: "rough",
-    name: "Diapers",
-    defaultQuantity: 1,
-    unit: "pack",
-    currentRoughState: "enough",
+  const state = rpcClient(success("rough"));
+  await updateSharedRoughItemState(state.client, {
+    familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt,
+    currentRoughState: "low",
   });
-
-  assert.deepEqual(result, { id: roughUuid, sortOrder: 0 });
-  assert.deepEqual(calls, [
-    [
-      "rpc",
-      "add_family_item_template",
-      {
-        p_family_id: "family-1",
-        p_child_id: "child-1",
-        p_kind: "rough",
-        p_name: "Diapers",
-        p_default_quantity: 1,
-        p_unit: "pack",
-        p_current_rough_state: "enough",
-      },
-    ],
-  ]);
-  assert.equal(hasFromCall(calls), false);
-  assert.equal(hasInsertCall(calls), false);
+  assert.deepEqual(state.calls, [["update_family_rough_item_state", {
+    p_family_id: familyId,
+    p_child_id: childId,
+    p_item_template_id: itemId,
+    p_expected_updated_at: updatedAt,
+    p_current_rough_state: "low",
+  }]]);
 });
 
-test("adds a spot item through the atomic RPC and returns its database UUID", async () => {
-  const calls: unknown[] = [];
-  const client = createSpotAddMockClient(calls, {
-    data: [{ id: spotUuid, sort_order: 9 }],
-    error: null,
+test("spot edit snapshots, sorts, and sends weekdays through only the new RPC", async () => {
+  const { client, calls } = rpcClient(success("spot"));
+  const weekdays = [3, 1];
+  const pending = updateSharedSpotItemTemplate(client, {
+    familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt,
+    name: "タオル", defaultQuantity: 2, weekdays,
   });
-
-  const result = await saveSharedItemTemplateAdd(client, {
-    familyId: "family-1",
-    childId: "child-1",
-    kind: "spot",
-    name: " Water bottle ",
-    defaultQuantity: 0,
-    unit: "個",
-    currentRoughState: null,
-    weekdays: [0, 6],
-  });
-
-  assert.deepEqual(result, { id: spotUuid, sortOrder: 9 });
-  assert.deepEqual(calls, [
-    [
-      "rpc",
-      "add_family_spot_item_template",
-      {
-        p_family_id: "family-1",
-        p_child_id: "child-1",
-        p_name: "Water bottle",
-        p_default_quantity: 0,
-        p_weekdays: [0, 6],
-      },
-    ],
-  ]);
+  weekdays.push(5);
+  assert.equal((await pending).status, "success");
+  assert.deepEqual(calls, [["update_family_spot_item_template", {
+    p_family_id: familyId,
+    p_child_id: childId,
+    p_item_template_id: itemId,
+    p_expected_updated_at: updatedAt,
+    p_name: "タオル",
+    p_default_quantity: 2,
+    p_weekdays: [1, 3],
+  }]]);
 });
 
-test("spot add accepts zero to seven weekdays and quantities zero through five", async () => {
-  for (const defaultQuantity of [0, 1, 5]) {
-    for (const weekdays of [[], [1], [1, 5], [0, 1, 2, 3, 4, 5, 6]]) {
-      const result = await saveSharedItemTemplateAdd(
-        createSpotAddMockClient([], {
-          data: [{ id: spotUuid, sort_order: 0 }],
-          error: null,
-        }),
-        {
-          ...spotAddInput(),
-          defaultQuantity,
-          weekdays,
-        },
-      );
-      assert.equal(result.id, spotUuid);
-    }
-  }
-});
-
-test("spot add rejects invalid quantity, weekdays, unit, and rough state before RPC", async () => {
-  const invalidInputs: SaveSharedItemTemplateAddInput[] = [
-    { ...spotAddInput(), defaultQuantity: -1 },
-    { ...spotAddInput(), defaultQuantity: 6 },
-    { ...spotAddInput(), weekdays: [0, 1, 2, 3, 4, 5, 6, 0] },
-    { ...spotAddInput(), weekdays: [-1] },
-    { ...spotAddInput(), weekdays: [7] },
-    { ...spotAddInput(), weekdays: [1, 1] },
-    { ...spotAddInput(), unit: "枚" },
-    { ...spotAddInput(), currentRoughState: "enough" },
-  ];
-
+test("invalid and hostile inputs fail closed without calling RPC", async () => {
+  const { client, calls } = rpcClient(success("regular"));
+  const invalidInputs = [
+    { familyId: "bad", childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt, kind: "regular", name: "タオル", defaultQuantity: 2, unit: null },
+    { familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: "bad", kind: "regular", name: "タオル", defaultQuantity: 2, unit: null },
+    { familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt, kind: "regular", name: "", defaultQuantity: 2, unit: null },
+    { familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt, kind: "regular", name: "タオル", defaultQuantity: 6, unit: null },
+    { familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt, kind: "rough", name: "タオル", defaultQuantity: 2, unit: "x".repeat(11) },
+  ] as const;
   for (const input of invalidInputs) {
-    const calls: unknown[] = [];
-    await assert.rejects(
-      saveSharedItemTemplateAdd(
-        createSpotAddMockClient(calls, {
-          data: [{ id: spotUuid, sort_order: 0 }],
-          error: null,
-        }),
-        input,
-      ),
-    );
-    assert.deepEqual(calls, []);
+    assert.equal((await updateSharedItemTemplate(client, input)).status, "client_error");
+  }
+  const hostile = new Proxy({}, { get() { throw new Error("secret"); } });
+  assert.equal((await updateSharedItemTemplate(client, hostile as never)).status, "client_error");
+  assert.equal((await updateSharedRoughItemState(client, hostile as never)).status, "client_error");
+  assert.equal((await updateSharedSpotItemTemplate(client, hostile as never)).status, "client_error");
+  assert.equal(calls.length, 0);
+});
+
+test("rough state and weekdays whitelist invalid values", async () => {
+  const { client, calls } = rpcClient(success("rough"));
+  assert.equal((await updateSharedRoughItemState(client, {
+    familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt,
+    currentRoughState: "other" as never,
+  })).status, "client_error");
+  for (const weekdays of [[0, 0], [-1], [7], [0, 1, 2, 3, 4, 5, 6, 7]]) {
+    assert.equal((await updateSharedSpotItemTemplate(client, {
+      familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt,
+      name: "タオル", defaultQuantity: 2, weekdays,
+    })).status, "client_error");
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("transport rejection and response.error are classified without raw errors", async () => {
+  const rejecting: SharedTemplateUpdateClient = { rpc: async () => { throw new Error("password=raw-secret"); } };
+  const input = { familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt, currentRoughState: "low" as const };
+  const rejected = await updateSharedRoughItemState(rejecting, input);
+  const errored = await updateSharedRoughItemState(rpcClient(null, { message: "raw-secret" }).client, input);
+  assert.deepEqual(rejected, { status: "transport_error", changed: false, reason: null });
+  assert.deepEqual(errored, rejected);
+  assert.equal(JSON.stringify([rejected, errored]).includes("raw-secret"), false);
+});
+
+test("all business statuses and safe messages are mapped", async () => {
+  const input = { familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt, currentRoughState: "low" as const };
+  for (const payload of [
+    { status: "conflict", changed: false, reason: "stale_template" },
+    { status: "forbidden", changed: false, reason: null },
+    { status: "not_found", changed: false, reason: null },
+    { status: "invalid_state", changed: false, reason: "invalid_input" },
+    { status: "invalid_state", changed: false, reason: "inactive_template" },
+    { status: "invalid_state", changed: false, reason: "wrong_kind" },
+  ] as const) {
+    const result = await updateSharedRoughItemState(rpcClient(payload).client, input);
+    assert.equal(result.status, payload.status);
+    assert.equal(typeof getSharedTemplateMutationErrorMessage(result), "string");
   }
 });
 
-test("spot RPC failure is returned without a direct item_templates insert", async () => {
-  const calls: unknown[] = [];
-  const error = new Error("weekday insert failed");
-  await assert.rejects(
-    saveSharedItemTemplateAdd(
-      createSpotAddMockClient(calls, { data: null, error }),
-      spotAddInput(),
-    ),
-    error,
-  );
-  assert.equal(calls.length, 1);
-  assert.equal(hasInsertCall(calls), false);
-});
-
-test("spot RPC preserves PostgREST error fields in a loggable Error", async () => {
-  const postgrestError = {
-    code: "42702",
-    message: "column reference is ambiguous",
-    details: "It could refer to a variable or a table column.",
-    hint: "Qualify the reference.",
-  };
-
-  await assert.rejects(
-    saveSharedItemTemplateAdd(
-      createSpotAddMockClient([], { data: null, error: postgrestError }),
-      spotAddInput(),
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.match(error.message, /code=42702/);
-      assert.match(error.message, /message=column reference is ambiguous/);
-      assert.match(error.message, /details=It could refer to a variable or a table column\./);
-      assert.match(error.message, /hint=Qualify the reference\./);
-      return true;
-    },
-  );
-});
-
-test("accepts shared item input values at the durable write limits", async () => {
-  const regular = await saveSharedItemTemplateAdd(
-    createItemAddMockClient([], {
-      data: [{ id: regularUuid, sort_order: 0 }],
-      error: null,
-    }),
-    {
-      ...regularAddInput(),
-      name: "a".repeat(80),
-      defaultQuantity: 5,
-    },
-  );
-  assert.equal(regular.id, regularUuid);
-
-  const rough = await saveSharedItemTemplateAdd(
-    createItemAddMockClient([], {
-      data: [{ id: roughUuid, sort_order: 0 }],
-      error: null,
-    }),
-    {
-      ...regularAddInput(),
-      kind: "rough",
-      defaultQuantity: 0,
-      unit: "u".repeat(10),
-      currentRoughState: "enough",
-    },
-  );
-  assert.equal(rough.id, roughUuid);
-});
-
-test("rejects invalid shared item input before any Supabase query", async () => {
-  await assertAddRejectedBeforeQuery(
-    { name: "a".repeat(81) },
-    /invalid_item_template_name/,
-  );
-  await assertAddRejectedBeforeQuery(
-    { name: "   " },
-    /invalid_item_template_name/,
-  );
-  await assertAddRejectedBeforeQuery(
-    { defaultQuantity: 6 },
-    /invalid_home_item_quantity/,
-  );
-  await assertAddRejectedBeforeQuery(
-    { defaultQuantity: 10 },
-    /invalid_home_item_quantity/,
-  );
-  await assertAddRejectedBeforeQuery(
-    { defaultQuantity: 11 },
-    /invalid_home_item_quantity/,
-  );
-  await assertAddRejectedBeforeQuery(
-    { defaultQuantity: 999 },
-    /invalid_home_item_quantity/,
-  );
-  await assertAddRejectedBeforeQuery(
-    { defaultQuantity: 1000 },
-    /invalid_home_item_quantity/,
-  );
-  await assertAddRejectedBeforeQuery(
-    { defaultQuantity: -1 },
-    /invalid_home_item_quantity/,
-  );
-  await assertAddRejectedBeforeQuery(
-    { defaultQuantity: 1.5 },
-    /invalid_home_item_quantity/,
-  );
-  await assertAddRejectedBeforeQuery(
-    {
-      kind: "rough",
-      unit: "u".repeat(11),
-      currentRoughState: "enough",
-    },
-    /invalid_home_rough_unit/,
-  );
-});
-
-test("propagates item template add RPC failures", async () => {
-  const insertError = { code: "P0001", message: "insert failed" };
-  await assert.rejects(
-    saveSharedItemTemplateAdd(
-      createItemAddMockClient([], {
-        data: null,
-        error: insertError,
-      }),
-      regularAddInput(),
-    ),
-    /shared_item_template_save_failed/,
-  );
-});
-
-test("rejects missing or invalid item template add RPC results", async () => {
-  await assert.rejects(
-    saveSharedItemTemplateAdd(
-      createItemAddMockClient([], {
-        data: null,
-        error: null,
-      }),
-      regularAddInput(),
-    ),
-    /shared_item_template_add_result_invalid/,
-  );
-
-  await assert.rejects(
-    saveSharedItemTemplateAdd(
-      createItemAddMockClient([], {
-        data: [{ id: anotherUuid, sort_order: Number.NaN }],
-        error: null,
-      }),
-      regularAddInput(),
-    ),
-    /shared_item_template_add_result_invalid/,
-  );
-
-  for (const invalidId of ["", "not-a-uuid"]) {
-    await assert.rejects(
-      saveSharedItemTemplateAdd(
-        createItemAddMockClient([], {
-          data: [{ id: invalidId, sort_order: 0 }],
-          error: null,
-        }),
-        regularAddInput(),
-      ),
-      /shared_item_template_add_result_invalid/,
-    );
-  }
-});
-
-test("maps item edit changes to item_templates update columns only", () => {
-  assert.deepEqual(
-    toItemTemplateEditUpdate({
-      name: "Diaper",
-      count: 3,
-      unit: "pack",
-      weekdays: [1, 3],
-    }),
-    {
-      name: "Diaper",
-      default_quantity: 3,
-      unit: "pack",
-    },
-  );
-});
-
-test("updates shared spot fields and weekdays through the atomic weekday RPC", async () => {
-  const calls: unknown[] = [];
-
-  await saveSharedItemTemplateEdit(
-    createSpotWeekdayEditMockClient(calls, { data: null, error: null }),
-    {
-      familyId: "family-1",
-      childId: "child-1",
-      itemId: "template-spot",
-      changes: {
-        name: " Water bottle ",
-        count: 0,
-        weekdays: [0, 6],
-      },
-    },
-  );
-
-  assert.deepEqual(calls, [
-    [
-      "rpc",
-      "update_family_spot_item_template_weekdays",
-      {
-        p_family_id: "family-1",
-        p_child_id: "child-1",
-        p_item_template_id: "template-spot",
-        p_weekdays: [0, 6],
-        p_name: " Water bottle ",
-        p_default_quantity: 0,
-      },
-    ],
-  ]);
-});
-
-test("shared spot name-only and quantity-only edits still use the atomic weekday RPC", async () => {
-  const cases: Array<{
-    changes: SaveSharedItemTemplateEditInput["changes"];
-    expectedName: string | null;
-    expectedQuantity: number | null;
-  }> = [
-    {
-      changes: { name: "Water bottle", weekdays: [1, 3] },
-      expectedName: "Water bottle",
-      expectedQuantity: null,
-    },
-    {
-      changes: { count: 0, weekdays: [1, 3] },
-      expectedName: null,
-      expectedQuantity: 0,
-    },
+test("unknown status, reason, and malformed or mismatched metadata are rejected", async () => {
+  const input = { familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt, currentRoughState: "low" as const };
+  const malformed = [
+    { status: "mystery", changed: false, reason: null },
+    { status: "conflict", changed: false, reason: "mystery" },
+    { ...success("rough"), family_id: childId },
+    { ...success("rough"), child_id: familyId },
+    { ...success("rough"), item_template_id: familyId },
+    { ...success("regular") },
+    { ...success("rough"), updated_at: "bad" },
+    { ...success("rough"), weekdays: [1] },
+    { ...success("rough"), default_quantity: 1.5 },
+    { ...success("rough"), changed: "true" },
+    { ...success("rough"), is_active: false },
+    { ...success("rough"), sort_order: 1.5 },
+    { ...success("spot"), weekdays: [1, 1] },
+    new Proxy({}, { get() { throw new Error("hostile response"); } }),
   ];
-
-  for (const testCase of cases) {
-    const calls: unknown[] = [];
-    await saveSharedItemTemplateEdit(
-      createSpotWeekdayEditMockClient(calls, { data: null, error: null }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-spot",
-        changes: testCase.changes,
-      },
-    );
-
-    assert.deepEqual(calls, [
-      [
-        "rpc",
-        "update_family_spot_item_template_weekdays",
-        {
-          p_family_id: "family-1",
-          p_child_id: "child-1",
-          p_item_template_id: "template-spot",
-          p_weekdays: [1, 3],
-          p_name: testCase.expectedName,
-          p_default_quantity: testCase.expectedQuantity,
-        },
-      ],
-    ]);
+  for (const payload of malformed) {
+    assert.equal((await updateSharedRoughItemState(rpcClient(payload).client, input)).status, "invalid_response");
   }
 });
 
-test("spot weekday edit accepts zero to seven weekdays", async () => {
-  for (const weekdays of [[], [1], [1, 5], [0, 1, 2, 3, 4, 5, 6]]) {
-    const calls: unknown[] = [];
-    await saveSharedItemTemplateEdit(
-      createSpotWeekdayEditMockClient(calls, { data: null, error: null }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-spot",
-        changes: { weekdays },
-      },
-    );
-
-    assert.equal(calls.length, 1);
-  }
-});
-
-test("spot weekday edit rejects invalid weekdays before RPC", async () => {
-  const invalidChanges: SaveSharedItemTemplateEditInput["changes"][] = [
-    { weekdays: [0, 1, 2, 3, 4, 5, 6, 0] },
-    { weekdays: [-1] },
-    { weekdays: [7] },
-    { weekdays: [1, 1] },
-  ];
-
-  for (const changes of invalidChanges) {
-    const calls: unknown[] = [];
-    await assert.rejects(
-      saveSharedItemTemplateEdit(
-        createSpotWeekdayEditMockClient(calls, { data: null, error: null }),
-        {
-          familyId: "family-1",
-          childId: "child-1",
-          itemId: "template-spot",
-          changes,
-        },
-      ),
-    );
-    assert.deepEqual(calls, []);
-  }
-});
-
-test("spot weekday edit does not fall back to item_templates update when RPC fails", async () => {
-  const calls: unknown[] = [];
-  const error = new Error("weekday update failed");
-
-  await assert.rejects(
-    saveSharedItemTemplateEdit(
-      createSpotWeekdayEditMockClient(calls, { data: null, error }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-spot",
-        changes: { name: "Water bottle", count: 2, weekdays: [2] },
-      },
-    ),
-    error,
-  );
-
-  assert.equal(calls.length, 1);
-  assert.equal(hasUpdateCall(calls), false);
-});
-
-test("updates shared item template sort orders through the atomic RPC", async () => {
-  const calls: unknown[] = [];
-
-  await saveSharedItemTemplateSortOrders(
-    createSortOrderMockClient(calls, { data: null, error: null }),
-    {
-      familyId: "family-1",
-      childId: "child-1",
-      items: [
-        { id: regularUuid, sortOrder: 0 },
-        { id: spotUuid, sortOrder: 1 },
-        { id: roughUuid, sortOrder: 2 },
-      ],
-    },
-  );
-
-  assert.deepEqual(calls, [
-    [
-      "rpc",
-      "update_family_item_template_sort_orders",
-      {
-        p_family_id: "family-1",
-        p_child_id: "child-1",
-        p_items: [
-          { id: regularUuid, sortOrder: 0 },
-          { id: spotUuid, sortOrder: 1 },
-          { id: roughUuid, sortOrder: 2 },
-        ],
-      },
-    ],
-  ]);
-});
-
-test("shared sort order save rejects invalid input before RPC", async () => {
-  for (const items of [
-    [{ id: "not-a-uuid", sortOrder: 0 }],
-    [
-      { id: regularUuid, sortOrder: 0 },
-      { id: regularUuid, sortOrder: 1 },
-    ],
-    [{ id: regularUuid, sortOrder: -1 }],
-    [{ id: regularUuid, sortOrder: 1.5 }],
-    [
-      { id: regularUuid, sortOrder: 0 },
-      { id: spotUuid, sortOrder: 0 },
-    ],
-    [
-      { id: regularUuid, sortOrder: 0 },
-      { id: spotUuid, sortOrder: 2 },
-    ],
-  ]) {
-    const calls: unknown[] = [];
-
-    await assert.rejects(
-      saveSharedItemTemplateSortOrders(
-        createSortOrderMockClient(calls, { data: null, error: null }),
-        {
-          familyId: "family-1",
-          childId: "child-1",
-          items,
-        },
-      ),
-      /item_template/,
-    );
-
-    assert.deepEqual(calls, []);
-  }
-});
-
-test("shared sort order RPC failure does not fall back to item_templates update", async () => {
-  const calls: unknown[] = [];
-  const error = new Error("sort order update failed");
-
-  await assert.rejects(
-    saveSharedItemTemplateSortOrders(
-      createSortOrderMockClient(calls, { data: null, error }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        items: [{ id: regularUuid, sortOrder: 0 }],
-      },
-    ),
-    error,
-  );
-
-  assert.equal(calls.length, 1);
-  assert.equal(hasUpdateCall(calls), false);
-});
-
-test("updates shared item template edit with item, family, and child filters", async () => {
-  const calls: unknown[] = [];
-  const client = createMockClient(calls, {
-    data: { id: "template-1" },
-    error: null,
-  });
-
-  await saveSharedItemTemplateEdit(client, {
-    familyId: "family-1",
-    childId: "child-1",
-    itemId: "template-1",
-    changes: {
-      name: "Diaper",
-      count: 3,
-      unit: "pack",
+test("success metadata is snapshotted once before validation and mapping", async () => {
+  const payload = success("regular");
+  const reads = new Map<PropertyKey, number>();
+  const hostile = new Proxy(payload, {
+    get(target, property, receiver) {
+      const count = (reads.get(property) ?? 0) + 1;
+      reads.set(property, count);
+      if (count > 1) throw new Error("getter read twice");
+      return Reflect.get(target, property, receiver);
     },
   });
-
-  assert.deepEqual(calls, [
-    ["from", "item_templates"],
-    [
-      "update",
-      {
-        name: "Diaper",
-        default_quantity: 3,
-        unit: "pack",
-      },
-    ],
-    ["eq", "id", "template-1"],
-    ["eq", "family_id", "family-1"],
-    ["eq", "child_id", "child-1"],
-    ["select", "id"],
-    ["maybeSingle"],
-  ]);
+  const result = await updateSharedItemTemplate(rpcClient(hostile).client, {
+    familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt,
+    kind: "regular", name: "タオル", defaultQuantity: 2, unit: null,
+  });
+  assert.equal(result.status, "success");
+  assert.equal([...reads.values()].every((count) => count === 1), true);
 });
 
-test("soft deletes a shared item template with item, family, and child filters", async () => {
-  const calls: unknown[] = [];
-
-  await saveSharedItemTemplateDelete(
-    createMockClient(calls, {
-      data: { id: "template-1" },
-      error: null,
-    }),
-    {
-      familyId: "family-1",
-      childId: "child-1",
-      itemId: "template-1",
-    },
-  );
-
-  assert.deepEqual(calls, [
-    ["from", "item_templates"],
-    ["update", { is_active: false }],
-    ["eq", "id", "template-1"],
-    ["eq", "family_id", "family-1"],
-    ["eq", "child_id", "child-1"],
-    ["select", "id"],
-    ["maybeSingle"],
-  ]);
-});
-
-test("throws when shared item template delete matches no rows", async () => {
-  await assert.rejects(
-    saveSharedItemTemplateDelete(
-      createMockClient([], { data: null, error: null }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-1",
-      },
-    ),
-    /shared_item_template_not_found/,
-  );
-});
-
-test("throws when shared item template delete update fails", async () => {
-  const updateError = new Error("delete failed");
-
-  await assert.rejects(
-    saveSharedItemTemplateDelete(
-      createMockClient([], { data: null, error: updateError }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-1",
-      },
-    ),
-    updateError,
-  );
-});
-
-test("does not run ambiguous shared item template deletes without ids", async () => {
-  for (const input of [
-    { familyId: "", childId: "child-1", itemId: "template-1" },
-    { familyId: "family-1", childId: " ", itemId: "template-1" },
-    { familyId: "family-1", childId: "child-1", itemId: "" },
-  ]) {
-    const calls: unknown[] = [];
-    await assert.rejects(
-      saveSharedItemTemplateDelete(
-        createMockClient(calls, {
-          data: { id: "template-1" },
-          error: null,
-        }),
-        input,
-      ),
-      /missing_(familyId|childId|itemId)/,
-    );
-    assert.deepEqual(calls, []);
+test("changed false canonical success preserves the optimistic timestamp", async () => {
+  const result = await updateSharedItemTemplate(rpcClient(success("regular", false)).client, {
+    familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt,
+    kind: "regular", name: "タオル", defaultQuantity: 2, unit: null,
+  });
+  assert.equal(result.status, "success");
+  if (result.status === "success") {
+    assert.equal(result.changed, false);
+    assert.equal(result.updatedAt, updatedAt);
   }
 });
 
-test("accepts shared item edits at the quantity and unit write limits", async () => {
-  const calls: unknown[] = [];
-  await saveSharedItemTemplateEdit(
-    createMockClient(calls, { data: { id: "template-1" }, error: null }),
-    {
-      familyId: "family-1",
-      childId: "child-1",
-      itemId: "template-1",
-      changes: { count: 5, unit: "u".repeat(10) },
+test("add and sort RPC helpers remain connected", async () => {
+  const addCalls: unknown[] = [];
+  const addClient: SharedItemTemplateAddClient = {
+    async rpc(name, args) {
+      addCalls.push([name, args]);
+      return { data: [{ id: itemId, sort_order: 0 }], error: null };
     },
-  );
-  assert.equal(calls.some((call) => Array.isArray(call) && call[0] === "update"), true);
-});
+  };
+  assert.deepEqual(await saveSharedItemTemplateAdd(addClient, {
+    familyId, childId, kind: "regular", name: "タオル", defaultQuantity: 2,
+    unit: "枚", currentRoughState: null,
+  }), { id: itemId, sortOrder: 0 });
+  assert.equal((addCalls[0] as unknown[])[0], "add_family_item_template");
 
-test("rejects invalid shared item edits before update", async () => {
-  for (const changes of [
-    { count: -1 },
-    { count: 1.5 },
-    { count: 6 },
-    { count: 10 },
-    { count: 11 },
-    { count: 999 },
-    { count: 1000 },
-    { unit: "u".repeat(11) },
-  ]) {
-    const calls: unknown[] = [];
-    await assert.rejects(
-      saveSharedItemTemplateEdit(
-        createMockClient(calls, { data: { id: "template-1" }, error: null }),
-        {
-          familyId: "family-1",
-          childId: "child-1",
-          itemId: "template-1",
-          changes,
-        },
-      ),
-      /invalid_home_/,
-    );
-    assert.deepEqual(calls, []);
-  }
-});
-
-test("throws when shared item template edit update matches no rows", async () => {
-  await assert.rejects(
-    saveSharedItemTemplateEdit(
-      createMockClient([], { data: null, error: null }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-1",
-        changes: { name: "Diaper" },
-      },
-    ),
-    /shared_item_template_not_found/,
-  );
-});
-
-test("throws when shared item template edit update fails", async () => {
-  const updateError = new Error("update failed");
-
-  await assert.rejects(
-    saveSharedItemTemplateEdit(
-      createMockClient([], { data: null, error: updateError }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-1",
-        changes: { name: "Diaper" },
-      },
-    ),
-    updateError,
-  );
-});
-
-test("does not run ambiguous shared item template edit updates without ids", async () => {
-  const missingFamilyCalls: unknown[] = [];
-  await assert.rejects(
-    saveSharedItemTemplateEdit(
-      createMockClient(missingFamilyCalls, {
-        data: { id: "template-1" },
-        error: null,
-      }),
-      {
-        familyId: "",
-        childId: "child-1",
-        itemId: "template-1",
-        changes: { name: "Diaper" },
-      },
-    ),
-    /missing_familyId/,
-  );
-  assert.deepEqual(missingFamilyCalls, []);
-
-  const missingChildCalls: unknown[] = [];
-  await assert.rejects(
-    saveSharedItemTemplateEdit(
-      createMockClient(missingChildCalls, {
-        data: { id: "template-1" },
-        error: null,
-      }),
-      {
-        familyId: "family-1",
-        childId: " ",
-        itemId: "template-1",
-        changes: { name: "Diaper" },
-      },
-    ),
-    /missing_childId/,
-  );
-  assert.deepEqual(missingChildCalls, []);
-
-  const missingItemCalls: unknown[] = [];
-  await assert.rejects(
-    saveSharedItemTemplateEdit(
-      createMockClient(missingItemCalls, {
-        data: { id: "template-1" },
-        error: null,
-      }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "",
-        changes: { name: "Diaper" },
-      },
-    ),
-    /missing_itemId/,
-  );
-  assert.deepEqual(missingItemCalls, []);
-});
-
-test("rejects empty shared item template edit updates before query", async () => {
-  const calls: unknown[] = [];
-
-  await assert.rejects(
-    saveSharedItemTemplateEdit(
-      createMockClient(calls, { data: { id: "template-1" }, error: null }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-1",
-        changes: {},
-      },
-    ),
-    /missing_item_template_update/,
-  );
-
-  assert.deepEqual(calls, []);
-});
-
-test("updates only current rough state with rough kind filter", async () => {
-  const calls: unknown[] = [];
-  const client = createMockClient(calls, {
-    data: { id: "template-rough" },
-    error: null,
+  const sortCalls: unknown[] = [];
+  const sortClient: SharedItemTemplateSortOrderClient = {
+    async rpc(name, args) { sortCalls.push([name, args]); return { data: null, error: null }; },
+  };
+  await saveSharedItemTemplateSortOrders(sortClient, {
+    familyId, childId, items: [{ id: itemId, sortOrder: 0 }],
   });
-
-  await saveSharedRoughState(client, {
-    familyId: "family-1",
-    childId: "child-1",
-    itemId: "template-rough",
-    roughState: "補充",
-  });
-
-  assert.deepEqual(calls, [
-    ["from", "item_templates"],
-    ["update", { current_rough_state: "refill" }],
-    ["eq", "id", "template-rough"],
-    ["eq", "family_id", "family-1"],
-    ["eq", "child_id", "child-1"],
-    ["eq", "kind", "rough"],
-    ["select", "id"],
-    ["maybeSingle"],
-  ]);
+  assert.equal((sortCalls[0] as unknown[])[0], "update_family_item_template_sort_orders");
 });
-
-test("rejects invalid rough states before query", async () => {
-  const calls: unknown[] = [];
-
-  assert.throws(() => toDbRoughState("empty"), /invalid_roughState/);
-
-  await assert.rejects(
-    saveSharedRoughState(
-      createMockClient(calls, { data: { id: "template-rough" }, error: null }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-rough",
-        roughState: "empty",
-      },
-    ),
-    /invalid_roughState/,
-  );
-  assert.deepEqual(calls, []);
-});
-
-test("throws when shared rough state update matches no rows", async () => {
-  await assert.rejects(
-    saveSharedRoughState(createMockClient([], { data: null, error: null }), {
-      familyId: "family-1",
-      childId: "child-1",
-      itemId: "template-rough",
-      roughState: "十分",
-    }),
-    /shared_rough_state_not_found/,
-  );
-});
-
-test("throws when shared rough state update fails", async () => {
-  const updateError = new Error("update failed");
-
-  await assert.rejects(
-    saveSharedRoughState(
-      createMockClient([], { data: null, error: updateError }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: "template-rough",
-        roughState: "十分",
-      },
-    ),
-    updateError,
-  );
-});
-
-test("does not run ambiguous shared rough state updates without ids", async () => {
-  const missingFamilyCalls: unknown[] = [];
-  await assert.rejects(
-    saveSharedRoughState(
-      createMockClient(missingFamilyCalls, {
-        data: { id: "template-rough" },
-        error: null,
-      }),
-      {
-        familyId: "",
-        childId: "child-1",
-        itemId: "template-rough",
-        roughState: "十分",
-      },
-    ),
-    /missing_familyId/,
-  );
-  assert.deepEqual(missingFamilyCalls, []);
-
-  const missingChildCalls: unknown[] = [];
-  await assert.rejects(
-    saveSharedRoughState(
-      createMockClient(missingChildCalls, {
-        data: { id: "template-rough" },
-        error: null,
-      }),
-      {
-        familyId: "family-1",
-        childId: "",
-        itemId: "template-rough",
-        roughState: "十分",
-      },
-    ),
-    /missing_childId/,
-  );
-  assert.deepEqual(missingChildCalls, []);
-
-  const missingItemCalls: unknown[] = [];
-  await assert.rejects(
-    saveSharedRoughState(
-      createMockClient(missingItemCalls, {
-        data: { id: "template-rough" },
-        error: null,
-      }),
-      {
-        familyId: "family-1",
-        childId: "child-1",
-        itemId: " ",
-        roughState: "十分",
-      },
-    ),
-    /missing_itemId/,
-  );
-  assert.deepEqual(missingItemCalls, []);
-});
-
-function createMockClient(
-  calls: unknown[],
-  result: { data: { id: string } | null; error: Error | null },
-): SharedItemTemplateClient {
-  const query = {
-    update(value: unknown) {
-      calls.push(["update", value]);
-      return this;
-    },
-    eq(column: string, value: string) {
-      calls.push(["eq", column, value]);
-      return this;
-    },
-    select(columns: string) {
-      calls.push(["select", columns]);
-      return this;
-    },
-    maybeSingle() {
-      calls.push(["maybeSingle"]);
-      return Promise.resolve(result);
-    },
-  };
-
-  return {
-    from(table: string) {
-      calls.push(["from", table]);
-      return query;
-    },
-  } as unknown as SharedItemTemplateClient;
-}
-
-function regularAddInput() {
-  return {
-    familyId: "family-1",
-    childId: "child-1",
-    kind: "regular" as const,
-    name: "Towel",
-    defaultQuantity: 2,
-    unit: "枚",
-    currentRoughState: null,
-  };
-}
-
-function spotAddInput(): SaveSharedItemTemplateAddInput {
-  return {
-    familyId: "family-1",
-    childId: "child-1",
-    kind: "spot",
-    name: "Water bottle",
-    defaultQuantity: 1,
-    unit: "個",
-    currentRoughState: null,
-    weekdays: [],
-  };
-}
-
-async function assertAddRejectedBeforeQuery(
-  overrides: Partial<SaveSharedItemTemplateAddInput>,
-  expectedError: RegExp,
-) {
-  const calls: unknown[] = [];
-  await assert.rejects(
-    saveSharedItemTemplateAdd(
-      createItemAddMockClient(calls, {
-        data: [{ id: regularUuid, sort_order: 0 }],
-        error: null,
-      }),
-      { ...regularAddInput(), ...overrides },
-    ),
-    expectedError,
-  );
-  assert.deepEqual(calls, []);
-}
-
-function hasInsertCall(calls: unknown[]) {
-  return calls.some((call) => Array.isArray(call) && call[0] === "insert");
-}
-
-function hasFromCall(calls: unknown[]) {
-  return calls.some((call) => Array.isArray(call) && call[0] === "from");
-}
-
-function hasUpdateCall(calls: unknown[]) {
-  return calls.some((call) => Array.isArray(call) && call[0] === "update");
-}
-
-function createItemAddMockClient(
-  calls: unknown[],
-  result: {
-    data: { id: string; sort_order: number }[] | null;
-    error: unknown;
-  },
-): SharedItemTemplateAddClient {
-  return {
-    from() {
-      throw new Error("regular and rough add must use the atomic RPC");
-    },
-    rpc(functionName, args) {
-      calls.push(["rpc", functionName, args]);
-      return Promise.resolve(result);
-    },
-  } as unknown as SharedItemTemplateAddClient;
-}
-
-function createSpotAddMockClient(
-  calls: unknown[],
-  result: {
-    data: { id: string; sort_order: number }[] | null;
-    error: unknown;
-  },
-): SharedItemTemplateAddClient {
-  return {
-    from() {
-      throw new Error("spot add must not query item_templates directly");
-    },
-    rpc(functionName, args) {
-      calls.push(["rpc", functionName, args]);
-      return Promise.resolve(result);
-    },
-  } as unknown as SharedItemTemplateAddClient;
-}
-
-function createSpotWeekdayEditMockClient(
-  calls: unknown[],
-  result: {
-    data: unknown;
-    error: unknown;
-  },
-): SharedItemTemplateClient {
-  return {
-    from() {
-      throw new Error("spot weekday edit must use the atomic RPC");
-    },
-    rpc(functionName, args) {
-      calls.push(["rpc", functionName, args]);
-      return Promise.resolve(result);
-    },
-  } as unknown as SharedItemTemplateClient;
-}
-
-function createSortOrderMockClient(
-  calls: unknown[],
-  result: {
-    data: unknown;
-    error: unknown;
-  },
-): SharedItemTemplateSortOrderClient {
-  return {
-    rpc(functionName, args) {
-      calls.push(["rpc", functionName, args]);
-      return Promise.resolve(result);
-    },
-  };
-}

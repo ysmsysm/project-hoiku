@@ -1,27 +1,7 @@
-import type { RoughState } from "./shared-settings";
 import {
   assertValidHomeItemQuantity,
   assertValidHomeRoughUnit,
 } from "../home-item-template-constraints";
-
-export type SaveSharedItemTemplateEditInput = {
-  familyId: string;
-  childId: string;
-  itemId: string;
-  changes: {
-    name?: string;
-    count?: number;
-    unit?: string;
-    weekdays?: number[];
-  };
-};
-
-export type SaveSharedRoughStateInput = {
-  familyId: string;
-  childId: string;
-  itemId: string;
-  roughState: string;
-};
 
 export type SaveSharedItemTemplateAddInput = {
   familyId: string;
@@ -39,12 +19,6 @@ export type SaveSharedItemTemplateAddResult = {
   sortOrder: number;
 };
 
-export type SaveSharedItemTemplateDeleteInput = {
-  familyId: string;
-  childId: string;
-  itemId: string;
-};
-
 export type SaveSharedItemTemplateSortOrderInput = {
   familyId: string;
   childId: string;
@@ -52,44 +26,6 @@ export type SaveSharedItemTemplateSortOrderInput = {
     id: string;
     sortOrder: number;
   }[];
-};
-
-type ItemTemplatesUpdate = {
-  name?: string;
-  default_quantity?: number;
-  unit?: string;
-  current_rough_state?: DbRoughState;
-  is_active?: false;
-};
-
-type ItemTemplatesUpdateQuery = {
-  eq: (column: string, value: string) => ItemTemplatesUpdateQuery;
-  select: (columns: "id") => {
-    maybeSingle: () => PromiseLike<{
-      data: { id: string } | null;
-      error: unknown;
-    }>;
-  };
-};
-
-export type SharedItemTemplateClient = {
-  from: (table: "item_templates") => {
-    update: (value: ItemTemplatesUpdate) => ItemTemplatesUpdateQuery;
-  };
-  rpc?: (
-    functionName: "update_family_spot_item_template_weekdays",
-    args: {
-      p_family_id: string;
-      p_child_id: string;
-      p_item_template_id: string;
-      p_weekdays: number[];
-      p_name?: string | null;
-      p_default_quantity?: number | null;
-    },
-  ) => PromiseLike<{
-    data: unknown;
-    error: unknown;
-  }>;
 };
 
 export type SharedItemTemplateAddClient = {
@@ -135,39 +71,10 @@ export type SharedItemTemplateSortOrderClient = {
   }>;
 };
 
-const dbRoughStateByAppValue = {
-  十分: "enough",
-  少ない: "low",
-  補充: "refill",
-} as const satisfies Record<RoughState, string>;
-
-type DbRoughState =
-  (typeof dbRoughStateByAppValue)[keyof typeof dbRoughStateByAppValue];
-
 const maxItemNameLength = 80;
 const maxItemSortOrder = 100000;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export function toItemTemplateEditUpdate(
-  changes: SaveSharedItemTemplateEditInput["changes"],
-): ItemTemplatesUpdate {
-  return {
-    ...(changes.name !== undefined ? { name: changes.name } : {}),
-    ...(changes.count !== undefined
-      ? { default_quantity: changes.count }
-      : {}),
-    ...(changes.unit !== undefined ? { unit: changes.unit } : {}),
-  };
-}
-
-export function toDbRoughState(roughState: string): DbRoughState {
-  if (!isAllowedRoughState(roughState)) {
-    throw new Error("invalid_roughState");
-  }
-
-  return dbRoughStateByAppValue[roughState];
-}
 
 export async function saveSharedItemTemplateAdd(
   supabase: SharedItemTemplateAddClient,
@@ -250,68 +157,6 @@ export async function saveSharedItemTemplateAdd(
   return { id: saved.id, sortOrder: saved.sort_order };
 }
 
-export async function saveSharedItemTemplateEdit(
-  supabase: SharedItemTemplateClient,
-  input: SaveSharedItemTemplateEditInput,
-) {
-  assertNonEmptyId(input.familyId, "familyId");
-  assertNonEmptyId(input.childId, "childId");
-  assertNonEmptyId(input.itemId, "itemId");
-  if (input.changes.count !== undefined) {
-    assertValidHomeItemQuantity(input.changes.count);
-  }
-  if (input.changes.unit !== undefined) {
-    assertValidHomeRoughUnit(input.changes.unit);
-  }
-  if (input.changes.weekdays !== undefined) {
-    const weekdays = validateSpotWeekdays(input.changes.weekdays);
-    if (!supabase.rpc) {
-      throw new Error("missing_spot_item_template_weekdays_rpc");
-    }
-
-    const { error } = await supabase.rpc(
-      "update_family_spot_item_template_weekdays",
-      {
-        p_family_id: input.familyId,
-        p_child_id: input.childId,
-        p_item_template_id: input.itemId,
-        p_weekdays: weekdays,
-        p_name: input.changes.name ?? null,
-        p_default_quantity: input.changes.count ?? null,
-      },
-    );
-
-    if (error) {
-      throw toSharedItemTemplateSaveError(error);
-    }
-
-    return;
-  }
-
-  const update = toItemTemplateEditUpdate(input.changes);
-
-  if (Object.keys(update).length === 0) {
-    throw new Error("missing_item_template_update");
-  }
-
-  const { data, error } = await supabase
-    .from("item_templates")
-    .update(update)
-    .eq("id", input.itemId)
-    .eq("family_id", input.familyId)
-    .eq("child_id", input.childId)
-    .select("id")
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  if (!data) {
-    throw new Error("shared_item_template_not_found");
-  }
-}
-
 export async function saveSharedItemTemplateSortOrders(
   supabase: SharedItemTemplateSortOrderClient,
   input: SaveSharedItemTemplateSortOrderInput,
@@ -373,64 +218,6 @@ export async function saveSharedItemTemplateSortOrders(
   if (error) {
     throw toSharedItemTemplateSaveError(error);
   }
-}
-
-export async function saveSharedItemTemplateDelete(
-  supabase: SharedItemTemplateClient,
-  input: SaveSharedItemTemplateDeleteInput,
-) {
-  assertNonEmptyId(input.familyId, "familyId");
-  assertNonEmptyId(input.childId, "childId");
-  assertNonEmptyId(input.itemId, "itemId");
-
-  const { data, error } = await supabase
-    .from("item_templates")
-    .update({ is_active: false })
-    .eq("id", input.itemId)
-    .eq("family_id", input.familyId)
-    .eq("child_id", input.childId)
-    .select("id")
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  if (!data) {
-    throw new Error("shared_item_template_not_found");
-  }
-}
-
-export async function saveSharedRoughState(
-  supabase: SharedItemTemplateClient,
-  input: SaveSharedRoughStateInput,
-) {
-  assertNonEmptyId(input.familyId, "familyId");
-  assertNonEmptyId(input.childId, "childId");
-  assertNonEmptyId(input.itemId, "itemId");
-  const dbRoughState = toDbRoughState(input.roughState);
-
-  const { data, error } = await supabase
-    .from("item_templates")
-    .update({ current_rough_state: dbRoughState })
-    .eq("id", input.itemId)
-    .eq("family_id", input.familyId)
-    .eq("child_id", input.childId)
-    .eq("kind", "rough")
-    .select("id")
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  if (!data) {
-    throw new Error("shared_rough_state_not_found");
-  }
-}
-
-function isAllowedRoughState(value: string): value is RoughState {
-  return value === "十分" || value === "少ない" || value === "補充";
 }
 
 function charLength(value: string) {
