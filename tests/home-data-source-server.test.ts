@@ -452,3 +452,32 @@ test("sharing not started stays local and never resolves a daily date", async ()
   assert.equal(calls.sessionDate, 0);
   assert.deepEqual(calls.daily, []);
 });
+
+test("every local boundary skips the shared daily server bootstrap", async () => {
+  for (const currentCase of [
+    {
+      currentUser: { status: "unauthenticated" } as CurrentUserResult,
+      currentMembership: undefined,
+    },
+    {
+      currentUser: { status: "authenticated", user } as CurrentUserResult,
+      currentMembership: null,
+    },
+    {
+      currentUser: { status: "authenticated", user } as CurrentUserResult,
+      currentMembership: membership({
+        isSharingStarted: false,
+        sharingStartedAt: null,
+      }),
+    },
+  ]) {
+    const { deps, calls } = createDependencies({
+      currentUser: currentCase.currentUser,
+      membership: currentCase.currentMembership,
+    });
+
+    assert.deepEqual(await getHomeDataSource(deps), { mode: "local" });
+    assert.equal(calls.sessionDate, 0);
+    assert.deepEqual(calls.daily, []);
+  }
+});

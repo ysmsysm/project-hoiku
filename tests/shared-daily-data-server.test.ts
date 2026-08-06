@@ -9,6 +9,7 @@ import type {
   LoadDailyDataInput,
 } from "../src/types/daily";
 import type { SharedDailyState } from "../src/types/shared-daily";
+import type { SharedDailyServerClient } from "../src/lib/family-sharing/shared-daily-data-server";
 
 const serverOnlyStubDirectory = join(
   process.cwd(),
@@ -39,9 +40,42 @@ const dailyItemId = "44444444-4444-4444-8444-444444444444";
 const itemTemplateId = "55555555-5555-4555-8555-555555555555";
 const input: LoadDailyDataInput = { familyId, childId, sessionDate };
 
-const client: DailyDataClient = {
-  rpc() {
-    throw new Error("The injected loader owns RPC execution in this test");
+const ensureSuccessResponse = () => ({
+  data: {
+    status: "success",
+    session: {
+      id: sessionId,
+      session_id: sessionId,
+      family_id: familyId,
+      child_id: childId,
+      session_date: sessionDate,
+    },
+    created_session: false,
+    created_item_count: 0,
+  },
+  error: null,
+});
+
+const carryoverSuccessResponse = () => ({
+  data: {
+    status: "success",
+    created_count: 0,
+    updated_count: 0,
+    processed_count: 0,
+    skipped_count: 0,
+  },
+  error: null,
+});
+
+const client: SharedDailyServerClient = {
+  async rpc(functionName) {
+    if (functionName === "ensure_daily_session") {
+      return ensureSuccessResponse();
+    }
+    if (functionName === "process_daily_carryovers") {
+      return carryoverSuccessResponse();
+    }
+    throw new Error("The injected loader owns load RPC execution in this test");
   },
 };
 
@@ -193,6 +227,176 @@ test("executes the production dependency boundary once with the original input",
   assert.equal(result, expected);
 });
 
+test("runs ensure, carryover, and canonical load in order with one client and scope", async () => {
+  const calls: Array<{ name: string; value: unknown }> = [];
+  const expected = successState();
+  const orderedClient: SharedDailyServerClient = {
+    async rpc(functionName, args) {
+      calls.push({ name: functionName, value: args });
+      if (functionName === "ensure_daily_session") {
+        return ensureSuccessResponse();
+      }
+      if (functionName === "process_daily_carryovers") {
+        return carryoverSuccessResponse();
+      }
+      throw new Error("load_daily_data is owned by the injected loader");
+    },
+  };
+
+  const result = await loadSharedDailyDataForFamilyWithDependencies(input, {
+    createClient: async () => orderedClient,
+    loadDailyDataForDate: async (receivedClient, receivedInput) => {
+      calls.push({
+        name: "load_daily_data",
+        value: { client: receivedClient, input: receivedInput },
+      });
+      return expected;
+    },
+  });
+
+  assert.equal(result, expected);
+  assert.deepEqual(calls, [
+    {
+      name: "ensure_daily_session",
+      value: {
+        p_family_id: familyId,
+        p_child_id: childId,
+        p_session_date: sessionDate,
+      },
+    },
+    {
+      name: "process_daily_carryovers",
+      value: {
+        p_family_id: familyId,
+        p_child_id: childId,
+        p_to_session_date: sessionDate,
+      },
+    },
+    {
+      name: "load_daily_data",
+      value: { client: orderedClient, input },
+    },
+  ]);
+});
+
+test("ensure failures short-circuit carryover and load without exposing raw errors", async () => {
+  const cases = [
+    {
+      response: { data: null, error: { message: "raw ensure database error" } },
+      expectedStatus: "transport_error",
+    },
+    {
+      response: {
+        data: {
+          status: "forbidden",
+          session: null,
+          created_session: false,
+          created_item_count: 0,
+        },
+        error: null,
+      },
+      expectedStatus: "forbidden",
+    },
+    {
+      response: { data: { status: "success" }, error: null },
+      expectedStatus: "invalid_response",
+    },
+  ] as const;
+
+  for (const currentCase of cases) {
+    const calls: string[] = [];
+    const result = await loadSharedDailyDataForFamilyWithDependencies(input, {
+      createClient: async () => ({
+        async rpc(functionName) {
+          calls.push(functionName);
+          return currentCase.response;
+        },
+      }),
+      loadDailyDataForDate: async () => {
+        calls.push("load_daily_data");
+        return { status: "not_found", sessionDate };
+      },
+    });
+
+    assert.deepEqual(calls, ["ensure_daily_session"]);
+    assert.equal(result.status, currentCase.expectedStatus);
+    assert.doesNotMatch(JSON.stringify(result), /raw ensure database error/);
+  }
+});
+
+test("carryover failures short-circuit canonical load and reject malformed counts", async () => {
+  const cases = [
+    {
+      response: { data: null, error: { message: "raw carryover error" } },
+      expectedStatus: "transport_error",
+    },
+    {
+      response: {
+        data: {
+          status: "not_found",
+          created_count: 0,
+          updated_count: 0,
+          processed_count: 0,
+          skipped_count: 0,
+        },
+        error: null,
+      },
+      expectedStatus: "not_found",
+    },
+    {
+      response: {
+        data: { ...carryoverSuccessResponse().data, processed_count: -1 },
+        error: null,
+      },
+      expectedStatus: "invalid_response",
+    },
+  ] as const;
+
+  for (const currentCase of cases) {
+    const calls: string[] = [];
+    const result = await loadSharedDailyDataForFamilyWithDependencies(input, {
+      createClient: async () => ({
+        async rpc(functionName) {
+          calls.push(functionName);
+          return functionName === "ensure_daily_session"
+            ? ensureSuccessResponse()
+            : currentCase.response;
+        },
+      }),
+      loadDailyDataForDate: async () => {
+        calls.push("load_daily_data");
+        return { status: "not_found", sessionDate };
+      },
+    });
+
+    assert.deepEqual(calls, [
+      "ensure_daily_session",
+      "process_daily_carryovers",
+    ]);
+    assert.equal(result.status, currentCase.expectedStatus);
+    assert.doesNotMatch(JSON.stringify(result), /raw carryover error/);
+  }
+});
+
+test("canonical load malformed state wins after successful bootstrap", async () => {
+  const expected: SharedDailyState = {
+    status: "invalid_response",
+    sessionDate,
+    error: {
+      kind: "invalid_response",
+      message: "Invalid load_daily_data response",
+      issues: [{ path: "response", code: "invalid_status_envelope" }],
+    },
+  };
+
+  const result = await loadSharedDailyDataForFamilyWithDependencies(input, {
+    createClient: async () => client,
+    loadDailyDataForDate: async () => expected,
+  });
+
+  assert.equal(result, expected);
+});
+
 test("preserves a complete success state and its JSON round-trip", async () => {
   const expected = successState();
   const result = await loadSharedDailyDataForFamilyWithDependencies(input, {
@@ -229,11 +433,6 @@ test("preserves business, transport, and validation states unchanged", async () 
     { status: "forbidden", sessionDate },
     { status: "invalid_state", sessionDate },
     {
-      status: "transport_error",
-      sessionDate,
-      error: { kind: "rpc_error", code: "PGRST000", message: "fetch failed" },
-    },
-    {
       status: "invalid_response",
       sessionDate,
       error: {
@@ -262,6 +461,31 @@ test("preserves business, transport, and validation states unchanged", async () 
     assert.equal(result, expected);
     assert.deepEqual(roundTrip(result), expected);
   }
+});
+
+test("normalizes raw load transport errors at the server boundary", async () => {
+  const result = await loadSharedDailyDataForFamilyWithDependencies(input, {
+    createClient: async () => client,
+    loadDailyDataForDate: async () => ({
+      status: "transport_error",
+      sessionDate,
+      error: {
+        kind: "rpc_error",
+        code: "PGRST000",
+        message: "raw load database error",
+      },
+    }),
+  });
+
+  assert.deepEqual(result, {
+    status: "transport_error",
+    sessionDate,
+    error: {
+      kind: "rpc_error",
+      message: "Shared daily data server load failed",
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(result), /raw load database error/);
 });
 
 test("normalizes every client creation failure without calling the loader", async () => {
