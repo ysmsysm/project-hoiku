@@ -2,20 +2,40 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
-const migrationPath =
-  "supabase/migrations/20260719000600_add_ensure_daily_session_rpc.sql";
+const migrationFile =
+  "20260806000300_stop_ensure_daily_session_backfill.sql";
+const migrationPath = `supabase/migrations/${migrationFile}`;
 const sql = readFileSync(migrationPath, "utf8");
+const migrationBytes = readFileSync(migrationPath);
 
-const getFunctionSql = () => {
-  const functionStart = sql.indexOf(
+const extractFunctionSql = (source: string) => {
+  const functionStart = source.indexOf(
     "create or replace function public.ensure_daily_session",
   );
   assert.ok(functionStart >= 0);
 
-  const functionEnd = sql.indexOf("$$;", functionStart);
+  const functionEnd = source.indexOf("$$;", functionStart);
   assert.ok(functionEnd > functionStart);
 
-  return sql.slice(functionStart, functionEnd + 3);
+  return source.slice(functionStart, functionEnd + 3);
+};
+
+const getFunctionSql = () => extractFunctionSql(sql);
+
+const getCreatedSessionBlock = () => {
+  const functionSql = getFunctionSql();
+  const blockStart = functionSql.search(/\bif created_session then\b/i);
+  assert.ok(blockStart >= 0);
+  const blockEnd = functionSql.indexOf("end if;", blockStart);
+  assert.ok(blockEnd > blockStart);
+
+  return {
+    sql: functionSql.slice(blockStart, blockEnd + "end if;".length),
+    outside:
+      functionSql.slice(0, blockStart) +
+      functionSql.slice(blockEnd + "end if;".length),
+    start: blockStart,
+  };
 };
 
 const getDailySessionInsertSql = () => {
@@ -29,8 +49,8 @@ const getDailySessionInsertSql = () => {
 };
 
 const getDailyItemsInsertSql = () => {
-  const functionSql = getFunctionSql();
-  const match = functionSql.match(
+  const createdSessionBlock = getCreatedSessionBlock().sql;
+  const match = createdSessionBlock.match(
     /insert into public\.daily_items[\s\S]*?returning daily_items\.id/i,
   );
 
@@ -42,16 +62,26 @@ test("daily session ensure RPC migration is present with expected signature and 
   const migrations = readdirSync("supabase/migrations").filter((file) =>
     file.endsWith(".sql"),
   );
+  const definitions = sql.match(
+    /create or replace function public\.ensure_daily_session\s*\(/gi,
+  );
 
   assert.ok(
-    migrations.includes("20260719000600_add_ensure_daily_session_rpc.sql"),
+    migrations.includes(migrationFile),
   );
+  const duplicateTimestamps = migrations
+    .map((file) => file.slice(0, 14))
+    .filter((timestamp, index, timestamps) => timestamps.indexOf(timestamp) !== index);
+  assert.deepEqual(duplicateTimestamps, []);
   assert.match(
     sql,
     /create or replace function public\.ensure_daily_session\(\s*p_family_id uuid,\s*p_child_id uuid,\s*p_session_date date\s*\)/i,
   );
+  assert.equal(definitions?.length, 1);
   assert.match(sql, /returns jsonb/i);
+  assert.match(sql, /language plpgsql/i);
   assert.match(sql, /security invoker/i);
+  assert.doesNotMatch(sql, /security definer/i);
   assert.match(sql, /set search_path = ''/i);
 });
 
@@ -128,7 +158,11 @@ test("daily session ensure RPC creates or reuses exactly one scoped daily sessio
   );
   assert.match(
     functionSql,
-    /select daily_sessions\.id[\s\S]*from public\.daily_sessions[\s\S]*daily_sessions\.family_id = p_family_id[\s\S]*daily_sessions\.child_id = p_child_id[\s\S]*daily_sessions\.session_date = p_session_date/i,
+    /select daily_sessions\.id[\s\S]*from public\.daily_sessions[\s\S]*daily_sessions\.family_id = p_family_id[\s\S]*daily_sessions\.child_id = p_child_id[\s\S]*daily_sessions\.session_date = p_session_date[\s\S]*for update;/i,
+  );
+  assert.match(
+    functionSql,
+    /select children\.id[\s\S]*from public\.children[\s\S]*children\.id = p_child_id[\s\S]*children\.family_id = p_family_id[\s\S]*for update;/i,
   );
 });
 
@@ -145,9 +179,12 @@ test("daily session ensure RPC does not update existing sessions or overwrite se
   assert.doesNotMatch(functionSql, /updated_at\s*=/i);
 });
 
-test("daily session ensure RPC inserts missing active template-derived items with DB conflict protection", () => {
+test("daily session ensure RPC snapshots active template-derived items only for a newly created session", () => {
+  const functionSql = getFunctionSql();
+  const createdSessionBlock = getCreatedSessionBlock();
   const insertSql = getDailyItemsInsertSql();
 
+  assert.match(createdSessionBlock.sql, /^if created_session then/i);
   assert.match(insertSql, /insert into public\.daily_items/i);
   assert.match(insertSql, /from public\.item_templates/i);
   assert.match(insertSql, /item_templates\.family_id = p_family_id/i);
@@ -156,6 +193,14 @@ test("daily session ensure RPC inserts missing active template-derived items wit
   assert.match(
     insertSql,
     /on conflict \(daily_session_id, item_template_id\)\s+where item_template_id is not null\s+and deleted_at is null\s+do nothing/i,
+  );
+  assert.doesNotMatch(
+    createdSessionBlock.outside,
+    /insert into public\.daily_items|from public\.item_templates|from public\.item_template_weekdays/i,
+  );
+  assert.ok(
+    createdSessionBlock.start >
+      functionSql.indexOf("created_session := inserted_session_id is not null"),
   );
 });
 
@@ -215,16 +260,24 @@ test("daily session ensure RPC does not perform carryover, ad hoc spot, update, 
   assert.match(insertSql, /is_carryover[\s\S]*false/i);
   assert.match(insertSql, /is_ad_hoc[\s\S]*false/i);
   assert.match(insertSql, /updated_by_member_id[\s\S]*updated_by_user_id[\s\S]*updated_by_display_name/i);
+  assert.match(
+    insertSql,
+    /null,\s*null,\s*null,\s*1\s*from public\.item_templates/i,
+  );
 });
 
-test("daily session ensure RPC can backfill missing template items on rerun without changing existing items", () => {
+test("daily session ensure RPC never backfills template items when reusing a session", () => {
   const functionSql = getFunctionSql();
+  const createdSessionBlock = getCreatedSessionBlock();
   const insertSql = getDailyItemsInsertSql();
 
   assert.match(functionSql, /select daily_sessions\.id[\s\S]*into target_session_id/i);
   assert.match(insertSql, /from public\.item_templates/i);
   assert.match(insertSql, /do nothing/i);
+  assert.doesNotMatch(createdSessionBlock.outside, /public\.item_templates/i);
+  assert.doesNotMatch(createdSessionBlock.outside, /public\.daily_items/i);
   assert.doesNotMatch(functionSql, /update public\.daily_items/i);
+  assert.doesNotMatch(functionSql, /version\s*=|updated_at\s*=/i);
 });
 
 test("daily session ensure RPC returns a load-compatible session payload without items", () => {
@@ -272,5 +325,59 @@ test("daily session ensure RPC returns status envelope with creation metadata", 
   );
   assert.match(functionSql, /'status', 'forbidden'/i);
   assert.match(functionSql, /'status', 'invalid_state'/i);
+  assert.doesNotMatch(functionSql, /'reason'/i);
   assert.match(functionSql, /select pg_catalog\.count\(\*\)::integer[\s\S]*into created_item_count/i);
+});
+
+test("daily session ensure RPC keeps creation ownership and retry safety in one control flow", () => {
+  const functionSql = getFunctionSql();
+  const createdSessionBlock = getCreatedSessionBlock();
+  const sessionInsert = functionSql.indexOf("insert into public.daily_sessions");
+  const creationFlag = functionSql.indexOf(
+    "created_session := inserted_session_id is not null",
+  );
+  const sessionLock = functionSql.indexOf("select daily_sessions.id", creationFlag);
+
+  assert.ok(sessionInsert >= 0);
+  assert.ok(creationFlag > sessionInsert);
+  assert.ok(sessionLock > creationFlag);
+  assert.ok(createdSessionBlock.start > sessionLock);
+  assert.match(
+    getDailySessionInsertSql(),
+    /on conflict on constraint daily_sessions_one_per_day do nothing/i,
+  );
+  assert.match(
+    createdSessionBlock.sql,
+    /on conflict \(daily_session_id, item_template_id\)[\s\S]*do nothing/i,
+  );
+});
+
+test("daily session ensure RPC keeps carryover, schema, and external effects out", () => {
+  const functionSql = getFunctionSql();
+
+  assert.doesNotMatch(functionSql, /process_daily_carryovers/i);
+  assert.doesNotMatch(functionSql, /\bexecute\b|\bformat\s*\(|\bdblink\b/i);
+  assert.doesNotMatch(
+    sql,
+    /\b(drop|alter|create)\s+(table|column|constraint)|drop\s+function|service_role|supabase_service_role/i,
+  );
+  assert.doesNotMatch(
+    sql,
+    /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i,
+  );
+});
+
+test("daily session ensure follow-up migration has no BOM and its parser tolerates CRLF", () => {
+  assert.equal(
+    migrationBytes.length >= 3 &&
+      migrationBytes[0] === 0xef &&
+      migrationBytes[1] === 0xbb &&
+      migrationBytes[2] === 0xbf,
+    false,
+  );
+  const crlfSql = sql.replace(/\r?\n/g, "\r\n");
+  assert.match(
+    extractFunctionSql(crlfSql),
+    /if created_session then[\s\S]*insert into public\.daily_items[\s\S]*end if;/i,
+  );
 });
