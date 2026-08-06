@@ -58,8 +58,8 @@ test("atomic shared item delete migration has the adjusted timestamp-token signa
   );
   assert.ok(migrationFiles.includes(migrationName));
   const definingMigrations = migrationFiles.filter((file) =>
-    readFileSync(`supabase/migrations/${file}`, "utf8").includes(
-      "function public.delete_family_item_template_for_day",
+    /create or replace function public\.delete_family_item_template_for_day\s*\(/i.test(
+      readFileSync(`supabase/migrations/${file}`, "utf8"),
     ),
   );
   assert.deepEqual(definingMigrations, [migrationName]);
