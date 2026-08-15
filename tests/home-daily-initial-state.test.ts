@@ -17,6 +17,7 @@ import {
   createHomeLockerItems,
   createHomeDailyInitialState,
   deriveHomeSharedDailyState,
+  getHomeSharedThanksDisplay,
   getHomeLocalDailySourceKey,
   getHomeDailyItemMutationErrorView,
   getHomePreparationBulkTooManyItemsView,
@@ -692,6 +693,52 @@ test("shared thanks self detection compares normalized member UUIDs", () => {
   assert.equal(isHomeSharedThanksSelf(memberId, null), false);
 });
 
+test("shared thanks display distinguishes the sender and recipient", () => {
+  const ownerMemberId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const memberMemberId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const memberSentThanks = {
+    thanksSent: true,
+    thanksSentByMemberId: memberMemberId,
+    thanksReceivedByMemberId: ownerMemberId,
+  };
+
+  assert.equal(
+    getHomeSharedThanksDisplay(memberMemberId.toUpperCase(), memberSentThanks),
+    "sent",
+  );
+  assert.equal(
+    getHomeSharedThanksDisplay(ownerMemberId, memberSentThanks),
+    "received",
+  );
+  assert.equal(
+    getHomeSharedThanksDisplay(ownerMemberId, {
+      ...memberSentThanks,
+      thanksSentByMemberId: ownerMemberId,
+      thanksReceivedByMemberId: memberMemberId,
+    }),
+    "sent",
+  );
+  assert.equal(
+    getHomeSharedThanksDisplay(memberMemberId, {
+      ...memberSentThanks,
+      thanksSentByMemberId: ownerMemberId,
+      thanksReceivedByMemberId: memberMemberId,
+    }),
+    "received",
+  );
+  assert.equal(
+    getHomeSharedThanksDisplay(memberMemberId, {
+      ...memberSentThanks,
+      thanksSent: false,
+    }),
+    null,
+  );
+  assert.equal(
+    getHomeSharedThanksDisplay("cccccccc-cccc-4ccc-8ccc-cccccccccccc", memberSentThanks),
+    null,
+  );
+});
+
 test("daily item mutation errors are operation-specific, safe, and reloadable", () => {
   const conflict = getHomeDailyItemMutationErrorView(
     { status: "conflict", item: dailyItem() },
@@ -1298,19 +1345,20 @@ test("shared thanks uses a guarded session mutation, full reload, and canonical 
   assert.match(sendHandler, /updateSession\(/);
 });
 
-test("thanks UI prioritizes sent state, hides unsent self thanks, and disables pending sends", () => {
+test("thanks UI distinguishes received state, hides unsent self thanks, and disables pending sends", () => {
   assert.match(
     homeClientSource,
     /!sharedThanksSession\.thanksSent[\s\S]*?isHomeSharedThanksSelf\([\s\S]*?dataSource\.currentMemberId[\s\S]*?sharedThanksSession\.completedByMemberId/,
   );
   assert.match(
     homeClientSource,
-    /dailyMode === "shared-success" && !isUnsentSharedSelfThanks/,
+    /sharedThanksSession\?\.thanksSent[\s\S]*?sharedThanksDisplay !== null[\s\S]*?!isUnsentSharedSelfThanks/,
   );
   assert.match(homeClientSource, /sharedThanksSession\.thanksSent \|\|/);
   assert.match(homeClientSource, /isSharedSessionMutationPending/);
   assert.match(homeClientSource, /aria-busy=\{isSendThanksPending \|\| undefined\}/);
   assert.match(homeClientSource, /"✓ ありがとう済み"/);
+  assert.match(homeClientSource, /"✓ ありがとうが届きました"/);
   assert.match(homeClientSource, /"♡ ありがとう"/);
   assert.match(homeClientSource, /"送信中…"/);
 });

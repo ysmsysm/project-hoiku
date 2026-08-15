@@ -86,6 +86,7 @@ import {
   createDefaultHomeCheckCounts,
   createHomeDailyInitialState,
   deriveHomeSharedDailyState,
+  getHomeSharedThanksDisplay,
   getHomeLocalDailySourceKey,
   getHomeDailyItemMutationErrorView,
   getHomePreparationBulkTooManyItemsView,
@@ -1512,6 +1513,15 @@ function HomeClientContent({
     isPreparationSessionCompleted(session);
   const sharedThanksSession =
     sharedDailyState?.status === "success" ? sharedDailyState.session : null;
+  const sharedThanksDisplay =
+    dailyMode === "shared-success" &&
+    dataSource.mode === "shared" &&
+    sharedThanksSession !== null
+      ? getHomeSharedThanksDisplay(
+          dataSource.currentMemberId,
+          sharedThanksSession,
+        )
+      : null;
   const isUnsentSharedSelfThanks =
     dailyMode === "shared-success" &&
     dataSource.mode === "shared" &&
@@ -1524,7 +1534,10 @@ function HomeClientContent({
   const shouldShowThanksButton =
     canShowPreparationStatus &&
     (dailyMode === "local" ||
-      (dailyMode === "shared-success" && !isUnsentSharedSelfThanks));
+      (dailyMode === "shared-success" &&
+        (sharedThanksSession?.thanksSent
+          ? sharedThanksDisplay !== null
+          : !isUnsentSharedSelfThanks)));
   const isSharedThanksButtonDisabled =
     dailyMode !== "shared-success" ||
     !canRunSendThanksMutation ||
@@ -5453,7 +5466,9 @@ function HomeClientContent({
                 className="rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc] disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {session.thanksSent
-                  ? "✓ ありがとう済み"
+                  ? sharedThanksDisplay === "received"
+                    ? "✓ ありがとうが届きました"
+                    : "✓ ありがとう済み"
                   : isSendThanksPending
                     ? "送信中…"
                     : "♡ ありがとう"}

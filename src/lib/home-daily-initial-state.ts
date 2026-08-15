@@ -422,6 +422,32 @@ export function isHomeSharedThanksSelf(
   );
 }
 
+export type HomeSharedThanksDisplay = "sent" | "received" | null;
+
+export function getHomeSharedThanksDisplay(
+  currentMemberId: string,
+  session: Pick<
+    DailySession,
+    "thanksSent" | "thanksSentByMemberId" | "thanksReceivedByMemberId"
+  >,
+): HomeSharedThanksDisplay {
+  if (!session.thanksSent) {
+    return null;
+  }
+
+  if (isHomeSharedThanksSelf(currentMemberId, session.thanksSentByMemberId)) {
+    return "sent";
+  }
+
+  if (
+    isHomeSharedThanksSelf(currentMemberId, session.thanksReceivedByMemberId)
+  ) {
+    return "received";
+  }
+
+  return null;
+}
+
 export function getHomePreparationBulkTooManyItemsView(): HomeDailyItemMutationErrorView {
   return {
     title: "一括操作を利用できません",
