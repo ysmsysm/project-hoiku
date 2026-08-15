@@ -69,7 +69,7 @@ const isValidCalendarDate = (
   return day <= daysInMonth[month - 1];
 };
 
-const isIsoDate = (value: unknown): value is string => {
+export const isDailyDataIsoDate = (value: unknown): value is string => {
   if (typeof value !== "string" || !isoDatePattern.test(value)) {
     return false;
   }
@@ -77,6 +77,8 @@ const isIsoDate = (value: unknown): value is string => {
   const [year, month, day] = value.split("-").map(Number);
   return isValidCalendarDate(year, month, day);
 };
+
+const isIsoDate = isDailyDataIsoDate;
 
 export const isDailyDataIsoDateTime = (
   value: unknown,

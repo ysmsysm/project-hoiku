@@ -145,6 +145,11 @@ import { completeDailyCheck } from "../src/lib/family-sharing/complete-daily-che
 import { sendDailyThanks } from "../src/lib/family-sharing/send-daily-thanks";
 import { deleteDailyItem } from "../src/lib/family-sharing/delete-daily-item";
 import {
+  mutateDailySpotItem,
+  type DailySpotMutationClient,
+  type DailySpotMutationInput,
+} from "../src/lib/family-sharing/mutate-daily-spot-item";
+import {
   isDailyDataIsoDateTime,
   loadDailyData,
 } from "../src/lib/family-sharing/daily-data";
@@ -164,6 +169,7 @@ import {
   applyDeletedItemReloadToSharedDailyState,
   getSharedDailyItemDeletionTarget,
   getSharedPreparationBulkMutationPlan,
+  mapDailySessionToSharedDailyState,
 } from "../src/lib/family-sharing/shared-daily-data";
 import { useEditableSection } from "../src/hooks/useEditableSection";
 import type { ChildProfile } from "../src/types/child";
@@ -221,6 +227,11 @@ type SharedCompleteCheckNavigationRequest = {
   dailySessionId: string;
   responseVersion: number;
   appliedSession: DailySession;
+};
+type SharedSpotMutationRequest = {
+  token: symbol;
+  scopeKey: string;
+  generation: number;
 };
 
 const itemCategories: CustomItemCategory[] = [
@@ -693,6 +704,10 @@ function HomeClientContent({
   const dailyPreparationItemsClientRef = useRef<DailyDataClient | null>(null);
   const dailyThanksClientRef = useRef<SendDailyThanksClient | null>(null);
   const dailyItemDeleteClientRef = useRef<DeleteDailyItemClient | null>(null);
+  const dailySpotMutationClientRef = useRef<DailySpotMutationClient | null>(null);
+  const sharedSpotMutationRequestRef = useRef<SharedSpotMutationRequest | null>(null);
+  const [isSharedSpotMutationPending, setIsSharedSpotMutationPending] =
+    useState(false);
   const sharedCompleteCheckNavigationRequestRef =
     useRef<SharedCompleteCheckNavigationRequest | null>(null);
   const dailyItemMutationMountedRef = useRef(true);
@@ -798,6 +813,13 @@ function HomeClientContent({
   const [temporaryTodayOnlyItems, setTemporaryTodayOnlyItems] = useState<
     TodayOnlyTemporaryItem[]
   >([]);
+  const canRunTodaySpotMutation =
+    canRunLocalDailyMutation ||
+    (dailyMode === "shared-success" &&
+      !session?.completedAt &&
+      !isSharedSessionMutationPending &&
+      !isSharedSpotMutationPending &&
+      pendingDailyItemMutationItemIds.size === 0);
   const [isTodayOnlySheetOpen, setIsTodayOnlySheetOpen] = useState(false);
   const [isTodayOnlyInputOpen, setIsTodayOnlyInputOpen] = useState(false);
   const [todayOnlyInputValue, setTodayOnlyInputValue] = useState("");
@@ -1010,11 +1032,54 @@ function HomeClientContent({
   }, [dataSource, sharedInitialDailyData, sharedInitialDailyKey]);
 
   useEffect(() => {
+    if (dataSource.mode !== "shared") {
+      return;
+    }
+    if (sharedDailyState?.status !== "success") {
+      setTemporaryTodayOnlyItems([]);
+      setSpotAdditions([]);
+      setSelectedTodayOnlyIds([]);
+      setSpotDeadlines({});
+      return;
+    }
+
+    const spots = sharedDailyState.session.items.filter(
+      (item) => item.kind === "spot",
+    );
+    const additions = spots.map((item) => ({
+      itemId: item.itemTemplateId ?? item.dailyItemId,
+      dueDate: item.dueDate,
+    }));
+    const deadlines = Object.fromEntries(
+      additions
+        .filter((addition) => addition.dueDate !== null)
+        .map((addition) => [addition.itemId, addition.dueDate as string]),
+    );
+    const temporaryItems = spots
+      .filter((item) => item.isAdHoc && item.itemTemplateId === null)
+      .map((item) => ({
+        id: item.dailyItemId,
+        name: item.name,
+        unit: item.unit ?? "個",
+        count: item.requiredQuantity,
+        category: defaultCustomItems[6].category,
+        date: sharedDailyState.session.sessionDate,
+      }));
+
+    setTemporaryTodayOnlyItems(temporaryItems);
+    setSpotAdditions(additions);
+    setSelectedTodayOnlyIds(additions.map((addition) => addition.itemId));
+    setSpotDeadlines(deadlines);
+  }, [dataSource.mode, sharedDailyState]);
+
+  useEffect(() => {
     pendingDailyItemMutationRequestsRef.current.clear();
     sharedSessionMutationRequestRef.current = null;
+    sharedSpotMutationRequestRef.current = null;
     sharedCompleteCheckNavigationRequestRef.current = null;
     setPendingDailyItemMutationItemIds(new Set());
     setSharedSessionMutationPendingOperation(null);
+    setIsSharedSpotMutationPending(false);
     setDailyItemMutationError(null);
     customItemDeleteInFlightItemIdsRef.current.clear();
     settingsMutationInFlightItemIdsRef.current.clear();
@@ -1050,6 +1115,7 @@ function HomeClientContent({
       pendingRoughStateSaves.clear();
       sharedSettingsReloadSequenceRef.current += 1;
       sharedSessionMutationRequestRef.current = null;
+      sharedSpotMutationRequestRef.current = null;
       sharedCompleteCheckNavigationRequestRef.current = null;
     };
   }, []);
@@ -1561,6 +1627,9 @@ function HomeClientContent({
     if (sharedSessionMutationRequestRef.current) {
       return;
     }
+    if (sharedSpotMutationRequestRef.current) {
+      return;
+    }
     const dailyItemId = input.dailyItemId;
     const currentSharedSession = getCurrentSharedDailySession();
     const canonicalItem = currentSharedSession?.items.find(
@@ -1672,6 +1741,9 @@ function HomeClientContent({
 
   const runSharedDailyPreparationItemsMutation = async () => {
     if (sharedSessionMutationRequestRef.current) {
+      return;
+    }
+    if (sharedSpotMutationRequestRef.current) {
       return;
     }
     const currentSharedSession = getCurrentSharedDailySession();
@@ -1990,6 +2062,128 @@ function HomeClientContent({
     }
   };
 
+  const runSharedDailySpotMutation = async (
+    input: DailySpotMutationInput,
+  ): Promise<boolean> => {
+    const currentSharedSession = getCurrentSharedDailySession();
+    if (
+      dataSource.mode !== "shared" ||
+      !currentSharedSession ||
+      currentSharedSession.familyId !== input.familyId ||
+      currentSharedSession.childId !== input.childId ||
+      currentSharedSession.sessionDate !== input.sessionDate ||
+      currentSharedSession.isCompleted ||
+      sharedSpotMutationRequestRef.current ||
+      sharedSessionMutationRequestRef.current ||
+      pendingDailyItemMutationRequestsRef.current.size > 0
+    ) {
+      return false;
+    }
+
+    if (input.action === "delete" || input.action === "set_due_date") {
+      const target = currentSharedSession.items.find(
+        (item) => item.dailyItemId === input.dailyItemId,
+      );
+      if (
+        target?.kind !== "spot" ||
+        target.version !== input.expectedVersion
+      ) {
+        return false;
+      }
+    }
+
+    const requestScopeKey = dailyItemMutationScopeKeyRef.current;
+    const requestScopeGeneration = dailyItemMutationScopeGenerationRef.current;
+    const requestToken = Symbol("daily-spot");
+    sharedSpotMutationRequestRef.current = {
+      token: requestToken,
+      scopeKey: requestScopeKey,
+      generation: requestScopeGeneration,
+    };
+    setIsSharedSpotMutationPending(true);
+    setDailyItemMutationError(null);
+
+    const isCurrentRequest = () =>
+      dailyItemMutationMountedRef.current &&
+      dailyItemMutationScopeKeyRef.current === requestScopeKey &&
+      dailyItemMutationScopeGenerationRef.current === requestScopeGeneration &&
+      sharedSpotMutationRequestRef.current?.token === requestToken;
+
+    try {
+      const browserClient = getHomeBrowserClient();
+      if (!dailySpotMutationClientRef.current) {
+        dailySpotMutationClientRef.current = {
+          rpc(functionName, args) {
+            return browserClient.rpc(functionName, args);
+          },
+        };
+      }
+      const result = await mutateDailySpotItem(
+        dailySpotMutationClientRef.current,
+        input,
+      );
+      if (!isCurrentRequest()) {
+        return false;
+      }
+      if (result.status !== "success") {
+        setDailyItemMutationError({
+          title: "保存できませんでした",
+          body: "最新の状態を確認して、もう一度操作してください。",
+          canReload: false,
+        });
+        return false;
+      }
+
+      const loaded = await loadDailyData(browserClient, {
+        familyId: input.familyId,
+        childId: input.childId,
+        sessionDate: input.sessionDate,
+      });
+      if (!isCurrentRequest()) {
+        return false;
+      }
+      if (
+        loaded.status !== "success" ||
+        loaded.session.dailySessionId !== currentSharedSession.dailySessionId
+      ) {
+        setDailyItemMutationError({
+          title: "再読み込みできませんでした",
+          body: "通信環境を確認して、もう一度操作してください。",
+          canReload: false,
+        });
+        return false;
+      }
+
+      setSharedDailyState(
+        mapDailySessionToSharedDailyState(loaded.session, input.sessionDate),
+      );
+      return true;
+    } catch {
+      if (isCurrentRequest()) {
+        setDailyItemMutationError({
+          title: "保存できませんでした",
+          body: "通信環境を確認して、もう一度操作してください。",
+          canReload: false,
+        });
+      }
+      return false;
+    } finally {
+      if (sharedSpotMutationRequestRef.current?.token === requestToken) {
+        sharedSpotMutationRequestRef.current = null;
+        if (dailyItemMutationMountedRef.current) {
+          setIsSharedSpotMutationPending(false);
+        }
+      }
+    }
+  };
+
+  const getSharedSpotItem = (itemId: string) =>
+    getCurrentSharedDailySession()?.items.find(
+      (item) =>
+        item.kind === "spot" &&
+        (item.itemTemplateId === itemId || item.dailyItemId === itemId),
+    );
+
   const updateSpotAdditions = (nextAdditions: SpotAddition[]) => {
     if (!canRunLocalDailyMutation) {
       return;
@@ -2019,6 +2213,21 @@ function HomeClientContent({
   };
 
   const addSpotItem = (itemId: string, dueDate: string | null = null) => {
+    if (dailyMode === "shared-success" && dataSource.mode === "shared") {
+      const currentSession = getCurrentSharedDailySession();
+      if (!currentSession || getSharedSpotItem(itemId)) {
+        return;
+      }
+      void runSharedDailySpotMutation({
+        action: "add_template",
+        familyId: dataSource.familyId,
+        childId: currentSession.childId,
+        sessionDate: currentSession.sessionDate,
+        itemTemplateId: itemId,
+        dueDate,
+      });
+      return;
+    }
     if (!canRunLocalDailyMutation) {
       return;
     }
@@ -2032,6 +2241,19 @@ function HomeClientContent({
   };
 
   const removeSpotItem = (itemId: string) => {
+    if (dailyMode === "shared-success" && dataSource.mode === "shared") {
+      const target = getSharedSpotItem(itemId);
+      if (!target) return;
+      void runSharedDailySpotMutation({
+        action: "delete",
+        familyId: target.familyId,
+        childId: getCurrentSharedDailySession()?.childId ?? "",
+        sessionDate: getCurrentSharedDailySession()?.sessionDate ?? "",
+        dailyItemId: target.dailyItemId,
+        expectedVersion: target.version,
+      });
+      return;
+    }
     if (!canRunLocalDailyMutation) {
       return;
     }
@@ -2042,7 +2264,7 @@ function HomeClientContent({
   };
 
   const toggleSpotItem = (itemId: string) => {
-    if (!canRunLocalDailyMutation) {
+    if (!canRunTodaySpotMutation) {
       return;
     }
 
@@ -2055,6 +2277,21 @@ function HomeClientContent({
   };
 
   const saveSpotDeadline = (itemId: string, dueDate: string) => {
+    if (dailyMode === "shared-success" && dataSource.mode === "shared") {
+      const target = getSharedSpotItem(itemId);
+      const currentSession = getCurrentSharedDailySession();
+      if (!target || !currentSession || !dueDate) return;
+      void runSharedDailySpotMutation({
+        action: "set_due_date",
+        familyId: target.familyId,
+        childId: currentSession.childId,
+        sessionDate: currentSession.sessionDate,
+        dailyItemId: target.dailyItemId,
+        expectedVersion: target.version,
+        dueDate,
+      });
+      return;
+    }
     if (!canRunLocalDailyMutation || !dueDate) {
       return;
     }
@@ -2072,6 +2309,22 @@ function HomeClientContent({
   };
 
   const clearSpotDeadline = (itemId: string) => {
+    if (dailyMode === "shared-success" && dataSource.mode === "shared") {
+      const target = getSharedSpotItem(itemId);
+      const currentSession = getCurrentSharedDailySession();
+      if (!target || !currentSession) return;
+      void runSharedDailySpotMutation({
+        action: "set_due_date",
+        familyId: target.familyId,
+        childId: currentSession.childId,
+        sessionDate: currentSession.sessionDate,
+        dailyItemId: target.dailyItemId,
+        expectedVersion: target.version,
+        dueDate: null,
+      });
+      if (spotDeadlinePicker?.itemId === itemId) setSpotDeadlinePicker(null);
+      return;
+    }
     if (!canRunLocalDailyMutation) {
       return;
     }
@@ -2094,7 +2347,8 @@ function HomeClientContent({
   };
 
   const openSpotDeadlinePicker = (itemId: string) => {
-    if (!canRunLocalDailyMutation) {
+    if (!canRunTodaySpotMutation ||
+      (dailyMode === "shared-success" && !getSharedSpotItem(itemId))) {
       return;
     }
 
@@ -2108,7 +2362,7 @@ function HomeClientContent({
   };
 
   const selectSpotDeadlineDate = (dateKey: string) => {
-    if (!canRunLocalDailyMutation) {
+    if (!canRunTodaySpotMutation) {
       return;
     }
 
@@ -2124,7 +2378,7 @@ function HomeClientContent({
   };
 
   const shiftSpotDeadlineMonth = (offset: number) => {
-    if (!canRunLocalDailyMutation) {
+    if (!canRunTodaySpotMutation) {
       return;
     }
 
@@ -2140,7 +2394,7 @@ function HomeClientContent({
   };
 
   const confirmSpotDeadlinePicker = () => {
-    if (!canRunLocalDailyMutation || !spotDeadlinePicker) {
+    if (!canRunTodaySpotMutation || !spotDeadlinePicker) {
       return;
     }
 
@@ -2160,7 +2414,7 @@ function HomeClientContent({
   };
 
   const startTemporaryItemSwipe = (itemId: string, clientX: number) => {
-    if (!canRunLocalDailyMutation) {
+    if (!canRunTodaySpotMutation) {
       return;
     }
 
@@ -2170,7 +2424,7 @@ function HomeClientContent({
   };
 
   const moveTemporaryItemSwipe = (itemId: string, clientX: number) => {
-    if (!canRunLocalDailyMutation) {
+    if (!canRunTodaySpotMutation) {
       return;
     }
 
@@ -2186,7 +2440,7 @@ function HomeClientContent({
   };
 
   const endTemporaryItemSwipe = (itemId: string) => {
-    if (!canRunLocalDailyMutation) {
+    if (!canRunTodaySpotMutation) {
       return;
     }
 
@@ -2199,7 +2453,7 @@ function HomeClientContent({
   };
 
   const addTemporaryTodayOnlyItem = () => {
-    if (!canRunLocalDailyMutation) {
+    if (!canRunTodaySpotMutation) {
       return;
     }
 
@@ -2208,6 +2462,31 @@ function HomeClientContent({
     if (!trimmedName) {
       setIsTodayOnlyInputOpen(false);
       setTodayOnlyInputValue("");
+      return;
+    }
+
+    if (dailyMode === "shared-success" && dataSource.mode === "shared") {
+      const currentSession = getCurrentSharedDailySession();
+      if (!currentSession) return;
+      const name = trimmedName;
+      const quantity = clampSpotQuantity(todayOnlyInputQuantity);
+      void (async () => {
+        const saved = await runSharedDailySpotMutation({
+          action: "add_temporary",
+          familyId: currentSession.familyId,
+          childId: currentSession.childId,
+          sessionDate: currentSession.sessionDate,
+          dailyItemId: crypto.randomUUID(),
+          name,
+          quantity,
+          dueDate: null,
+        });
+        if (saved) {
+          setIsTodayOnlyInputOpen(false);
+          setTodayOnlyInputValue("");
+          setTodayOnlyInputQuantity(1);
+        }
+      })();
       return;
     }
 
@@ -2225,6 +2504,11 @@ function HomeClientContent({
   };
 
   const removeTemporaryTodayOnlyItem = (itemId: string) => {
+    if (dailyMode === "shared-success") {
+      removeSpotItem(itemId);
+      setSwipedTodayOnlyItemId(null);
+      return;
+    }
     if (!canRunLocalDailyMutation) {
       return;
     }
@@ -2306,7 +2590,8 @@ function HomeClientContent({
       currentSharedSession.version < 1 ||
       currentSharedSession.version >= 2_147_483_647 ||
       pendingDailyItemMutationRequestsRef.current.size > 0 ||
-      sharedSessionMutationRequestRef.current
+      sharedSessionMutationRequestRef.current ||
+      sharedSpotMutationRequestRef.current
     ) {
       return;
     }
@@ -2702,7 +2987,8 @@ function HomeClientContent({
       !Number.isInteger(currentSharedSession.version) ||
       currentSharedSession.version < 1 ||
       pendingDailyItemMutationRequestsRef.current.size > 0 ||
-      sharedSessionMutationRequestRef.current
+      sharedSessionMutationRequestRef.current ||
+      sharedSpotMutationRequestRef.current
     ) {
       return;
     }
@@ -2946,7 +3232,8 @@ function HomeClientContent({
       !Number.isInteger(currentSharedSession.version) ||
       currentSharedSession.version < 1 ||
       pendingDailyItemMutationRequestsRef.current.size > 0 ||
-      sharedSessionMutationRequestRef.current
+      sharedSessionMutationRequestRef.current ||
+      sharedSpotMutationRequestRef.current
     ) {
       return;
     }
@@ -3408,6 +3695,7 @@ function HomeClientContent({
       dataSource.mode !== "shared" ||
       pendingDailyItemMutationRequestsRef.current.size > 0 ||
       sharedSessionMutationRequestRef.current ||
+      sharedSpotMutationRequestRef.current ||
       settingsMutationInFlightItemIdsRef.current.has(itemId) ||
       customItemAddInFlightRef.current !== null ||
       customItemSortOrderSaveInFlightRef.current !== null
@@ -5239,9 +5527,9 @@ function HomeClientContent({
               action={
                 <button
                   type="button"
-                  disabled={!canRunLocalDailyMutation}
+                  disabled={!canRunTodaySpotMutation}
                   onClick={() => {
-                    if (canRunLocalDailyMutation) {
+                    if (canRunTodaySpotMutation) {
                       setIsTodayOnlySheetOpen(true);
                     }
                   }}
@@ -5749,7 +6037,7 @@ function HomeClientContent({
                           hasSavedDeadline ? (
                             <button
                               type="button"
-                              disabled={!canRunLocalDailyMutation}
+                              disabled={!canRunTodaySpotMutation}
                               aria-label={`${item.name}の期限を解除`}
                               onClick={() => clearSpotDeadline(item.id)}
                               className="grid h-8 w-8 place-items-center rounded-full bg-primary text-surface ring-1 ring-primary/30 transition active:scale-95"
@@ -5759,7 +6047,8 @@ function HomeClientContent({
                           ) : (
                             <button
                               type="button"
-                              disabled={!canRunLocalDailyMutation}
+                              disabled={!canRunTodaySpotMutation ||
+                                (dailyMode === "shared-success" && !isSelected)}
                               aria-label={`${item.name}の期限を設定`}
                               onClick={(event) => {
                                 event.stopPropagation();
@@ -5773,7 +6062,7 @@ function HomeClientContent({
                         ) : null}
                         <button
                           type="button"
-                          disabled={!canRunLocalDailyMutation}
+                          disabled={!canRunTodaySpotMutation}
                           aria-label={`${item.name}を追加`}
                           onClick={() => toggleSpotItem(item.id)}
                           className={`inline-flex h-8 w-12 shrink-0 items-center justify-center rounded-full px-3 text-number font-normal ${
@@ -5802,24 +6091,24 @@ function HomeClientContent({
                     key={item.id}
                     className="relative mx-px overflow-hidden rounded-section"
                     onPointerDown={
-                      canRunLocalDailyMutation
+                      canRunTodaySpotMutation
                         ? (event) =>
                             startTemporaryItemSwipe(item.id, event.clientX)
                         : undefined
                     }
                     onPointerMove={
-                      canRunLocalDailyMutation
+                      canRunTodaySpotMutation
                         ? (event) =>
                             moveTemporaryItemSwipe(item.id, event.clientX)
                         : undefined
                     }
                     onPointerUp={
-                      canRunLocalDailyMutation
+                      canRunTodaySpotMutation
                         ? () => endTemporaryItemSwipe(item.id)
                         : undefined
                     }
                     onPointerCancel={
-                      canRunLocalDailyMutation
+                      canRunTodaySpotMutation
                         ? () => {
                             swipeStartXRef.current = null;
                             setSwipingTodayOnlyItemId(null);
@@ -5830,7 +6119,7 @@ function HomeClientContent({
                   >
                     <button
                       type="button"
-                      disabled={!canRunLocalDailyMutation}
+                      disabled={!canRunTodaySpotMutation}
                       aria-label="削除"
                       onClick={() => removeTemporaryTodayOnlyItem(item.id)}
                       className="absolute inset-y-0 right-0 z-10 grid w-[88px] place-items-center bg-danger text-surface transition-transform duration-200 ease-out"
@@ -5858,7 +6147,7 @@ function HomeClientContent({
                   <input
                     ref={todayOnlyInputRef}
                     type="text"
-                    disabled={!canRunLocalDailyMutation}
+                    disabled={!canRunTodaySpotMutation}
                     value={todayOnlyInputValue}
                     placeholder="持ち物名"
                     onChange={(event) =>
@@ -5880,11 +6169,11 @@ function HomeClientContent({
                   <SpotQuantityControl
                     value={todayOnlyInputQuantity}
                     onChange={setTodayOnlyInputQuantity}
-                    disabled={!canRunLocalDailyMutation}
+                    disabled={!canRunTodaySpotMutation}
                   />
                   <button
                     type="button"
-                    disabled={!canRunLocalDailyMutation}
+                    disabled={!canRunTodaySpotMutation}
                     aria-label="追加"
                     onClick={addTemporaryTodayOnlyItem}
                     className="grid h-11 min-w-11 shrink-0 place-items-center rounded-button bg-primary px-4 text-status font-normal text-surface"
@@ -5907,7 +6196,7 @@ function HomeClientContent({
               ) : (
                 <button
                   type="button"
-                  disabled={!canRunLocalDailyMutation}
+                  disabled={!canRunTodaySpotMutation}
                   onClick={() => {
                     setTodayOnlyInputQuantity(1);
                     setIsTodayOnlyInputOpen(true);
@@ -5921,7 +6210,7 @@ function HomeClientContent({
             {spotDeadlinePicker ? (
               <SpotDeadlineCalendar
                 picker={spotDeadlinePicker}
-                disabled={!canRunLocalDailyMutation}
+                disabled={!canRunTodaySpotMutation}
                 onCancel={cancelSpotDeadlinePicker}
                 onConfirm={confirmSpotDeadlinePicker}
                 onSelectDate={selectSpotDeadlineDate}
