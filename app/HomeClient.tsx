@@ -105,8 +105,10 @@ import {
   type HomeDailyItemMutationOperation,
 } from "../src/lib/home-daily-initial-state";
 import {
-  applyHomeSharedRoughMutationFallback,
+  executeHomeSharedDailySpotMutation,
+  executeHomeSharedRoughMutation,
   isHomeCompletedSpotCorrectionAction,
+  type HomeSharedDailySpotClient,
 } from "../src/lib/home-shared-check-corrections";
 import { saveHomeChildProfile } from "../src/lib/home-child-profile-save";
 import { saveSharedChildProfile } from "../src/lib/family-sharing/save-child-profile";
@@ -150,7 +152,6 @@ import { completeDailyCheck } from "../src/lib/family-sharing/complete-daily-che
 import { sendDailyThanks } from "../src/lib/family-sharing/send-daily-thanks";
 import { deleteDailyItem } from "../src/lib/family-sharing/delete-daily-item";
 import {
-  mutateDailySpotItem,
   type DailySpotMutationClient,
   type DailySpotMutationInput,
 } from "../src/lib/family-sharing/mutate-daily-spot-item";
@@ -174,7 +175,6 @@ import {
   applyDeletedItemReloadToSharedDailyState,
   getSharedDailyItemDeletionTarget,
   getSharedPreparationBulkMutationPlan,
-  mapDailySessionToSharedDailyState,
 } from "../src/lib/family-sharing/shared-daily-data";
 import { useEditableSection } from "../src/hooks/useEditableSection";
 import type { ChildProfile } from "../src/types/child";
@@ -1995,32 +1995,45 @@ function HomeClientContent({
     setRoughStateSaveError(null);
 
     try {
-      const result = await saveHomeRoughState(
-        dataSource,
-        itemId,
-        nextState,
-        currentItem?.updatedAt ?? "",
-        nextStates,
-        {
-          applyRoughStates: (states) => {
-            roughStatesRef.current = applyHomeRoughStateChange(
-              roughStatesRef.current,
-              itemId,
-              states[itemId],
-            );
-            setRoughStates((current) => ({
-              ...current,
-              [itemId]: states[itemId],
-            }));
+      const save = () =>
+        saveHomeRoughState(
+          dataSource,
+          itemId,
+          nextState,
+          currentItem?.updatedAt ?? "",
+          nextStates,
+          {
+            applyRoughStates: (states) => {
+              roughStatesRef.current = applyHomeRoughStateChange(
+                roughStatesRef.current,
+                itemId,
+                states[itemId],
+              );
+              setRoughStates((current) => ({
+                ...current,
+                [itemId]: states[itemId],
+              }));
+            },
+            saveLocalRoughStates: appRepository.saveRoughStates,
+            saveSharedRoughState: (input) =>
+              updateSharedRoughItemState(
+                getHomeBrowserClient() as unknown as SharedTemplateUpdateClient,
+                input,
+              ),
           },
-          saveLocalRoughStates: appRepository.saveRoughStates,
-          saveSharedRoughState: (input) =>
-            updateSharedRoughItemState(
-              getHomeBrowserClient() as unknown as SharedTemplateUpdateClient,
-              input,
-            ),
-        },
-      );
+        );
+      const execution =
+        dataSource.mode === "shared"
+          ? await executeHomeSharedRoughMutation(
+              {
+                itemId,
+                nextState,
+                roughStates: roughStatesRef.current,
+                customItems: customItemsRef.current,
+              },
+              { save, reloadCanonical: reloadSharedDurableSettings },
+            )
+          : { status: "local" as const, result: await save() };
       if (
         dataSource.mode === "shared" &&
         !isCurrentHomeSharedSettingsRequest({
@@ -2035,26 +2048,21 @@ function HomeClientContent({
       ) {
         return;
       }
-      if (dataSource.mode === "shared" && result?.status !== "success") {
+      if (dataSource.mode === "shared" && execution.status === "failure") {
         setRoughStateSaveError(
-          getSharedTemplateMutationErrorMessage(result),
+          getSharedTemplateMutationErrorMessage(execution.result),
         );
         return;
       }
-      if (dataSource.mode === "shared" && result?.status === "success") {
-        if (!(await reloadSharedDurableSettings())) {
-          const fallback = applyHomeSharedRoughMutationFallback({
-            itemId,
-            nextState,
-            result,
-            roughStates: roughStatesRef.current,
-            customItems: customItemsRef.current,
-          });
-          roughStatesRef.current = fallback.roughStates;
-          customItemsRef.current = fallback.customItems;
-          setRoughStates(fallback.roughStates);
-          setCustomItems(fallback.customItems);
-        }
+      if (
+        dataSource.mode === "shared" &&
+        execution.status === "success" &&
+        execution.fallback
+      ) {
+        roughStatesRef.current = execution.fallback.roughStates;
+        customItemsRef.current = execution.fallback.customItems;
+        setRoughStates(execution.fallback.roughStates);
+        setCustomItems(execution.fallback.customItems);
       }
     } catch {
       if (
@@ -2144,14 +2152,15 @@ function HomeClientContent({
           },
         };
       }
-      const result = await mutateDailySpotItem(
-        dailySpotMutationClientRef.current,
+      const execution = await executeHomeSharedDailySpotMutation(
+        dailySpotMutationClientRef.current as HomeSharedDailySpotClient,
         input,
+        currentSharedSession.dailySessionId,
       );
       if (!isCurrentRequest()) {
         return false;
       }
-      if (result.status !== "success") {
+      if (execution.status === "mutation_failure") {
         setDailyItemMutationError({
           title: "保存できませんでした",
           body: "最新の状態を確認して、もう一度操作してください。",
@@ -2160,18 +2169,7 @@ function HomeClientContent({
         return false;
       }
 
-      const loaded = await loadDailyData(browserClient, {
-        familyId: input.familyId,
-        childId: input.childId,
-        sessionDate: input.sessionDate,
-      });
-      if (!isCurrentRequest()) {
-        return false;
-      }
-      if (
-        loaded.status !== "success" ||
-        loaded.session.dailySessionId !== currentSharedSession.dailySessionId
-      ) {
+      if (execution.status === "reload_failure") {
         setDailyItemMutationError({
           title: "再読み込みできませんでした",
           body: "通信環境を確認して、もう一度操作してください。",
@@ -2180,9 +2178,7 @@ function HomeClientContent({
         return false;
       }
 
-      setSharedDailyState(
-        mapDailySessionToSharedDailyState(loaded.session, input.sessionDate),
-      );
+      setSharedDailyState(execution.state);
       return true;
     } catch {
       if (isCurrentRequest()) {
