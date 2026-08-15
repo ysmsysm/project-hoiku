@@ -40,7 +40,7 @@ export function ProgressDots({
         data-testid="progress-zero-button"
         aria-label={`${label} 0個に設定`}
         onClick={() => onChange?.(0)}
-        className="grid h-11 w-11 shrink-0 place-items-center justify-self-center rounded-button transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45"
+        className="grid h-11 w-11 shrink-0 place-items-center justify-self-center rounded-button transition active:scale-95 disabled:opacity-45"
       >
         <span className="grid h-5 w-5 place-items-center rounded-button border border-divider bg-[#f7f7f7] text-[11px] font-bold leading-none text-text-tertiary">
           0
@@ -57,7 +57,7 @@ export function ProgressDots({
             disabled={disabled}
             aria-label={`${label} ${index + 1}個目`}
             onClick={() => onChange?.(nextValue)}
-            className="grid h-11 w-11 shrink-0 place-items-center justify-self-center rounded-button transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45"
+            className="grid h-11 w-11 shrink-0 place-items-center justify-self-center rounded-button transition active:scale-95 disabled:opacity-45"
           >
             <span
               className={`h-5 w-5 rounded-button border-2 ${
