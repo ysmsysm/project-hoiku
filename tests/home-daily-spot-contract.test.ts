@@ -39,3 +39,48 @@ test("pending shared spot work prevents duplicate and competing daily operations
   assert.match(source, /if \(sharedSessionMutationRequestRef\.current\)[\s\S]*if \(sharedSpotMutationRequestRef\.current\)/);
   assert.match(source, /disabled=!canRunTodaySpotMutation|disabled=\{!canRunTodaySpotMutation\}/);
 });
+
+test("completed shared sessions permit additions while keeping existing spot mutations disabled", () => {
+  assert.match(
+    source,
+    /const canRunTodaySpotAddMutation =[\s\S]*dailyMode === "shared-success"[\s\S]*!isSharedSessionMutationPending[\s\S]*!isSharedSpotMutationPending/,
+  );
+  assert.doesNotMatch(
+    source.slice(
+      source.indexOf("const canRunTodaySpotAddMutation ="),
+      source.indexOf("const canRunTodaySpotMutation ="),
+    ),
+    /completedAt|isCompleted/,
+  );
+  assert.match(
+    source,
+    /const canRunTodaySpotMutation =[\s\S]*canRunTodaySpotAddMutation[\s\S]*!session\?\.completedAt/,
+  );
+  assert.match(
+    source,
+    /currentSharedSession\.isCompleted[\s\S]*input\.action !== "add_template"[\s\S]*input\.action !== "add_temporary"/,
+  );
+  assert.match(
+    source,
+    /const addTemporaryTodayOnlyItem[\s\S]*if \(!canRunTodaySpotAddMutation\)/,
+  );
+});
+
+test("shared rough state remains independent of daily completion for every member", () => {
+  const handler = source.slice(
+    source.indexOf("const toggleRoughState = async"),
+    source.indexOf("const runSharedDailySpotMutation = async"),
+  );
+  const roughCard = source.slice(
+    source.indexOf('title="ざっくり管理"'),
+    source.indexOf('{activeTab === "items"'),
+  );
+  assert.match(handler, /saveHomeRoughState\([\s\S]*updateSharedRoughItemState/);
+  assert.match(handler, /await reloadSharedDurableSettings\(\)/);
+  assert.doesNotMatch(
+    handler,
+    /isSharedDailyPreparationCompleted|completedAt|isCompleted/,
+  );
+  assert.match(roughCard, /roughStateEditable && !isSaving/);
+  assert.doesNotMatch(roughCard, /isSharedDailyPreparationCompleted/);
+});

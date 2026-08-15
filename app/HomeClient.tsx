@@ -814,13 +814,15 @@ function HomeClientContent({
   const [temporaryTodayOnlyItems, setTemporaryTodayOnlyItems] = useState<
     TodayOnlyTemporaryItem[]
   >([]);
-  const canRunTodaySpotMutation =
+  const canRunTodaySpotAddMutation =
     canRunLocalDailyMutation ||
     (dailyMode === "shared-success" &&
-      !session?.completedAt &&
       !isSharedSessionMutationPending &&
       !isSharedSpotMutationPending &&
       pendingDailyItemMutationItemIds.size === 0);
+  const canRunTodaySpotMutation =
+    canRunTodaySpotAddMutation &&
+    (dailyMode !== "shared-success" || !session?.completedAt);
   const [isTodayOnlySheetOpen, setIsTodayOnlySheetOpen] = useState(false);
   const [isTodayOnlyInputOpen, setIsTodayOnlyInputOpen] = useState(false);
   const [todayOnlyInputValue, setTodayOnlyInputValue] = useState("");
@@ -2081,7 +2083,9 @@ function HomeClientContent({
       currentSharedSession.familyId !== input.familyId ||
       currentSharedSession.childId !== input.childId ||
       currentSharedSession.sessionDate !== input.sessionDate ||
-      currentSharedSession.isCompleted ||
+      (currentSharedSession.isCompleted &&
+        input.action !== "add_template" &&
+        input.action !== "add_temporary") ||
       sharedSpotMutationRequestRef.current ||
       sharedSessionMutationRequestRef.current ||
       pendingDailyItemMutationRequestsRef.current.size > 0
@@ -2273,15 +2277,13 @@ function HomeClientContent({
   };
 
   const toggleSpotItem = (itemId: string) => {
-    if (!canRunTodaySpotMutation) {
-      return;
-    }
-
     if (selectedTodayOnlyIds.includes(itemId)) {
+      if (!canRunTodaySpotMutation) return;
       removeSpotItem(itemId);
       return;
     }
 
+    if (!canRunTodaySpotAddMutation) return;
     addSpotItem(itemId, spotDeadlines[itemId] ?? null);
   };
 
@@ -2462,7 +2464,7 @@ function HomeClientContent({
   };
 
   const addTemporaryTodayOnlyItem = () => {
-    if (!canRunTodaySpotMutation) {
+    if (!canRunTodaySpotAddMutation) {
       return;
     }
 
@@ -5541,9 +5543,9 @@ function HomeClientContent({
               action={
                 <button
                   type="button"
-                  disabled={!canRunTodaySpotMutation}
+                  disabled={!canRunTodaySpotAddMutation}
                   onClick={() => {
-                    if (canRunTodaySpotMutation) {
+                    if (canRunTodaySpotAddMutation) {
                       setIsTodayOnlySheetOpen(true);
                     }
                   }}
@@ -6076,7 +6078,11 @@ function HomeClientContent({
                         ) : null}
                         <button
                           type="button"
-                          disabled={!canRunTodaySpotMutation}
+                          disabled={
+                            isSelected
+                              ? !canRunTodaySpotMutation
+                              : !canRunTodaySpotAddMutation
+                          }
                           aria-label={`${item.name}を追加`}
                           onClick={() => toggleSpotItem(item.id)}
                           className={`inline-flex h-8 w-12 shrink-0 items-center justify-center rounded-full px-3 text-number font-normal ${
@@ -6161,7 +6167,7 @@ function HomeClientContent({
                   <input
                     ref={todayOnlyInputRef}
                     type="text"
-                    disabled={!canRunTodaySpotMutation}
+                    disabled={!canRunTodaySpotAddMutation}
                     value={todayOnlyInputValue}
                     placeholder="持ち物名"
                     onChange={(event) =>
@@ -6183,11 +6189,11 @@ function HomeClientContent({
                   <SpotQuantityControl
                     value={todayOnlyInputQuantity}
                     onChange={setTodayOnlyInputQuantity}
-                    disabled={!canRunTodaySpotMutation}
+                    disabled={!canRunTodaySpotAddMutation}
                   />
                   <button
                     type="button"
-                    disabled={!canRunTodaySpotMutation}
+                    disabled={!canRunTodaySpotAddMutation}
                     aria-label="追加"
                     onClick={addTemporaryTodayOnlyItem}
                     className="grid h-11 min-w-11 shrink-0 place-items-center rounded-button bg-primary px-4 text-status font-normal text-surface"
@@ -6210,7 +6216,7 @@ function HomeClientContent({
               ) : (
                 <button
                   type="button"
-                  disabled={!canRunTodaySpotMutation}
+                  disabled={!canRunTodaySpotAddMutation}
                   onClick={() => {
                     setTodayOnlyInputQuantity(1);
                     setIsTodayOnlyInputOpen(true);
