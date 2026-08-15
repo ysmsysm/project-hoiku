@@ -5631,7 +5631,7 @@ function HomeClientContent({
                             }`}
                           />
                           <span className="truncate">
-                            {isSaving ? "保存中" : (roughStates[item.id] ?? "十分")}
+                            {roughStates[item.id] ?? "十分"}
                           </span>
                         </div>
                       </div>
