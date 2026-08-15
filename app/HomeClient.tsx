@@ -5463,7 +5463,11 @@ function HomeClientContent({
                     : isSharedThanksButtonDisabled
                 }
                 aria-busy={isSendThanksPending || undefined}
-                className="rounded-button bg-tab-active px-3 py-1 text-status font-normal text-danger ring-1 ring-[#ffd1dc] disabled:cursor-not-allowed disabled:opacity-45"
+                className={`rounded-button px-3 py-1 text-status font-normal ring-1 disabled:cursor-not-allowed ${
+                  dailyMode === "shared-success" && session.thanksSent
+                    ? "bg-[#fff0f4] text-[#9f3650] ring-[#eda4b6] disabled:opacity-100"
+                    : "bg-tab-active text-danger ring-[#ffd1dc] disabled:opacity-45"
+                }`}
               >
                 {session.thanksSent
                   ? sharedThanksDisplay === "received"
