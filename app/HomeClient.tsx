@@ -104,6 +104,10 @@ import {
   type HomeDailyItemMutationErrorView,
   type HomeDailyItemMutationOperation,
 } from "../src/lib/home-daily-initial-state";
+import {
+  applyHomeSharedRoughMutationFallback,
+  isHomeCompletedSpotCorrectionAction,
+} from "../src/lib/home-shared-check-corrections";
 import { saveHomeChildProfile } from "../src/lib/home-child-profile-save";
 import { saveSharedChildProfile } from "../src/lib/family-sharing/save-child-profile";
 import {
@@ -823,6 +827,7 @@ function HomeClientContent({
   const canRunTodaySpotMutation =
     canRunTodaySpotAddMutation &&
     (dailyMode !== "shared-success" || !session?.completedAt);
+  const canRunTodaySpotDeleteMutation = canRunTodaySpotAddMutation;
   const [isTodayOnlySheetOpen, setIsTodayOnlySheetOpen] = useState(false);
   const [isTodayOnlyInputOpen, setIsTodayOnlyInputOpen] = useState(false);
   const [todayOnlyInputValue, setTodayOnlyInputValue] = useState("");
@@ -2036,11 +2041,20 @@ function HomeClientContent({
         );
         return;
       }
-      if (
-        dataSource.mode === "shared" &&
-        !(await reloadSharedDurableSettings())
-      ) {
-        throw new Error("shared_settings_reload_failed");
+      if (dataSource.mode === "shared" && result?.status === "success") {
+        if (!(await reloadSharedDurableSettings())) {
+          const fallback = applyHomeSharedRoughMutationFallback({
+            itemId,
+            nextState,
+            result,
+            roughStates: roughStatesRef.current,
+            customItems: customItemsRef.current,
+          });
+          roughStatesRef.current = fallback.roughStates;
+          customItemsRef.current = fallback.customItems;
+          setRoughStates(fallback.roughStates);
+          setCustomItems(fallback.customItems);
+        }
       }
     } catch {
       if (
@@ -2084,8 +2098,7 @@ function HomeClientContent({
       currentSharedSession.childId !== input.childId ||
       currentSharedSession.sessionDate !== input.sessionDate ||
       (currentSharedSession.isCompleted &&
-        input.action !== "add_template" &&
-        input.action !== "add_temporary") ||
+        !isHomeCompletedSpotCorrectionAction(input.action)) ||
       sharedSpotMutationRequestRef.current ||
       sharedSessionMutationRequestRef.current ||
       pendingDailyItemMutationRequestsRef.current.size > 0
@@ -2278,7 +2291,7 @@ function HomeClientContent({
 
   const toggleSpotItem = (itemId: string) => {
     if (selectedTodayOnlyIds.includes(itemId)) {
-      if (!canRunTodaySpotMutation) return;
+      if (!canRunTodaySpotDeleteMutation) return;
       removeSpotItem(itemId);
       return;
     }
@@ -2425,7 +2438,7 @@ function HomeClientContent({
   };
 
   const startTemporaryItemSwipe = (itemId: string, clientX: number) => {
-    if (!canRunTodaySpotMutation) {
+    if (!canRunTodaySpotDeleteMutation) {
       return;
     }
 
@@ -2435,7 +2448,7 @@ function HomeClientContent({
   };
 
   const moveTemporaryItemSwipe = (itemId: string, clientX: number) => {
-    if (!canRunTodaySpotMutation) {
+    if (!canRunTodaySpotDeleteMutation) {
       return;
     }
 
@@ -2451,7 +2464,7 @@ function HomeClientContent({
   };
 
   const endTemporaryItemSwipe = (itemId: string) => {
-    if (!canRunTodaySpotMutation) {
+    if (!canRunTodaySpotDeleteMutation) {
       return;
     }
 
@@ -6080,7 +6093,7 @@ function HomeClientContent({
                           type="button"
                           disabled={
                             isSelected
-                              ? !canRunTodaySpotMutation
+                              ? !canRunTodaySpotDeleteMutation
                               : !canRunTodaySpotAddMutation
                           }
                           aria-label={`${item.name}を追加`}
@@ -6111,24 +6124,24 @@ function HomeClientContent({
                     key={item.id}
                     className="relative mx-px overflow-hidden rounded-section"
                     onPointerDown={
-                      canRunTodaySpotMutation
+                      canRunTodaySpotDeleteMutation
                         ? (event) =>
                             startTemporaryItemSwipe(item.id, event.clientX)
                         : undefined
                     }
                     onPointerMove={
-                      canRunTodaySpotMutation
+                      canRunTodaySpotDeleteMutation
                         ? (event) =>
                             moveTemporaryItemSwipe(item.id, event.clientX)
                         : undefined
                     }
                     onPointerUp={
-                      canRunTodaySpotMutation
+                      canRunTodaySpotDeleteMutation
                         ? () => endTemporaryItemSwipe(item.id)
                         : undefined
                     }
                     onPointerCancel={
-                      canRunTodaySpotMutation
+                      canRunTodaySpotDeleteMutation
                         ? () => {
                             swipeStartXRef.current = null;
                             setSwipingTodayOnlyItemId(null);
@@ -6139,7 +6152,7 @@ function HomeClientContent({
                   >
                     <button
                       type="button"
-                      disabled={!canRunTodaySpotMutation}
+                      disabled={!canRunTodaySpotDeleteMutation}
                       aria-label="削除"
                       onClick={() => removeTemporaryTodayOnlyItem(item.id)}
                       className="absolute inset-y-0 right-0 z-10 grid w-[88px] place-items-center bg-danger text-surface transition-transform duration-200 ease-out"

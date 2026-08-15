@@ -58,7 +58,7 @@ test("completed shared sessions permit additions while keeping existing spot mut
   );
   assert.match(
     source,
-    /currentSharedSession\.isCompleted[\s\S]*input\.action !== "add_template"[\s\S]*input\.action !== "add_temporary"/,
+    /currentSharedSession\.isCompleted[\s\S]*isHomeCompletedSpotCorrectionAction\(input\.action\)/,
   );
   assert.match(
     source,
@@ -83,4 +83,8 @@ test("shared rough state remains independent of daily completion for every membe
   );
   assert.match(roughCard, /roughStateEditable && !isSaving/);
   assert.doesNotMatch(roughCard, /isSharedDailyPreparationCompleted/);
+  assert.match(
+    handler,
+    /reloadSharedDurableSettings\(\)[\s\S]*applyHomeSharedRoughMutationFallback/,
+  );
 });
