@@ -279,6 +279,58 @@ test("runs ensure, carryover, and canonical load in order with one client and sc
   ]);
 });
 
+test("active and completed sessions reach canonical load for owner and member", async () => {
+  const sessionStates = [
+    { name: "active", isChecked: false, isPrepared: false },
+    { name: "check completed", isChecked: true, isPrepared: false },
+    { name: "preparation completed", isChecked: false, isPrepared: true },
+    { name: "both completed", isChecked: true, isPrepared: true },
+  ] as const;
+
+  for (const role of ["owner", "member"] as const) {
+    for (const sessionState of sessionStates) {
+      const calls: string[] = [];
+      const expected = successState();
+      const result = await loadSharedDailyDataForFamilyWithDependencies(input, {
+        createClient: async () => ({
+          async rpc(functionName) {
+            calls.push(`${role}:${functionName}`);
+            if (functionName === "ensure_daily_session") {
+              return ensureSuccessResponse();
+            }
+            if (functionName === "process_daily_carryovers") {
+              return sessionState.isPrepared
+                ? {
+                    data: {
+                      status: "invalid_state",
+                      created_count: 0,
+                      updated_count: 0,
+                      processed_count: 0,
+                      skipped_count: 0,
+                    },
+                    error: null,
+                  }
+                : carryoverSuccessResponse();
+            }
+            throw new Error("load_daily_data is owned by the injected loader");
+          },
+        }),
+        loadDailyDataForDate: async () => {
+          calls.push(`${role}:load_daily_data`);
+          return expected;
+        },
+      });
+
+      assert.equal(result, expected, `${role}: ${sessionState.name}`);
+      assert.deepEqual(calls, [
+        `${role}:ensure_daily_session`,
+        `${role}:process_daily_carryovers`,
+        `${role}:load_daily_data`,
+      ]);
+    }
+  }
+});
+
 test("ensure failures short-circuit carryover and load without exposing raw errors", async () => {
   const cases = [
     {

@@ -166,19 +166,24 @@ async function processDailyCarryovers(
     response.data.status === "not_found" ||
     response.data.status === "invalid_state"
   ) {
-    return response.data.created_count === 0 &&
+    const hasEmptyCounts = response.data.created_count === 0 &&
       response.data.updated_count === 0 &&
       response.data.processed_count === 0 &&
-      response.data.skipped_count === 0
-      ? mapBootstrapBusinessFailure(
-          response.data.status,
-          input.sessionDate,
-          ["forbidden", "not_found", "invalid_state"],
-        )
-      : invalidBootstrapResponse(
-          input.sessionDate,
-          "process_daily_carryovers",
-        );
+      response.data.skipped_count === 0;
+    if (!hasEmptyCounts) {
+      return invalidBootstrapResponse(
+        input.sessionDate,
+        "process_daily_carryovers",
+      );
+    }
+    if (response.data.status === "invalid_state") {
+      return null;
+    }
+    return mapBootstrapBusinessFailure(
+      response.data.status,
+      input.sessionDate,
+      ["forbidden", "not_found"],
+    );
   }
 
   if (
