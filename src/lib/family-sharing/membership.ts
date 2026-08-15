@@ -18,7 +18,7 @@ export function getUserDisplayName(user: User) {
   const fallbackName = user.email?.split("@")[0] ?? "自分";
   const normalizedName = (metadataName ?? fallbackName).trim() || "自分";
 
-  return Array.from(normalizedName).slice(0, 3).join("");
+  return Array.from(normalizedName).slice(0, 8).join("");
 }
 
 export function getOwnerDisplayName(user: User) {

@@ -1408,10 +1408,7 @@ function HomeClientContent({
   );
   const disabledObservedQuantityItemIds = useMemo(() => {
     const disabledIds = new Set(pendingDailyItemMutationItemIds);
-    if (
-      isSharedSessionMutationPending ||
-      (dailyMode === "shared-success" && session?.completedAt)
-    ) {
+    if (isSharedSessionMutationPending) {
       lockerItems.forEach((item) => {
         disabledIds.add(item.dailyItemId ?? item.id);
       });
@@ -1429,7 +1426,6 @@ function HomeClientContent({
     isSharedSessionMutationPending,
     lockerItems,
     pendingDailyItemMutationItemIds,
-    session?.completedAt,
   ]);
   const maxLockerRequiredCount = Math.max(
     1,
@@ -5533,8 +5529,7 @@ function HomeClientContent({
               onChange={updateShortageCount}
               disabled={
                 !canRunObservedQuantityMutation ||
-                isSharedSessionMutationPending ||
-                isSharedDailyPreparationCompleted
+                isSharedSessionMutationPending
               }
               disabledItemIds={disabledObservedQuantityItemIds}
             />

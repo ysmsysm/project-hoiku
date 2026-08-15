@@ -1213,9 +1213,17 @@ test("complete pending is a bidirectional item and batch mutation lock", () => {
   );
   assert.match(singleRunner, /if \(sharedSessionMutationRequestRef\.current\)/);
   assert.match(batchRunner, /if \(sharedSessionMutationRequestRef\.current\)/);
+  const shortageInput = homeClientSource.slice(
+    homeClientSource.indexOf("<ShortageInputList"),
+    homeClientSource.indexOf("<ReusableCard", homeClientSource.indexOf("<ShortageInputList")),
+  );
   assert.match(
-    homeClientSource,
-    /disabled=\{[\s\S]{0,180}!canRunObservedQuantityMutation[\s\S]{0,180}isSharedSessionMutationPending[\s\S]{0,180}isSharedDailyPreparationCompleted/,
+    shortageInput,
+    /disabled=\{[\s\S]*?!canRunObservedQuantityMutation[\s\S]*?isSharedSessionMutationPending/,
+  );
+  assert.doesNotMatch(
+    shortageInput,
+    /isSharedDailyPreparationCompleted|session\?\.completedAt/,
   );
   assert.match(
     homeClientSource,
