@@ -40,7 +40,40 @@ test("pending shared spot work prevents duplicate and competing daily operations
   assert.match(source, /disabled=!canRunTodaySpotMutation|disabled=\{!canRunTodaySpotMutation\}/);
 });
 
-test("completed shared sessions permit additions while keeping existing spot mutations disabled", () => {
+test("actual spot plus click routes unselected add and selected removal through the shared runner", () => {
+  const optionButton = source.slice(
+    source.indexOf("const itemButton = ("),
+    source.indexOf("if (!isTemporaryItem)"),
+  );
+  const toggleHandler = source.slice(
+    source.indexOf("const toggleSpotItem ="),
+    source.indexOf("const saveSpotDeadline ="),
+  );
+  const addHandler = source.slice(
+    source.indexOf("const addSpotItem ="),
+    source.indexOf("const removeSpotItem ="),
+  );
+  const removeHandler = source.slice(
+    source.indexOf("const removeSpotItem ="),
+    source.indexOf("const toggleSpotItem ="),
+  );
+
+  assert.match(optionButton, /onClick=\{\(\) => toggleSpotItem\(item\.id\)\}/);
+  assert.match(
+    toggleHandler,
+    /selectedTodayOnlyIds\.includes\(itemId\)[\s\S]*removeSpotItem\(itemId\)[\s\S]*addSpotItem\(itemId/,
+  );
+  assert.match(
+    addHandler,
+    /runSharedDailySpotMutation\(\{[\s\S]*action: "add_template"/,
+  );
+  assert.match(
+    removeHandler,
+    /runSharedDailySpotMutation\(\{[\s\S]*action: "delete"/,
+  );
+});
+
+test("completed shared sessions permit check-side spot corrections", () => {
   assert.match(
     source,
     /const canRunTodaySpotAddMutation =[\s\S]*dailyMode === "shared-success"[\s\S]*!isSharedSessionMutationPending[\s\S]*!isSharedSpotMutationPending/,

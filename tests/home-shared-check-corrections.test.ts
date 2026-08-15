@@ -4,7 +4,9 @@ import {
   applyHomeSharedRoughMutationFallback,
   isHomeCompletedSpotCorrectionAction,
 } from "../src/lib/home-shared-check-corrections";
+import { loadDailyData } from "../src/lib/family-sharing/daily-data";
 import { mutateDailySpotItem } from "../src/lib/family-sharing/mutate-daily-spot-item";
+import { mapDailySessionToSharedDailyState } from "../src/lib/family-sharing/shared-daily-data";
 import { updateSharedRoughItemState } from "../src/lib/family-sharing/update-item-template";
 import type { CustomizableItem } from "../src/types/preparation";
 
@@ -12,6 +14,9 @@ const familyId = "11111111-1111-4111-8111-111111111111";
 const childId = "22222222-2222-4222-8222-222222222222";
 const templateId = "33333333-3333-4333-8333-333333333333";
 const dailyItemId = "44444444-4444-4444-8444-444444444444";
+const dailySessionId = "55555555-5555-4555-8555-555555555555";
+const memberId = "66666666-6666-4666-8666-666666666666";
+const userId = "77777777-7777-4777-8777-777777777777";
 const updatedAt = "2026-08-15T01:00:00.000000+00:00";
 const nextUpdatedAt = "2026-08-15T01:00:01.000000+00:00";
 
@@ -118,4 +123,118 @@ test("Home completed spot corrections accept actual add and delete envelopes", a
   assert.equal(isHomeCompletedSpotCorrectionAction("add_temporary"), true);
   assert.equal(isHomeCompletedSpotCorrectionAction("delete"), true);
   assert.equal(isHomeCompletedSpotCorrectionAction("set_due_date"), false);
+});
+
+test("Home spot click path consumes mutation, full reload, and canonical replacement envelopes", async () => {
+  const calls: string[] = [];
+  const sessionDate = "2026-08-15";
+  const item = {
+    id: dailyItemId,
+    daily_item_id: dailyItemId,
+    session_id: dailySessionId,
+    daily_session_id: dailySessionId,
+    family_id: familyId,
+    item_template_id: templateId,
+    kind: "spot",
+    is_ad_hoc: false,
+    name: "水筒",
+    required_quantity: 1,
+    observed_quantity: null,
+    shortage_count: null,
+    quantity: 1,
+    unit: "個",
+    rough_state: null,
+    is_checked: false,
+    is_prepared: false,
+    is_deferred: false,
+    is_carryover: false,
+    carryover_pending_shortage_count: null,
+    carried_from_daily_item_id: null,
+    carryover_processed_at: null,
+    carryover_resolved_at: null,
+    due_date: null,
+    sort_order: 0,
+    version: 1,
+    updated_by_member_id: memberId,
+    updated_by_user_id: userId,
+    updated_by_display_name: "miri",
+    created_at: updatedAt,
+    updated_at: updatedAt,
+  };
+  const session = {
+    id: dailySessionId,
+    session_id: dailySessionId,
+    family_id: familyId,
+    child_id: childId,
+    session_date: sessionDate,
+    version: 3,
+    is_checked: true,
+    checked_by_member_id: memberId,
+    checked_by_user_id: userId,
+    checked_by_display_name: "miri",
+    checked_at: updatedAt,
+    is_prepared: true,
+    prepared_by_member_id: memberId,
+    prepared_by_user_id: userId,
+    prepared_by_display_name: "miri",
+    prepared_at: nextUpdatedAt,
+    thanks_sent_at: null,
+    thanks_sent_by_member_id: null,
+    thanks_sent_by_user_id: null,
+    thanks_sent_by_display_name: null,
+    thanks_received_by_member_id: null,
+    thanks_received_by_user_id: null,
+    thanks_received_by_display_name: null,
+    created_at: updatedAt,
+    updated_at: nextUpdatedAt,
+  };
+  const client = {
+    async rpc(functionName: string) {
+      calls.push(functionName);
+      if (functionName === "mutate_daily_spot_item") {
+        return {
+          data: {
+            status: "success",
+            changed: true,
+            item: {
+              daily_item_id: dailyItemId,
+              version: 1,
+              deleted_at: null,
+              due_date: null,
+              item_template_id: templateId,
+              is_ad_hoc: false,
+            },
+          },
+          error: null,
+        };
+      }
+      return {
+        data: { status: "success", session, items: [item] },
+        error: null,
+      };
+    },
+  };
+
+  const mutation = await mutateDailySpotItem(client, {
+    action: "add_template",
+    familyId,
+    childId,
+    sessionDate,
+    itemTemplateId: templateId,
+    dueDate: null,
+  });
+  assert.equal(mutation.status, "success");
+
+  const loaded = await loadDailyData(client, { familyId, childId, sessionDate });
+  assert.equal(loaded.status, "success");
+  if (loaded.status !== "success") return;
+  const canonical = mapDailySessionToSharedDailyState(
+    loaded.session,
+    sessionDate,
+  );
+  assert.equal(canonical.status, "success");
+  if (canonical.status !== "success") return;
+  assert.equal(canonical.session.isCompleted, true);
+  assert.equal(canonical.session.items[0]?.itemTemplateId, templateId);
+  assert.deepEqual(calls, ["mutate_daily_spot_item", "load_daily_data"]);
 });
