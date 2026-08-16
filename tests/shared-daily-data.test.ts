@@ -701,6 +701,81 @@ test("replaces the full canonical session only after validated preparation compl
   );
 });
 
+test("completed preparation reload reflects only prepared items for owner and member check views", async () => {
+  const deferredItemId = "77777777-7777-4777-8777-777777777777";
+  const deferredTemplateId = "88888888-8888-4888-8888-888888888888";
+  const completedPayload = {
+    status: "success",
+    session: sessionPayload({
+      version: 3,
+      is_prepared: true,
+      prepared_at: "2026-07-29T00:10:00.000Z",
+      prepared_by_member_id: familyId,
+      prepared_by_user_id: childId,
+      prepared_by_display_name: "miri",
+    }),
+    items: [
+      itemPayload({
+        observed_quantity: 3,
+        shortage_count: 0,
+        is_prepared: true,
+        version: 5,
+      }),
+      itemPayload({
+        id: deferredItemId,
+        daily_item_id: deferredItemId,
+        item_template_id: deferredTemplateId,
+        observed_quantity: 1,
+        shortage_count: 2,
+        is_prepared: false,
+        is_deferred: true,
+        version: 5,
+      }),
+    ],
+  };
+
+  for (const role of ["owner", "member"] as const) {
+    const loaded = await loadSharedDailyDataForDate(
+      clientReturning(completedPayload),
+      input,
+    );
+    assert.equal(loaded.status, "success", role);
+    if (loaded.status !== "success") continue;
+
+    const home = deriveHomeSharedDailyState(loaded);
+    assert.equal(home.mode, "shared-success", role);
+    if (home.mode !== "shared-success") continue;
+    assert.deepEqual(home.checkCounts, {
+      [templateId]: 3,
+      [deferredTemplateId]: 1,
+    });
+    assert.deepEqual(
+      createHomeLockerItems({
+        mode: "shared-success",
+        checkView: home.checkView,
+      }).map((item) => ({ id: item.id, count: item.shortageCount })),
+      [
+        { id: templateId, count: 3 },
+        { id: deferredTemplateId, count: 1 },
+      ],
+      role,
+    );
+
+    const reloaded = await loadSharedDailyDataForDate(
+      clientReturning(completedPayload),
+      input,
+    );
+    assert.equal(reloaded.status, "success", `${role} reload`);
+    if (reloaded.status === "success") {
+      assert.deepEqual(
+        reloaded.checkView.items.map((item) => item.observedQuantity),
+        [3, 1],
+        `${role} reload`,
+      );
+    }
+  }
+});
+
 test("accepts retry-safe no-op completion without requiring expected plus one", async () => {
   const state = await loadSharedDailyDataForDate(
     clientReturning({
