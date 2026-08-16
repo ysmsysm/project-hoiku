@@ -7,6 +7,7 @@ import {
   applyThanksSessionToSharedDailyState,
   applyUpdatedItemsToSharedDailyState,
   applyUpdatedItemToSharedDailyState,
+  applyQuantityReloadToSharedDailyState,
   getSharedPreparationBulkMutationPlan,
   getSharedDailyItemDeletionTarget,
   loadSharedDailyDataForDate,
@@ -772,6 +773,100 @@ test("completed preparation reload reflects only prepared items for owner and me
         [3, 1],
         `${role} reload`,
       );
+    }
+  }
+});
+
+test("completed quantity correction applies a full canonical reload for owner and member", async () => {
+  for (const role of ["owner", "member"] as const) {
+    const before = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload({
+          version: 3,
+          is_prepared: true,
+          prepared_at: "2026-07-29T00:10:00.000Z",
+          prepared_by_member_id: familyId,
+          prepared_by_user_id: childId,
+          prepared_by_display_name: "miri",
+        }),
+        items: [itemPayload({ observed_quantity: 3, shortage_count: 0 })],
+      }),
+      input,
+    );
+    const after = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload({
+          version: 3,
+          is_prepared: true,
+          prepared_at: "2026-07-29T00:10:00.000Z",
+          prepared_by_member_id: familyId,
+          prepared_by_user_id: childId,
+          prepared_by_display_name: "miri",
+        }),
+        items: [
+          itemPayload({
+            observed_quantity: 2,
+            shortage_count: 1,
+            version: 5,
+          }),
+        ],
+      }),
+      input,
+    );
+    assert.equal(before.status, "success", role);
+    assert.equal(after.status, "success", role);
+    if (before.status !== "success" || after.status !== "success") continue;
+
+    const applied = applyQuantityReloadToSharedDailyState(
+      before,
+      {
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        dailyItemId: itemId,
+        expectedVersion: 4,
+        responseVersion: 5,
+        observedQuantity: 2,
+        requestScopeKey: "scope",
+        currentScopeKey: "scope",
+        requestScopeGeneration: 2,
+        currentScopeGeneration: 2,
+      },
+      after.session,
+    );
+    assert.equal(applied.status, "success", role);
+    if (applied.status === "success") {
+      assert.equal(applied.checkView.items[0].observedQuantity, 2, role);
+      assert.equal(applied.session.isCompleted, true, role);
+    }
+
+    const reloaded = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload({
+          version: 3,
+          is_prepared: true,
+          prepared_at: "2026-07-29T00:10:00.000Z",
+          prepared_by_member_id: familyId,
+          prepared_by_user_id: childId,
+          prepared_by_display_name: "miri",
+        }),
+        items: [
+          itemPayload({
+            observed_quantity: 2,
+            shortage_count: 1,
+            version: 5,
+          }),
+        ],
+      }),
+      input,
+    );
+    assert.equal(reloaded.status, "success", `${role} reload`);
+    if (reloaded.status === "success") {
+      assert.equal(reloaded.checkView.items[0].observedQuantity, 2);
     }
   }
 });

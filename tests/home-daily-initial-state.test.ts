@@ -1144,6 +1144,26 @@ test("the same pending daily item set disables quantity and preparation controls
   );
 });
 
+test("completed shared quantity uses RPC then canonical load without a local fallback", () => {
+  const runnerSource = homeClientSource.slice(
+    homeClientSource.indexOf("const runSharedDailyItemMutation = async"),
+    homeClientSource.indexOf("const runSharedDailyPreparationItemsMutation"),
+  );
+  assert.match(
+    runnerSource,
+    /result\.status === "success"[\s\S]*?operation === "quantity"[\s\S]*?input\.action === "set_observed_quantity"[\s\S]*?loadDailyData\([\s\S]*?applyQuantityReloadToSharedDailyState/,
+  );
+  assert.match(
+    runnerSource,
+    /pendingDailyItemMutationRequestsRef\.current\.get\(dailyItemId\) !==[\s\S]*?requestToken/,
+  );
+  assert.doesNotMatch(runnerSource, /appRepository|localStorage/);
+  assert.match(
+    homeClientSource,
+    /disabled=\{[\s\S]*?!canRunObservedQuantityMutation[\s\S]*?isSharedSessionMutationPending/,
+  );
+});
+
 test("preparation completion remains guarded and mutation errors render once across daily tabs", () => {
   assert.match(
     preparationChecklistSource,

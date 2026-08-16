@@ -41,6 +41,15 @@ export type SharedDailyItemUpdateScope = {
   expectedVersion: number;
 };
 
+export type SharedDailyQuantityReloadScope = SharedDailyItemUpdateScope & {
+  responseVersion: number;
+  observedQuantity: number;
+  requestScopeKey: string;
+  currentScopeKey: string;
+  requestScopeGeneration: number;
+  currentScopeGeneration: number;
+};
+
 export const maxSharedPreparationBulkItems = 100;
 
 export type SharedPreparationBulkMutationPlan =
@@ -255,6 +264,64 @@ export function applyUpdatedItemToSharedDailyState(
     { ...state.session, items },
     scope.sessionDate,
   );
+  return mapped.status === "success" ? mapped : state;
+}
+
+export function applyQuantityReloadToSharedDailyState(
+  state: SharedDailyState,
+  scope: SharedDailyQuantityReloadScope,
+  session: DailySession,
+): SharedDailyState {
+  if (
+    state.status !== "success" ||
+    scope.requestScopeKey !== scope.currentScopeKey ||
+    scope.requestScopeGeneration !== scope.currentScopeGeneration ||
+    !uuidEquals(state.session.familyId, scope.familyId) ||
+    !uuidEquals(state.session.childId, scope.childId) ||
+    state.session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(state.session.dailySessionId, scope.dailySessionId) ||
+    !uuidEquals(session.familyId, scope.familyId) ||
+    !uuidEquals(session.childId, scope.childId) ||
+    session.sessionDate !== scope.sessionDate ||
+    !uuidEquals(session.dailySessionId, scope.dailySessionId) ||
+    session.version !== state.session.version
+  ) {
+    return state;
+  }
+
+  const currentById = new Map(
+    state.session.items.map((item) => [
+      normalizeDailyDataUuid(item.dailyItemId),
+      item,
+    ]),
+  );
+  const loadedById = new Map(
+    session.items.map((item) => [
+      normalizeDailyDataUuid(item.dailyItemId),
+      item,
+    ]),
+  );
+  const targetId = normalizeDailyDataUuid(scope.dailyItemId);
+  const currentTarget = currentById.get(targetId);
+  const loadedTarget = loadedById.get(targetId);
+  if (
+    currentById.size !== state.session.items.length ||
+    loadedById.size !== session.items.length ||
+    currentById.size !== loadedById.size ||
+    !currentTarget ||
+    currentTarget.version !== scope.expectedVersion ||
+    !loadedTarget ||
+    loadedTarget.version !== scope.responseVersion ||
+    loadedTarget.observedQuantity !== scope.observedQuantity ||
+    [...currentById].some(([id, currentItem]) => {
+      const loadedItem = loadedById.get(id);
+      return !loadedItem || loadedItem.version < currentItem.version;
+    })
+  ) {
+    return state;
+  }
+
+  const mapped = mapDailySessionToSharedDailyState(session, scope.sessionDate);
   return mapped.status === "success" ? mapped : state;
 }
 

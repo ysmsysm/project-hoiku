@@ -169,6 +169,7 @@ import {
 import {
   applyUpdatedItemsToSharedDailyState,
   applyUpdatedItemToSharedDailyState,
+  applyQuantityReloadToSharedDailyState,
   applyCheckedSessionToSharedDailyState,
   applyCompletedSessionToSharedDailyState,
   applyThanksSessionToSharedDailyState,
@@ -1699,7 +1700,67 @@ function HomeClientContent({
         return;
       }
 
-      if (result.status === "success") {
+      if (
+        result.status === "success" &&
+        operation === "quantity" &&
+        input.action === "set_observed_quantity"
+      ) {
+        const browserClient = dailyMutationBrowserClientRef.current;
+        if (!browserClient) {
+          throw new Error("Daily mutation client is unavailable");
+        }
+        const dailyDataClient: DailyDataClient = {
+          rpc(functionName, args) {
+            return browserClient.rpc(functionName, args);
+          },
+        };
+        const loaded = await loadDailyData(dailyDataClient, {
+          familyId: input.familyId,
+          childId: input.childId,
+          sessionDate: input.sessionDate,
+        });
+        if (
+          !dailyItemMutationMountedRef.current ||
+          dailyItemMutationScopeKeyRef.current !== requestScopeKey ||
+          dailyItemMutationScopeGenerationRef.current !==
+            requestScopeGeneration ||
+          pendingDailyItemMutationRequestsRef.current.get(dailyItemId) !==
+            requestToken
+        ) {
+          return;
+        }
+        if (loaded.status !== "success") {
+          setDailyItemMutationError({
+            title: "最新の状態を確認できませんでした",
+            body: "再読み込みして、もう一度操作してください。",
+            canReload: true,
+          });
+          return;
+        }
+        setSharedDailyState((current) =>
+          current
+            ? applyQuantityReloadToSharedDailyState(
+                current,
+                {
+                  familyId: input.familyId,
+                  childId: input.childId,
+                  sessionDate: input.sessionDate,
+                  dailySessionId: input.dailySessionId,
+                  dailyItemId: input.dailyItemId,
+                  expectedVersion: input.expectedVersion,
+                  responseVersion: result.item.version,
+                  observedQuantity: input.observedQuantity,
+                  requestScopeKey,
+                  currentScopeKey: dailyItemMutationScopeKeyRef.current,
+                  requestScopeGeneration,
+                  currentScopeGeneration:
+                    dailyItemMutationScopeGenerationRef.current,
+                },
+                loaded.session,
+              )
+            : current,
+        );
+      } else if (result.status === "success") {
         setSharedDailyState((current) =>
           current
             ? applyUpdatedItemToSharedDailyState(
