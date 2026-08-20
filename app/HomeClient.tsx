@@ -176,6 +176,7 @@ import {
   applyDeletedItemReloadToSharedDailyState,
   getSharedDailyItemDeletionTarget,
   getSharedPreparationBulkMutationPlan,
+  isSharedDailyCheckCurrent,
 } from "../src/lib/family-sharing/shared-daily-data";
 import { useEditableSection } from "../src/hooks/useEditableSection";
 import type { ChildProfile } from "../src/types/child";
@@ -1572,10 +1573,7 @@ function HomeClientContent({
     canRunCompleteCheckMutation &&
     hasCurrentSharedCompleteCheckScope &&
     sharedDailyState?.status === "success" &&
-    !sharedDailyState.session.isChecked &&
-    sharedDailyState.session.checkedAt === null &&
-    !sharedDailyState.session.isCompleted &&
-    sharedDailyState.session.completedAt === null &&
+    !isSharedDailyCheckCurrent(sharedDailyState.session) &&
     Number.isInteger(sharedDailyState.session.version) &&
     sharedDailyState.session.version >= 1 &&
     sharedDailyState.session.version < 2_147_483_647 &&
@@ -2663,10 +2661,7 @@ function HomeClientContent({
       dataSource.mode !== "shared" ||
       !currentSharedSession ||
       currentSharedState?.status !== "success" ||
-      currentSharedSession.isChecked ||
-      currentSharedSession.checkedAt !== null ||
-      currentSharedSession.isCompleted ||
-      currentSharedSession.completedAt !== null ||
+      isSharedDailyCheckCurrent(currentSharedSession) ||
       !Number.isInteger(currentSharedSession.version) ||
       currentSharedSession.version < 1 ||
       currentSharedSession.version >= 2_147_483_647 ||
@@ -5971,7 +5966,7 @@ function HomeClientContent({
             className="h-[52px] w-full rounded-button bg-primary text-button font-bold text-surface shadow-button transition hover:bg-primary-hover active:scale-[0.99] disabled:pointer-events-none disabled:opacity-45"
           >
             {dailyMode === "shared-success" && sharedDailyState?.status === "success"
-              ? sharedDailyState.session.isChecked
+              ? isSharedDailyCheckCurrent(sharedDailyState.session)
                 ? "✓ 確認済み"
                 : isCompleteCheckPending
                   ? "保存中…"

@@ -182,6 +182,29 @@ test("derives first success and checked no-op from the returned session version"
   }
 });
 
+test("accepts a changed recheck while preserving preparation metadata", () => {
+  const result = mapCompleteDailyCheckResponse(
+    {
+      status: "success",
+      session: preparedMetadata({
+        version: 5,
+        checked_by_member_id: childId,
+        checked_by_user_id: familyId,
+        checked_by_display_name: "Latest",
+        checked_at: "2026-08-05T00:20:00.000Z",
+      }),
+    },
+    input,
+  );
+  assert.equal(result.status, "success");
+  if (result.status === "success") {
+    assert.equal(result.changed, true);
+    assert.equal(result.session.checkedByDisplayName, "Latest");
+    assert.equal(result.session.completedByDisplayName, "Preparer");
+    assert.equal(result.session.completedAt, "2026-08-05T00:10:00.000Z");
+  }
+});
+
 test("requires complete checked actors and coherent prepared and thanks actor tuples", () => {
   assert.equal(
     mapCompleteDailyCheckResponse(

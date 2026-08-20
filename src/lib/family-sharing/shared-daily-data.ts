@@ -134,6 +134,18 @@ export type SharedDailyItemDeletionScope = {
 const uuidEquals = (left: string, right: string): boolean =>
   normalizeDailyDataUuid(left) === normalizeDailyDataUuid(right);
 
+export function isSharedDailyCheckCurrent(
+  session: Pick<DailySession, "checkedAt" | "completedAt">,
+): boolean {
+  if (!session.checkedAt) {
+    return false;
+  }
+  if (!session.completedAt) {
+    return true;
+  }
+  return Date.parse(session.checkedAt) >= Date.parse(session.completedAt);
+}
+
 export function getSharedPreparationBulkMutationPlan(
   session: DailySession,
 ): SharedPreparationBulkMutationPlan {
@@ -514,11 +526,7 @@ export function applyCheckedSessionToSharedDailyState(
     state.session.sessionDate !== scope.sessionDate ||
     !uuidEquals(state.session.dailySessionId, scope.dailySessionId) ||
     state.session.version !== scope.expectedSessionVersion ||
-    state.session.isChecked ||
-    state.session.checkedAt !== null ||
-    state.session.isCompleted ||
-    state.session.completedAt !== null ||
-    state.session.thanksSent ||
+    isSharedDailyCheckCurrent(state.session) ||
     !uuidEquals(session.familyId, scope.familyId) ||
     !uuidEquals(session.childId, scope.childId) ||
     session.sessionDate !== scope.sessionDate ||
@@ -529,6 +537,20 @@ export function applyCheckedSessionToSharedDailyState(
         scope.responseSessionVersion !== scope.expectedSessionVersion + 1
       : scope.responseSessionVersion !== scope.expectedSessionVersion) ||
     !hasCoherentSessionActorTuples(session) ||
+    !isSharedDailyCheckCurrent(session) ||
+    state.session.completedAt !== session.completedAt ||
+    state.session.completedByMemberId !== session.completedByMemberId ||
+    state.session.completedByUserId !== session.completedByUserId ||
+    state.session.completedByDisplayName !== session.completedByDisplayName ||
+    state.session.thanksSentAt !== session.thanksSentAt ||
+    state.session.thanksSentByMemberId !== session.thanksSentByMemberId ||
+    state.session.thanksSentByUserId !== session.thanksSentByUserId ||
+    state.session.thanksSentByDisplayName !== session.thanksSentByDisplayName ||
+    state.session.thanksReceivedByMemberId !==
+      session.thanksReceivedByMemberId ||
+    state.session.thanksReceivedByUserId !== session.thanksReceivedByUserId ||
+    state.session.thanksReceivedByDisplayName !==
+      session.thanksReceivedByDisplayName ||
     session.items.some(
       (item) =>
         !uuidEquals(item.familyId, session.familyId) ||

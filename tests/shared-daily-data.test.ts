@@ -12,6 +12,7 @@ import {
   getSharedDailyItemDeletionTarget,
   loadSharedDailyDataForDate,
   mapLoadDailyDataResultToSharedDailyState,
+  isSharedDailyCheckCurrent,
 } from "../src/lib/family-sharing/shared-daily-data";
 import type {
   DailyDataClient,
@@ -1053,6 +1054,98 @@ test("replaces the full canonical session only after validated daily check compl
     }),
     unchecked,
   );
+});
+
+test("preparation newer than check requires recheck and preserves preparation after reload", async () => {
+  for (const role of ["owner", "member"] as const) {
+    const stale = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload({
+          version: 4,
+          checked_at: "2026-07-29T00:05:00.000Z",
+          checked_by_member_id: familyId,
+          checked_by_user_id: childId,
+          checked_by_display_name: "first",
+          is_prepared: true,
+          prepared_at: "2026-07-29T00:10:00.000Z",
+          prepared_by_member_id: childId,
+          prepared_by_user_id: familyId,
+          prepared_by_display_name: "preparer",
+        }),
+        items: [
+          itemPayload({
+            observed_quantity: 3,
+            shortage_count: 0,
+            is_prepared: true,
+            version: 5,
+          }),
+        ],
+      }),
+      input,
+    );
+    const rechecked = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload({
+          version: 5,
+          checked_at: "2026-07-29T00:15:00.000Z",
+          checked_by_member_id: childId,
+          checked_by_user_id: familyId,
+          checked_by_display_name: "latest",
+          is_prepared: true,
+          prepared_at: "2026-07-29T00:10:00.000Z",
+          prepared_by_member_id: childId,
+          prepared_by_user_id: familyId,
+          prepared_by_display_name: "preparer",
+        }),
+        items: [
+          itemPayload({
+            observed_quantity: 3,
+            shortage_count: 0,
+            is_prepared: true,
+            version: 5,
+          }),
+        ],
+      }),
+      input,
+    );
+    assert.equal(stale.status, "success", role);
+    assert.equal(rechecked.status, "success", role);
+    if (stale.status !== "success" || rechecked.status !== "success") continue;
+    assert.equal(isSharedDailyCheckCurrent(stale.session), false, role);
+
+    const applied = applyCheckedSessionToSharedDailyState(
+      stale,
+      {
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        expectedSessionVersion: 4,
+        responseSessionVersion: 5,
+        changed: true,
+        requestScopeKey: "scope",
+        currentScopeKey: "scope",
+        requestScopeGeneration: 3,
+        currentScopeGeneration: 3,
+      },
+      rechecked.session,
+    );
+    assert.equal(applied.status, "success", role);
+    if (applied.status === "success") {
+      assert.equal(isSharedDailyCheckCurrent(applied.session), true, role);
+      assert.equal(applied.session.checkedByDisplayName, "latest", role);
+      assert.equal(applied.session.completedByDisplayName, "preparer", role);
+      assert.equal(
+        applied.session.completedAt,
+        "2026-07-29T00:10:00.000Z",
+        role,
+      );
+      assert.equal(applied.checkView.items[0].observedQuantity, 3, role);
+    }
+    assert.equal(isSharedDailyCheckCurrent(rechecked.session), true, role);
+  }
 });
 
 test("accepts checked no-op and empty full item collections only at the start version", async () => {

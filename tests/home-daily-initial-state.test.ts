@@ -1266,10 +1266,10 @@ test("shared complete check uses guarded session pending, full reload, and apply
     homeClientSource.indexOf("const togglePreparationItem"),
   );
   assert.match(sharedRunner, /getCurrentSharedDailySession\(\)/);
-  assert.match(sharedRunner, /currentSharedSession\.isChecked/);
-  assert.match(sharedRunner, /currentSharedSession\.checkedAt !== null/);
-  assert.match(sharedRunner, /currentSharedSession\.isCompleted/);
-  assert.match(sharedRunner, /currentSharedSession\.completedAt !== null/);
+  assert.match(
+    sharedRunner,
+    /isSharedDailyCheckCurrent\(currentSharedSession\)/,
+  );
   assert.match(sharedRunner, /pendingDailyItemMutationRequestsRef\.current\.size > 0/);
   assert.match(sharedRunner, /sharedSessionMutationRequestRef\.current/);
   assert.doesNotMatch(
@@ -1329,6 +1329,10 @@ test("complete check navigation and button wait for canonical apply", () => {
   assert.match(homeClientSource, /sharedDailyState\.session\.version < 2_147_483_647/);
   assert.match(homeClientSource, /pendingDailyItemMutationItemIds\.size === 0/);
   assert.match(homeClientSource, /aria-busy=\{isCompleteCheckPending \|\| undefined\}/);
+  assert.match(
+    homeClientSource,
+    /isSharedDailyCheckCurrent\(sharedDailyState\.session\)/,
+  );
   assert.match(homeClientSource, /"✓ 確認済み"/);
   assert.match(homeClientSource, /"保存中…"/);
   assert.match(
