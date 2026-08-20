@@ -826,9 +826,7 @@ function HomeClientContent({
       !isSharedSessionMutationPending &&
       !isSharedSpotMutationPending &&
       pendingDailyItemMutationItemIds.size === 0);
-  const canRunTodaySpotMutation =
-    canRunTodaySpotAddMutation &&
-    (dailyMode !== "shared-success" || !session?.completedAt);
+  const canRunTodaySpotDeadlineMutation = canRunTodaySpotAddMutation;
   const canRunTodaySpotDeleteMutation = canRunTodaySpotAddMutation;
   const [isTodayOnlySheetOpen, setIsTodayOnlySheetOpen] = useState(false);
   const [isTodayOnlyInputOpen, setIsTodayOnlyInputOpen] = useState(false);
@@ -2426,7 +2424,7 @@ function HomeClientContent({
   };
 
   const openSpotDeadlinePicker = (itemId: string) => {
-    if (!canRunTodaySpotMutation ||
+    if (!canRunTodaySpotDeadlineMutation ||
       (dailyMode === "shared-success" && !getSharedSpotItem(itemId))) {
       return;
     }
@@ -2441,7 +2439,7 @@ function HomeClientContent({
   };
 
   const selectSpotDeadlineDate = (dateKey: string) => {
-    if (!canRunTodaySpotMutation) {
+    if (!canRunTodaySpotDeadlineMutation) {
       return;
     }
 
@@ -2457,7 +2455,7 @@ function HomeClientContent({
   };
 
   const shiftSpotDeadlineMonth = (offset: number) => {
-    if (!canRunTodaySpotMutation) {
+    if (!canRunTodaySpotDeadlineMutation) {
       return;
     }
 
@@ -2473,7 +2471,7 @@ function HomeClientContent({
   };
 
   const confirmSpotDeadlinePicker = () => {
-    if (!canRunTodaySpotMutation || !spotDeadlinePicker) {
+    if (!canRunTodaySpotDeadlineMutation || !spotDeadlinePicker) {
       return;
     }
 
@@ -6118,7 +6116,7 @@ function HomeClientContent({
                           hasSavedDeadline ? (
                             <button
                               type="button"
-                              disabled={!canRunTodaySpotMutation}
+                              disabled={!canRunTodaySpotDeadlineMutation}
                               aria-label={`${item.name}の期限を解除`}
                               onClick={() => clearSpotDeadline(item.id)}
                               className="grid h-8 w-8 place-items-center rounded-full bg-primary text-surface ring-1 ring-primary/30 transition active:scale-95"
@@ -6128,7 +6126,7 @@ function HomeClientContent({
                           ) : (
                             <button
                               type="button"
-                              disabled={!canRunTodaySpotMutation ||
+                              disabled={!canRunTodaySpotDeadlineMutation ||
                                 (dailyMode === "shared-success" && !isSelected)}
                               aria-label={`${item.name}の期限を設定`}
                               onClick={(event) => {
@@ -6295,7 +6293,7 @@ function HomeClientContent({
             {spotDeadlinePicker ? (
               <SpotDeadlineCalendar
                 picker={spotDeadlinePicker}
-                disabled={!canRunTodaySpotMutation}
+                disabled={!canRunTodaySpotDeadlineMutation}
                 onCancel={cancelSpotDeadlinePicker}
                 onConfirm={confirmSpotDeadlinePicker}
                 onSelectDate={selectSpotDeadlineDate}

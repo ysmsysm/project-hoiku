@@ -15,7 +15,7 @@ test("shared add, temporary, delete, swipe and due operations use only the daily
     assert.match(source, new RegExp(`action: "${action}"`));
   }
   assert.match(source, /removeTemporaryTodayOnlyItem[\s\S]*dailyMode === "shared-success"[\s\S]*removeSpotItem\(itemId\)/);
-  assert.match(source, /onPointerDown=[\s\S]*canRunTodaySpotMutation/);
+  assert.match(source, /onPointerDown=[\s\S]*canRunTodaySpotDeleteMutation/);
   assert.doesNotMatch(source, /deleteFamilyItemTemplateForDay[\s\S]*toggleSpotItem/);
 });
 
@@ -40,7 +40,7 @@ test("shared failure has no local fallback and stale mutation or reload cannot a
 test("pending shared spot work prevents duplicate and competing daily operations", () => {
   assert.match(source, /sharedSpotMutationRequestRef\.current \|\|[\s\S]*pendingDailyItemMutationRequestsRef\.current\.size > 0/);
   assert.match(source, /if \(sharedSessionMutationRequestRef\.current\)[\s\S]*if \(sharedSpotMutationRequestRef\.current\)/);
-  assert.match(source, /disabled=!canRunTodaySpotMutation|disabled=\{!canRunTodaySpotMutation\}/);
+  assert.match(source, /disabled=!canRunTodaySpotDeadlineMutation|disabled=\{!canRunTodaySpotDeadlineMutation\}/);
 });
 
 test("actual spot plus click routes unselected add and selected removal through the shared runner", () => {
@@ -84,13 +84,13 @@ test("completed shared sessions permit check-side spot corrections", () => {
   assert.doesNotMatch(
     source.slice(
       source.indexOf("const canRunTodaySpotAddMutation ="),
-      source.indexOf("const canRunTodaySpotMutation ="),
+      source.indexOf("const canRunTodaySpotDeadlineMutation ="),
     ),
     /completedAt|isCompleted/,
   );
   assert.match(
     source,
-    /const canRunTodaySpotMutation =[\s\S]*canRunTodaySpotAddMutation[\s\S]*!session\?\.completedAt/,
+    /const canRunTodaySpotDeadlineMutation = canRunTodaySpotAddMutation/,
   );
   assert.match(
     source,
@@ -100,6 +100,31 @@ test("completed shared sessions permit check-side spot corrections", () => {
     source,
     /const addTemporaryTodayOnlyItem[\s\S]*if \(!canRunTodaySpotAddMutation\)/,
   );
+});
+
+test("actual calendar click opens the shared deadline picker after completion", () => {
+  const optionButton = source.slice(
+    source.indexOf("const itemButton = ("),
+    source.indexOf("if (!isTemporaryItem)"),
+  );
+  const pickerHandler = source.slice(
+    source.indexOf("const openSpotDeadlinePicker ="),
+    source.indexOf("const selectSpotDeadlineDate ="),
+  );
+
+  assert.match(
+    optionButton,
+    /onClick=\{\(event\) => \{[\s\S]*openSpotDeadlinePicker\(item\.id\)/,
+  );
+  assert.match(
+    optionButton,
+    /disabled=\{!canRunTodaySpotDeadlineMutation \|\|[\s\S]*dailyMode === "shared-success" && !isSelected/,
+  );
+  assert.match(
+    pickerHandler,
+    /!canRunTodaySpotDeadlineMutation[\s\S]*getSharedSpotItem\(itemId\)[\s\S]*setSpotDeadlinePicker/,
+  );
+  assert.doesNotMatch(pickerHandler, /completedAt|isCompleted/);
 });
 
 test("shared rough state remains independent of daily completion for every member", () => {

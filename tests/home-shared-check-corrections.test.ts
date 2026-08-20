@@ -84,7 +84,7 @@ test("authenticated shared rough caller applies RPC success when settings reload
   assert.equal(customItems[0].updatedAt, updatedAt);
 });
 
-test("Home completed spot corrections accept actual add and delete envelopes", async () => {
+test("Home completed spot corrections accept actual add, delete and deadline envelopes", async () => {
   const calls: string[] = [];
   const client = {
     async rpc(_name: string, args: Record<string, unknown>) {
@@ -127,7 +127,7 @@ test("Home completed spot corrections accept actual add and delete envelopes", a
   assert.equal(isHomeCompletedSpotCorrectionAction("add_template"), true);
   assert.equal(isHomeCompletedSpotCorrectionAction("add_temporary"), true);
   assert.equal(isHomeCompletedSpotCorrectionAction("delete"), true);
-  assert.equal(isHomeCompletedSpotCorrectionAction("set_due_date"), false);
+  assert.equal(isHomeCompletedSpotCorrectionAction("set_due_date"), true);
 });
 
 test("authenticated completed shared add and remove use production runner and canonical reload", async () => {
@@ -247,5 +247,146 @@ test("authenticated completed shared add and remove use production runner and ca
       `${role}:mutate_daily_spot_item`,
       `${role}:load_daily_data`,
     ]);
+  }
+});
+
+test("authenticated completed shared deadline set, change and clear use production runner and canonical reload", async () => {
+  const sessionDate = "2026-08-15";
+  const session = {
+    id: dailySessionId,
+    session_id: dailySessionId,
+    family_id: familyId,
+    child_id: childId,
+    session_date: sessionDate,
+    version: 3,
+    is_checked: true,
+    checked_by_member_id: memberId,
+    checked_by_user_id: userId,
+    checked_by_display_name: "miri",
+    checked_at: updatedAt,
+    is_prepared: true,
+    prepared_by_member_id: memberId,
+    prepared_by_user_id: userId,
+    prepared_by_display_name: "miri",
+    prepared_at: nextUpdatedAt,
+    thanks_sent_at: null,
+    thanks_sent_by_member_id: null,
+    thanks_sent_by_user_id: null,
+    thanks_sent_by_display_name: null,
+    thanks_received_by_member_id: null,
+    thanks_received_by_user_id: null,
+    thanks_received_by_display_name: null,
+    created_at: updatedAt,
+    updated_at: nextUpdatedAt,
+  };
+
+  for (const role of ["owner", "member"] as const) {
+    let version = 1;
+    let dueDate: string | null = null;
+    const calls: Array<{ functionName: string; dueDate: unknown }> = [];
+    const client = {
+      async rpc(functionName: string, args: Record<string, unknown>) {
+        calls.push({ functionName, dueDate: args.p_due_date });
+        if (functionName === "mutate_daily_spot_item") {
+          dueDate = (args.p_due_date as string | null) ?? null;
+          version += 1;
+          return {
+            data: {
+              status: "success",
+              changed: true,
+              item: {
+                daily_item_id: dailyItemId,
+                version,
+                deleted_at: null,
+                due_date: dueDate,
+                item_template_id: templateId,
+                is_ad_hoc: false,
+              },
+            },
+            error: null,
+          };
+        }
+        return {
+          data: {
+            status: "success",
+            session,
+            items: [
+              {
+                id: dailyItemId,
+                daily_item_id: dailyItemId,
+                session_id: dailySessionId,
+                daily_session_id: dailySessionId,
+                family_id: familyId,
+                item_template_id: templateId,
+                kind: "spot",
+                is_ad_hoc: false,
+                name: "water bottle",
+                required_quantity: 1,
+                observed_quantity: null,
+                shortage_count: null,
+                quantity: 1,
+                unit: "item",
+                rough_state: null,
+                is_checked: false,
+                is_prepared: false,
+                is_deferred: false,
+                is_carryover: false,
+                carryover_pending_shortage_count: null,
+                carried_from_daily_item_id: null,
+                carryover_processed_at: null,
+                carryover_resolved_at: null,
+                due_date: dueDate,
+                sort_order: 0,
+                version,
+                updated_by_member_id: memberId,
+                updated_by_user_id: userId,
+                updated_by_display_name: "miri",
+                created_at: updatedAt,
+                updated_at: nextUpdatedAt,
+              },
+            ],
+          },
+          error: null,
+        };
+      },
+    };
+
+    for (const nextDueDate of ["2026-08-20", "2026-08-22", null]) {
+      const execution = await executeHomeSharedDailySpotMutation(
+        client,
+        {
+          action: "set_due_date",
+          familyId,
+          childId,
+          sessionDate,
+          dailyItemId,
+          expectedVersion: version,
+          dueDate: nextDueDate,
+        },
+        dailySessionId,
+      );
+      assert.equal(execution.status, "success", `${role}:${String(nextDueDate)}`);
+      if (execution.status !== "success") continue;
+      assert.equal(execution.state.session.isCompleted, true);
+      assert.equal(execution.state.session.items[0]?.dueDate, nextDueDate);
+    }
+
+    assert.deepEqual(
+      calls.map(({ functionName }) => functionName),
+      [
+        "mutate_daily_spot_item",
+        "load_daily_data",
+        "mutate_daily_spot_item",
+        "load_daily_data",
+        "mutate_daily_spot_item",
+        "load_daily_data",
+      ],
+    );
+    assert.deepEqual(
+      calls
+        .filter(({ functionName }) => functionName === "mutate_daily_spot_item")
+        .map(({ dueDate: value }) => value),
+      ["2026-08-20", "2026-08-22", null],
+    );
   }
 });

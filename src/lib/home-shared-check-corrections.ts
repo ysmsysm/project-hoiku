@@ -17,7 +17,8 @@ export function isHomeCompletedSpotCorrectionAction(
   return (
     action === "add_template" ||
     action === "add_temporary" ||
-    action === "delete"
+    action === "delete" ||
+    action === "set_due_date"
   );
 }
 
