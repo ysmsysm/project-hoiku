@@ -13,6 +13,7 @@ import {
   loadSharedDailyDataForDate,
   mapLoadDailyDataResultToSharedDailyState,
   isSharedDailyCheckCurrent,
+  doesSharedDailySessionRequireRepreparation,
 } from "../src/lib/family-sharing/shared-daily-data";
 import type {
   DailyDataClient,
@@ -25,6 +26,7 @@ import {
   deriveHomeSharedDailyState,
 } from "../src/lib/home-daily-initial-state";
 import { completeDailyCheck } from "../src/lib/family-sharing/complete-daily-check";
+import { completeDailyPreparation } from "../src/lib/family-sharing/complete-daily-preparation";
 
 const familyId = "11111111-1111-4111-8111-111111111111";
 const childId = "22222222-2222-4222-8222-222222222222";
@@ -1170,6 +1172,317 @@ test("preparation newer than check requires recheck and preserves preparation af
       assert.equal(applied.checkView.items[0].observedQuantity, 3, role);
     }
     assert.equal(isSharedDailyCheckCurrent(rechecked.session), true, role);
+  }
+});
+
+test("completed quantity shortage reopens preparation through recheck and completes again", async () => {
+  const secondItemId = "66666666-6666-4666-8666-666666666666";
+  const secondTemplateId = "77777777-7777-4777-8777-777777777777";
+  for (const role of ["owner", "member"] as const) {
+    const completedState = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload({
+          version: 10,
+          checked_at: "2026-07-29T00:15:00.000Z",
+          checked_by_member_id: familyId,
+          checked_by_user_id: childId,
+          checked_by_display_name: "checker",
+          is_prepared: true,
+          prepared_at: "2026-07-29T00:10:00.000Z",
+          prepared_by_member_id: childId,
+          prepared_by_user_id: familyId,
+          prepared_by_display_name: "first preparer",
+        }),
+        items: [
+          itemPayload({
+            version: 6,
+            observed_quantity: 1,
+            shortage_count: 2,
+            is_prepared: true,
+            updated_at: "2026-07-29T00:20:00.000Z",
+          }),
+          itemPayload({
+            id: secondItemId,
+            daily_item_id: secondItemId,
+            item_template_id: secondTemplateId,
+            version: 4,
+            observed_quantity: 0,
+            shortage_count: 3,
+            is_prepared: false,
+            updated_at: "2026-07-29T00:20:00.000Z",
+          }),
+        ],
+      }),
+      input,
+    );
+    assert.equal(completedState.status, "success", role);
+    if (completedState.status !== "success") continue;
+    assert.equal(
+      doesSharedDailySessionRequireRepreparation(completedState.session),
+      true,
+      role,
+    );
+    assert.equal(isSharedDailyCheckCurrent(completedState.session), false, role);
+
+    const reopenedSessionPayload = sessionPayload({
+      version: 11,
+      checked_at: "2026-07-29T00:25:00.000Z",
+      checked_by_member_id: childId,
+      checked_by_user_id: familyId,
+      checked_by_display_name: "rechecker",
+      is_prepared: false,
+      prepared_at: null,
+      prepared_by_member_id: null,
+      prepared_by_user_id: null,
+      prepared_by_display_name: null,
+    });
+    const reopenedItemPayloads = [
+      itemPayload({
+        version: 7,
+        observed_quantity: 1,
+        shortage_count: 2,
+        is_prepared: false,
+        updated_by_member_id: childId,
+        updated_by_user_id: familyId,
+        updated_by_display_name: "rechecker",
+        updated_at: "2026-07-29T00:25:00.000Z",
+      }),
+      itemPayload({
+        id: secondItemId,
+        daily_item_id: secondItemId,
+        item_template_id: secondTemplateId,
+        version: 4,
+        observed_quantity: 0,
+        shortage_count: 3,
+        is_prepared: false,
+        updated_at: "2026-07-29T00:20:00.000Z",
+      }),
+    ];
+    const rechecked = await completeDailyCheck(
+      {
+        async rpc() {
+          return {
+            data: {
+              status: "success",
+              session: reopenedSessionPayload,
+            },
+            error: null,
+          };
+        },
+      },
+      { familyId, childId, sessionDate, expectedSessionVersion: 10 },
+    );
+    assert.equal(rechecked.status, "success", role);
+    if (rechecked.status !== "success") continue;
+    const reopenedReload = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: reopenedSessionPayload,
+        items: reopenedItemPayloads,
+      }),
+      input,
+    );
+    assert.equal(reopenedReload.status, "success", role);
+    if (reopenedReload.status !== "success") continue;
+    const reopened = applyCheckedSessionToSharedDailyState(
+      completedState,
+      {
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        expectedSessionVersion: 10,
+        responseSessionVersion: 11,
+        changed: true,
+        requestScopeKey: "scope",
+        currentScopeKey: "scope",
+        requestScopeGeneration: 4,
+        currentScopeGeneration: 4,
+      },
+      reopenedReload.session,
+    );
+    assert.notEqual(reopened, completedState, role);
+    assert.equal(reopened.status, "success", role);
+    if (reopened.status !== "success") continue;
+    assert.equal(reopened.session.completedAt, null, role);
+    assert.equal(reopened.preparationSession.completedAt, null, role);
+    assert.deepEqual(
+      reopened.preparationSession.items.map((item) => [
+        item.dailyItemId,
+        item.checked,
+        item.later,
+      ]),
+      [
+        [itemId, false, false],
+        [secondItemId, false, false],
+      ],
+      role,
+    );
+
+    let prepared = applyUpdatedItemToSharedDailyState(
+      reopened,
+      {
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        dailyItemId: itemId,
+        expectedVersion: 7,
+      },
+      {
+        ...reopened.session.items[0],
+        isPrepared: true,
+        version: 8,
+        updatedAt: "2026-07-29T00:27:00.000Z",
+      },
+    );
+    prepared = applyUpdatedItemToSharedDailyState(
+      prepared,
+      {
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        dailyItemId: secondItemId,
+        expectedVersion: 4,
+      },
+      {
+        ...reopened.session.items[1],
+        isDeferred: true,
+        version: 5,
+        updatedAt: "2026-07-29T00:28:00.000Z",
+      },
+    );
+    assert.equal(prepared.status, "success", role);
+    if (prepared.status !== "success") continue;
+    assert.deepEqual(
+      prepared.preparationSession.items.map((item) => [
+        item.checked,
+        item.later,
+      ]),
+      [
+        [true, false],
+        [false, true],
+      ],
+      role,
+    );
+
+    const recompletedSessionPayload = sessionPayload({
+      version: 12,
+      checked_at: "2026-07-29T00:25:00.000Z",
+      checked_by_member_id: childId,
+      checked_by_user_id: familyId,
+      checked_by_display_name: "rechecker",
+      is_prepared: true,
+      prepared_at: "2026-07-29T00:30:00.000Z",
+      prepared_by_member_id: familyId,
+      prepared_by_user_id: childId,
+      prepared_by_display_name: `${role} latest`,
+    });
+    const recompleted = await completeDailyPreparation(
+      clientReturning({
+        status: "success",
+        changed: true,
+        session: recompletedSessionPayload,
+      }),
+      { familyId, childId, sessionDate, expectedSessionVersion: 11 },
+    );
+    assert.equal(recompleted.status, "success", role);
+    if (recompleted.status !== "success") continue;
+    const finalReload = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: recompletedSessionPayload,
+        items: [
+          itemPayload({
+            version: 9,
+            observed_quantity: 3,
+            shortage_count: 0,
+            is_prepared: true,
+            updated_at: "2026-07-29T00:30:00.000Z",
+          }),
+          itemPayload({
+            id: secondItemId,
+            daily_item_id: secondItemId,
+            item_template_id: secondTemplateId,
+            version: 5,
+            observed_quantity: 0,
+            shortage_count: 3,
+            is_prepared: false,
+            is_deferred: true,
+            updated_at: "2026-07-29T00:28:00.000Z",
+          }),
+        ],
+      }),
+      input,
+    );
+    assert.equal(finalReload.status, "success", role);
+    if (finalReload.status !== "success") continue;
+    const finalState = applyCompletedSessionToSharedDailyState(
+      prepared,
+      {
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        expectedSessionVersion: 11,
+        completedSessionVersion: 12,
+        changed: true,
+      },
+      finalReload.session,
+    );
+    assert.equal(finalState.status, "success", role);
+    if (finalState.status === "success") {
+      assert.equal(finalState.session.completedByDisplayName, `${role} latest`);
+      assert.equal(finalState.session.completedAt, "2026-07-29T00:30:00.000Z");
+      assert.equal(finalState.preparationSession.completedAt, "2026-07-29T00:30:00.000Z");
+    }
+  }
+});
+
+test("completed preparation stays current without a new shortage", async () => {
+  for (const item of [
+    itemPayload({
+      observed_quantity: 3,
+      shortage_count: 0,
+      is_prepared: true,
+      updated_at: "2026-07-29T00:20:00.000Z",
+    }),
+    itemPayload({
+      observed_quantity: 3,
+      shortage_count: 0,
+      carryover_pending_shortage_count: 2,
+      is_carryover: true,
+      carryover_resolved_at: "2026-07-29T00:10:00.000Z",
+      is_prepared: true,
+      updated_at: "2026-07-29T00:20:00.000Z",
+    }),
+  ]) {
+    const state = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload({
+          checked_at: "2026-07-29T00:25:00.000Z",
+          checked_by_member_id: familyId,
+          checked_by_user_id: childId,
+          checked_by_display_name: "checker",
+          is_prepared: true,
+          prepared_at: "2026-07-29T00:10:00.000Z",
+          prepared_by_member_id: childId,
+          prepared_by_user_id: familyId,
+          prepared_by_display_name: "preparer",
+        }),
+        items: [item],
+      }),
+      input,
+    );
+    assert.equal(state.status, "success");
+    if (state.status === "success") {
+      assert.equal(doesSharedDailySessionRequireRepreparation(state.session), false);
+      assert.equal(isSharedDailyCheckCurrent(state.session), true);
+      assert.equal(state.preparationSession.completedAt, "2026-07-29T00:10:00.000Z");
+    }
   }
 });
 

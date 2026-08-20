@@ -135,15 +135,39 @@ const uuidEquals = (left: string, right: string): boolean =>
   normalizeDailyDataUuid(left) === normalizeDailyDataUuid(right);
 
 export function isSharedDailyCheckCurrent(
-  session: Pick<DailySession, "checkedAt" | "completedAt">,
+  session: Pick<DailySession, "checkedAt" | "completedAt" | "items">,
 ): boolean {
   if (!session.checkedAt) {
+    return false;
+  }
+  if (doesSharedDailySessionRequireRepreparation(session)) {
     return false;
   }
   if (!session.completedAt) {
     return true;
   }
   return Date.parse(session.checkedAt) >= Date.parse(session.completedAt);
+}
+
+export function doesSharedDailySessionRequireRepreparation(
+  session: Pick<DailySession, "completedAt" | "items">,
+): boolean {
+  if (!session.completedAt) {
+    return false;
+  }
+  const completedAt = Date.parse(session.completedAt);
+  return session.items.some(
+    (item) =>
+      isDailyItemVisibleInPreparation(item) &&
+      ((!item.isPrepared && !item.isDeferred) ||
+        (item.kind === "regular" &&
+          (item.shortageCount ??
+            Math.max(
+              0,
+              item.requiredQuantity - (item.observedQuantity ?? 0),
+            )) > 0 &&
+          Date.parse(item.updatedAt) > completedAt)),
+  );
 }
 
 export function getSharedPreparationBulkMutationPlan(
@@ -517,6 +541,41 @@ export function applyCheckedSessionToSharedDailyState(
   scope: SharedDailyCheckCompletionScope,
   session: DailySession,
 ): SharedDailyState {
+  const preparationPreserved =
+    state.status === "success" &&
+    state.session.completedAt === session.completedAt &&
+    state.session.completedByMemberId === session.completedByMemberId &&
+    state.session.completedByUserId === session.completedByUserId &&
+    state.session.completedByDisplayName === session.completedByDisplayName &&
+    state.session.thanksSentAt === session.thanksSentAt &&
+    state.session.thanksSentByMemberId === session.thanksSentByMemberId &&
+    state.session.thanksSentByUserId === session.thanksSentByUserId &&
+    state.session.thanksSentByDisplayName === session.thanksSentByDisplayName &&
+    state.session.thanksReceivedByMemberId ===
+      session.thanksReceivedByMemberId &&
+    state.session.thanksReceivedByUserId === session.thanksReceivedByUserId &&
+    state.session.thanksReceivedByDisplayName ===
+      session.thanksReceivedByDisplayName;
+  const preparationInvalidated =
+    state.status === "success" &&
+    state.session.completedAt !== null &&
+    session.completedAt === null &&
+    session.completedByMemberId === null &&
+    session.completedByUserId === null &&
+    session.completedByDisplayName === null &&
+    session.thanksSentAt === null &&
+    session.thanksSentByMemberId === null &&
+    session.thanksSentByUserId === null &&
+    session.thanksSentByDisplayName === null &&
+    session.thanksReceivedByMemberId === null &&
+    session.thanksReceivedByUserId === null &&
+    session.thanksReceivedByDisplayName === null &&
+    session.items.some(
+      (item) =>
+        isDailyItemVisibleInPreparation(item) &&
+        !item.isPrepared &&
+        !item.isDeferred,
+    );
   if (
     state.status !== "success" ||
     scope.requestScopeKey !== scope.currentScopeKey ||
@@ -538,19 +597,7 @@ export function applyCheckedSessionToSharedDailyState(
       : scope.responseSessionVersion !== scope.expectedSessionVersion) ||
     !hasCoherentSessionActorTuples(session) ||
     !isSharedDailyCheckCurrent(session) ||
-    state.session.completedAt !== session.completedAt ||
-    state.session.completedByMemberId !== session.completedByMemberId ||
-    state.session.completedByUserId !== session.completedByUserId ||
-    state.session.completedByDisplayName !== session.completedByDisplayName ||
-    state.session.thanksSentAt !== session.thanksSentAt ||
-    state.session.thanksSentByMemberId !== session.thanksSentByMemberId ||
-    state.session.thanksSentByUserId !== session.thanksSentByUserId ||
-    state.session.thanksSentByDisplayName !== session.thanksSentByDisplayName ||
-    state.session.thanksReceivedByMemberId !==
-      session.thanksReceivedByMemberId ||
-    state.session.thanksReceivedByUserId !== session.thanksReceivedByUserId ||
-    state.session.thanksReceivedByDisplayName !==
-      session.thanksReceivedByDisplayName ||
+    (!preparationPreserved && !preparationInvalidated) ||
     session.items.some(
       (item) =>
         !uuidEquals(item.familyId, session.familyId) ||
