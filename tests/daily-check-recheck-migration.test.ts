@@ -6,6 +6,10 @@ const migrationPath =
   "supabase/migrations/20260820000100_require_recheck_after_preparation.sql";
 const migrationBytes = readFileSync(migrationPath);
 const sql = migrationBytes.toString("utf8");
+const fixMigrationPath =
+  "supabase/migrations/20260820000200_fix_daily_recheck_greatest.sql";
+const fixMigrationBytes = readFileSync(fixMigrationPath);
+const fixSql = fixMigrationBytes.toString("utf8");
 const baseSql = readFileSync(
   "supabase/migrations/20260719000500_add_complete_daily_check_rpc.sql",
   "utf8",
@@ -18,6 +22,12 @@ test("daily check recheck migration is ordered and BOM-free", () => {
   );
   assert.match(migrationPath, /20260820000100_/);
   assert.match(sql, /^begin;[\s\S]*commit;\s*$/i);
+  assert.equal(
+    fixMigrationBytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])),
+    false,
+  );
+  assert.match(fixMigrationPath, /20260820000200_/);
+  assert.match(fixSql, /^begin;[\s\S]*commit;\s*$/i);
 });
 
 test("recheck uses existing completion timestamps after locking the session", () => {
@@ -47,4 +57,18 @@ test("recheck refreshes only check metadata and preserves preparation metadata",
     /prepared_at\s*=|prepared_by_member_id\s*=|prepared_by_user_id\s*=|prepared_by_display_name\s*=/i,
   );
   assert.doesNotMatch(sql, /update public\.daily_items/i);
+});
+
+test("recheck uses PostgreSQL GREATEST syntax without invalid schema qualification", () => {
+  assert.match(sql, /checked_at = pg_catalog\.greatest\(/i);
+  assert.match(
+    fixSql,
+    /pg_catalog\.replace\(\s*function_definition,\s*'pg_catalog\.greatest\(',\s*'greatest\('/i,
+  );
+  assert.match(fixSql, /'checked_at = greatest\('/i);
+  assert.match(
+    fixSql,
+    /'daily_check_recheck_greatest_contract_not_found'/i,
+  );
+  assert.doesNotMatch(fixSql, /update public\.daily_sessions/i);
 });

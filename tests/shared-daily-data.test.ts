@@ -24,6 +24,7 @@ import {
   createHomeLockerItems,
   deriveHomeSharedDailyState,
 } from "../src/lib/home-daily-initial-state";
+import { completeDailyCheck } from "../src/lib/family-sharing/complete-daily-check";
 
 const familyId = "11111111-1111-4111-8111-111111111111";
 const childId = "22222222-2222-4222-8222-222222222222";
@@ -1084,21 +1085,44 @@ test("preparation newer than check requires recheck and preserves preparation af
       }),
       input,
     );
+    const recheckedPayload = sessionPayload({
+      version: 5,
+      checked_at: "2026-07-29T00:15:00.000Z",
+      checked_by_member_id: childId,
+      checked_by_user_id: familyId,
+      checked_by_display_name: "latest",
+      is_prepared: true,
+      prepared_at: "2026-07-29T00:10:00.000Z",
+      prepared_by_member_id: childId,
+      prepared_by_user_id: familyId,
+      prepared_by_display_name: "preparer",
+    });
+    const calls: string[] = [];
+    const completed = await completeDailyCheck(
+      {
+        async rpc(functionName, args) {
+          calls.push(functionName);
+          assert.deepEqual(args, {
+            p_family_id: familyId,
+            p_child_id: childId,
+            p_session_date: sessionDate,
+            p_expected_version: 4,
+          });
+          return {
+            data: { status: "success", session: recheckedPayload },
+            error: null,
+          };
+        },
+      },
+      { familyId, childId, sessionDate, expectedSessionVersion: 4 },
+    );
+    assert.equal(completed.status, "success", role);
+    if (completed.status !== "success") continue;
+
     const rechecked = await loadSharedDailyDataForDate(
       clientReturning({
         status: "success",
-        session: sessionPayload({
-          version: 5,
-          checked_at: "2026-07-29T00:15:00.000Z",
-          checked_by_member_id: childId,
-          checked_by_user_id: familyId,
-          checked_by_display_name: "latest",
-          is_prepared: true,
-          prepared_at: "2026-07-29T00:10:00.000Z",
-          prepared_by_member_id: childId,
-          prepared_by_user_id: familyId,
-          prepared_by_display_name: "preparer",
-        }),
+        session: recheckedPayload,
         items: [
           itemPayload({
             observed_quantity: 3,
@@ -1112,6 +1136,7 @@ test("preparation newer than check requires recheck and preserves preparation af
     );
     assert.equal(stale.status, "success", role);
     assert.equal(rechecked.status, "success", role);
+    assert.deepEqual(calls, ["complete_daily_check"], role);
     if (stale.status !== "success" || rechecked.status !== "success") continue;
     assert.equal(isSharedDailyCheckCurrent(stale.session), false, role);
 
@@ -1123,8 +1148,8 @@ test("preparation newer than check requires recheck and preserves preparation af
         sessionDate,
         dailySessionId: sessionId,
         expectedSessionVersion: 4,
-        responseSessionVersion: 5,
-        changed: true,
+        responseSessionVersion: completed.session.version,
+        changed: completed.changed,
         requestScopeKey: "scope",
         currentScopeKey: "scope",
         requestScopeGeneration: 3,
