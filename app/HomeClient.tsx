@@ -1066,6 +1066,24 @@ function HomeClientContent({
     }
   }, [activeTab, router]);
 
+  useEffect(() => {
+    if (initialTab !== "settings") {
+      return;
+    }
+
+    const currentUrl = new URL(window.location.href);
+    if (currentUrl.searchParams.get("tab") !== "settings") {
+      return;
+    }
+
+    currentUrl.searchParams.delete("tab");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
+    );
+  }, [initialTab]);
+
   const startDeferredSharedDailyLoad = useCallback(
     (pendingTab: AppTab | null) => {
       if (
@@ -6330,13 +6348,13 @@ function HomeClientContent({
           <div
             role="status"
             aria-live="polite"
-            className={`flex items-center gap-2 rounded-section border border-[#efb5c3] bg-[#fff8fa] px-5 py-3 text-status font-semibold text-[#8f3d52] shadow-card transition-all duration-300 ease-out ${
+            className={`flex w-full max-w-[310px] items-center justify-center gap-2.5 rounded-section border border-[#efb5c3] bg-[#fff8fa] px-6 py-4 text-button font-semibold text-[#8f3d52] shadow-card transition-all duration-300 ease-out ${
               receivedThanksToast.phase === "visible"
                 ? "translate-y-0 opacity-100"
                 : "-translate-y-1 opacity-0"
             }`}
           >
-            <Heart size={16} strokeWidth={2} className="text-[#d96d88]" />
+            <Heart size={18} strokeWidth={2} className="text-[#d96d88]" />
             <span>ありがとうが届きました</span>
           </div>
         </div>

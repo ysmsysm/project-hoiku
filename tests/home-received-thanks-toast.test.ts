@@ -47,6 +47,9 @@ test("Home displays only a current successful first consume", () => {
 test("received thanks toast is centered, non-blocking and fades after about two seconds", () => {
   assert.match(source, /pointer-events-none fixed inset-x-0 top-1\/2/);
   assert.match(source, /ありがとうが届きました/);
+  assert.match(source, /w-full max-w-\[310px\]/);
+  assert.match(source, /px-6 py-4 text-button/);
+  assert.match(source, /<Heart size=\{18\}/);
   assert.match(source, /border-\[#efb5c3\]/);
   assert.match(source, /bg-\[#fff8fa\]/);
   assert.match(source, /role="status"/);

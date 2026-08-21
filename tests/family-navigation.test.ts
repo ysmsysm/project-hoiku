@@ -70,6 +70,31 @@ test("family page returns to an explicitly requested settings tab", () => {
   assert.match(homeClient, /useState<AppTab>\(initialTab\)/);
 });
 
+test("settings return is one-shot so a later local or shared reload defaults to check", () => {
+  assert.match(
+    homeClient,
+    /if \(initialTab !== "settings"\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    homeClient,
+    /currentUrl\.searchParams\.get\("tab"\) !== "settings"/,
+  );
+  assert.match(homeClient, /currentUrl\.searchParams\.delete\("tab"\)/);
+  assert.match(
+    homeClient,
+    /window\.history\.replaceState\([\s\S]*?currentUrl\.pathname[\s\S]*?currentUrl\.search[\s\S]*?currentUrl\.hash/,
+  );
+  const normalizationEffect = homeClient.slice(
+    homeClient.indexOf('if (initialTab !== "settings")'),
+    homeClient.indexOf("const startDeferredSharedDailyLoad"),
+  );
+  assert.doesNotMatch(
+    normalizationEffect,
+    /dataSource|router\.(?:push|replace|refresh)|setActiveTab/,
+  );
+  assert.match(homePage, /params\.tab === "settings" \? "settings" : "check"/);
+});
+
 test("settings return renders before shared daily bootstrap and loads it fresh", () => {
   assert.match(
     homePage,
