@@ -6,7 +6,15 @@ import { loadSharedDailyDataForFamily } from "../src/lib/family-sharing/shared-d
 import { getHomeDataSource } from "../src/lib/home-data-source-server";
 import { getJapanDateString } from "../src/lib/japan-date";
 
-export default async function Home() {
+type HomeProps = {
+  searchParams: Promise<{
+    tab?: string | string[];
+  }>;
+};
+
+export default async function Home({ searchParams }: HomeProps) {
+  const params = await searchParams;
+  const initialTab = params.tab === "settings" ? "settings" : "check";
   const dataSource = await getHomeDataSource({
     getCurrentUserResult,
     getCurrentFamilyMembership,
@@ -15,5 +23,5 @@ export default async function Home() {
     loadSharedDailyDataForFamily,
   });
 
-  return <HomeClient dataSource={dataSource} />;
+  return <HomeClient dataSource={dataSource} initialTab={initialTab} />;
 }

@@ -277,6 +277,7 @@ type CustomItemDragState = {
 
 type HomeClientProps = {
   dataSource?: HomeDataSource;
+  initialTab?: AppTab;
 };
 
 const roughStateStyles: Record<RoughState, string> = {
@@ -288,7 +289,7 @@ const roughStateStyles: Record<RoughState, string> = {
 const settingsItems = [
   { id: "child", label: "こども設定", status: "", enabled: true },
   { id: "items", label: "持ち物設定", status: "", enabled: true },
-  { id: "family", label: "家族共有", status: "準備中", enabled: false },
+  { id: "family", label: "家族共有", status: "", enabled: true },
   { id: "notification", label: "通知設定", status: "準備中", enabled: false },
 ];
 
@@ -561,12 +562,19 @@ const buildPreparationItems = (items: PreparationItem[]): PreparationItem[] =>
 
 export default function HomeClient({
   dataSource = { mode: "local" },
+  initialTab = "check",
 }: HomeClientProps) {
   if (dataSource.mode === "shared-error") {
     return <SharedErrorScreen reason={dataSource.reason} />;
   }
 
-  return <HomeClientContent key={dataSource.mode} dataSource={dataSource} />;
+  return (
+    <HomeClientContent
+      key={dataSource.mode}
+      dataSource={dataSource}
+      initialTab={initialTab}
+    />
+  );
 }
 
 function SharedErrorScreen({
@@ -614,8 +622,10 @@ function SharedErrorScreen({
 
 function HomeClientContent({
   dataSource,
+  initialTab,
 }: {
   dataSource: Exclude<HomeDataSource, { mode: "shared-error" }>;
+  initialTab: AppTab;
 }) {
   const router = useRouter();
   const sharedInitialData = getSharedInitialDurableSettings(dataSource);
@@ -641,7 +651,7 @@ function HomeClientContent({
     initialCustomItems,
   );
 
-  const [activeTab, setActiveTab] = useState<AppTab>("check");
+  const [activeTab, setActiveTab] = useState<AppTab>(initialTab);
   const [customItems, setCustomItems] =
     useState<CustomizableItem[]>(initialCustomItems);
   const [sharedDailyState, setSharedDailyState] =
@@ -5778,13 +5788,19 @@ function HomeClientContent({
                         if (item.id === "items") {
                           closeItemSettings();
                         }
+
+                        if (item.id === "family") {
+                          router.push("/family");
+                        }
                       }}
                       className="flex min-h-[50px] w-full items-center justify-between gap-4 py-2 text-left disabled:cursor-default"
                     >
                       <span className="text-list-item font-medium text-hoiku-ink">
                         {item.label}
                       </span>
-                      {item.id === "items" || item.id === "child" ? (
+                      {item.id === "items" ||
+                      item.id === "child" ||
+                      item.id === "family" ? (
                         <ChevronRight
                           size={20}
                           strokeWidth={2}

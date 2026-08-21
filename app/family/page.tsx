@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import { SectionCard } from "../../src/components/ui/SectionCard";
 import { getCurrentUser } from "../../src/lib/auth/session";
 import { getCurrentFamilyMembership } from "../../src/lib/family-sharing/membership";
@@ -32,6 +34,13 @@ export default async function FamilyPage() {
     <main className="min-h-dvh bg-background px-5 py-8 text-hoiku-ink">
       <div className="mx-auto w-full max-w-[430px] space-y-5">
         <header className="pt-2">
+          <Link
+            href="/?tab=settings"
+            className="mb-4 inline-flex min-h-10 items-center gap-1 rounded-button pr-3 text-status font-semibold text-text-secondary transition active:scale-95"
+          >
+            <ChevronLeft size={20} strokeWidth={2.2} />
+            設定へ戻る
+          </Link>
           <p className="text-status font-normal text-text-secondary">
             Googleログイン済み
           </p>
