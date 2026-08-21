@@ -5764,7 +5764,7 @@ function HomeClientContent({
           rightContent={
             session && (activeTab === "check" || activeTab === "items") ? (
               <div className="space-y-2">
-                <div className="grid w-full grid-cols-[16px_1.75rem_auto_minmax(4.75rem,1fr)] items-center gap-x-1 gap-y-1 text-status font-normal">
+                <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 text-status font-normal">
                   <CheckCircle2
                     size={16}
                     className="text-[#3b9de9]"
@@ -5774,11 +5774,11 @@ function HomeClientContent({
                   <AssigneeBadge
                     label={lastConfirmedDate ? session.checkedBy : "未確認"}
                   />
-                  <span className="min-w-0 whitespace-nowrap text-right text-[13px] font-normal leading-tight">
+                  <span className="ml-auto shrink-0 whitespace-nowrap text-right text-[13px] font-normal leading-tight">
                     {lastConfirmedDate ?? "--"}
                   </span>
                 </div>
-                <div className="grid w-full grid-cols-[16px_1.75rem_auto_minmax(4.75rem,1fr)] items-center gap-x-1 gap-y-1 text-status font-normal">
+                <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 text-status font-normal">
                   {lastPreparedDate ? (
                     <CheckCircle2
                       size={16}
@@ -5793,7 +5793,7 @@ function HomeClientContent({
                     label={lastPreparedDate ? session.checkedBy : "まだ"}
                     tone={lastPreparedDate ? "active" : "muted"}
                   />
-                  <span className="min-w-0 whitespace-nowrap text-right text-[13px] font-normal leading-tight">
+                  <span className="ml-auto shrink-0 whitespace-nowrap text-right text-[13px] font-normal leading-tight">
                     {lastPreparedDate ?? "--"}
                   </span>
                 </div>
