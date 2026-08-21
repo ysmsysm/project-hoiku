@@ -174,6 +174,8 @@ import {
   applyCompletedSessionToSharedDailyState,
   applyThanksSessionToSharedDailyState,
   applyDeletedItemReloadToSharedDailyState,
+  getSharedDailyCheckSpotItems,
+  getSharedDailyCompletedRoughTemplateIds,
   getSharedDailyItemDeletionTarget,
   getSharedPreparationBulkMutationPlan,
   isSharedDailyCheckCurrent,
@@ -1051,9 +1053,7 @@ function HomeClientContent({
       return;
     }
 
-    const spots = sharedDailyState.session.items.filter(
-      (item) => item.kind === "spot",
-    );
+    const spots = getSharedDailyCheckSpotItems(sharedDailyState.session);
     const additions = spots.map((item) => ({
       itemId: item.itemTemplateId ?? item.dailyItemId,
       dueDate: item.dueDate,
@@ -2294,7 +2294,14 @@ function HomeClientContent({
   const addSpotItem = (itemId: string, dueDate: string | null = null) => {
     if (dailyMode === "shared-success" && dataSource.mode === "shared") {
       const currentSession = getCurrentSharedDailySession();
-      if (!currentSession || getSharedSpotItem(itemId)) {
+      const existingItem = getSharedSpotItem(itemId);
+      if (
+        !currentSession ||
+        (existingItem &&
+          (!currentSession.isCompleted ||
+            !existingItem.isPrepared ||
+            existingItem.isDeferred))
+      ) {
         return;
       }
       void runSharedDailySpotMutation({
@@ -3170,6 +3177,19 @@ function HomeClientContent({
             )
           : current,
       );
+      const completedRoughTemplateIds =
+        getSharedDailyCompletedRoughTemplateIds(loaded.session);
+      if (completedRoughTemplateIds.length > 0) {
+        setRoughStates((current) => {
+          const next = { ...current };
+          completedRoughTemplateIds.forEach((itemTemplateId) => {
+            next[itemTemplateId] = "十分";
+          });
+          roughStatesRef.current = next;
+          return next;
+        });
+      }
+      void reloadSharedDurableSettings();
       setDailyItemMutationError(null);
     } catch {
       if (

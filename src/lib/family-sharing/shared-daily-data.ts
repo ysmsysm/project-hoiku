@@ -52,6 +52,34 @@ export type SharedDailyQuantityReloadScope = SharedDailyItemUpdateScope & {
 
 export const maxSharedPreparationBulkItems = 100;
 
+export function getSharedDailyCheckSpotItems(
+  session: Pick<DailySession, "completedAt" | "items">,
+): DailyItem[] {
+  return session.items.filter(
+    (item) =>
+      item.kind === "spot" &&
+      (!session.completedAt || !item.isPrepared || item.isDeferred),
+  );
+}
+
+export function getSharedDailyCompletedRoughTemplateIds(
+  session: Pick<DailySession, "completedAt" | "items">,
+): string[] {
+  if (!session.completedAt) {
+    return [];
+  }
+  return session.items
+    .filter(
+      (item) =>
+        item.kind === "rough" &&
+        item.itemTemplateId !== null &&
+        item.isPrepared &&
+        !item.isDeferred &&
+        item.roughState === "enough",
+    )
+    .map((item) => item.itemTemplateId as string);
+}
+
 export type SharedPreparationBulkMutationPlan =
   | { status: "empty" | "too_many" | "invalid" }
   | {

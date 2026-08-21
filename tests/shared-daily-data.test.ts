@@ -10,6 +10,8 @@ import {
   applyQuantityReloadToSharedDailyState,
   getSharedPreparationBulkMutationPlan,
   getSharedDailyItemDeletionTarget,
+  getSharedDailyCheckSpotItems,
+  getSharedDailyCompletedRoughTemplateIds,
   loadSharedDailyDataForDate,
   mapLoadDailyDataResultToSharedDailyState,
   isSharedDailyCheckCurrent,
@@ -704,6 +706,147 @@ test("replaces the full canonical session only after validated preparation compl
     ).status,
     "not_found",
   );
+});
+
+test("completed preparation reflects regular, spot, rough and deferred results for owner and member", async () => {
+  const spotItemId = "66666666-6666-4666-8666-666666666666";
+  const spotTemplateId = "77777777-7777-4777-8777-777777777777";
+  const roughItemId = "88888888-8888-4888-8888-888888888888";
+  const roughTemplateId = "99999999-9999-4999-8999-999999999999";
+  const deferredSpotItemId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const deferredSpotTemplateId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const deferredRoughItemId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const deferredRoughTemplateId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const completedAt = "2026-07-29T00:10:00.000Z";
+
+  for (const role of ["owner", "member"] as const) {
+    const completedSessionPayload = sessionPayload({
+      version: 3,
+      is_prepared: true,
+      prepared_at: completedAt,
+      prepared_by_member_id: familyId,
+      prepared_by_user_id: childId,
+      prepared_by_display_name: role,
+    });
+    const completedItems = [
+      itemPayload({
+        observed_quantity: 3,
+        shortage_count: 0,
+        is_prepared: true,
+        version: 6,
+        updated_at: completedAt,
+      }),
+      itemPayload({
+        id: spotItemId,
+        daily_item_id: spotItemId,
+        item_template_id: spotTemplateId,
+        kind: "spot",
+        observed_quantity: null,
+        shortage_count: null,
+        is_checked: false,
+        is_prepared: true,
+        version: 6,
+        updated_at: completedAt,
+      }),
+      itemPayload({
+        id: roughItemId,
+        daily_item_id: roughItemId,
+        item_template_id: roughTemplateId,
+        kind: "rough",
+        observed_quantity: null,
+        shortage_count: null,
+        rough_state: "enough",
+        is_checked: false,
+        is_prepared: true,
+        version: 6,
+        updated_at: completedAt,
+      }),
+      itemPayload({
+        id: deferredSpotItemId,
+        daily_item_id: deferredSpotItemId,
+        item_template_id: deferredSpotTemplateId,
+        kind: "spot",
+        observed_quantity: null,
+        shortage_count: null,
+        is_checked: false,
+        is_prepared: false,
+        is_deferred: true,
+      }),
+      itemPayload({
+        id: deferredRoughItemId,
+        daily_item_id: deferredRoughItemId,
+        item_template_id: deferredRoughTemplateId,
+        kind: "rough",
+        observed_quantity: null,
+        shortage_count: null,
+        rough_state: "refill",
+        is_checked: false,
+        is_prepared: false,
+        is_deferred: true,
+      }),
+    ];
+    const completionCalls: string[] = [];
+    const completion = await completeDailyPreparation(
+      {
+        async rpc(functionName) {
+          completionCalls.push(functionName);
+          return {
+            data: {
+              status: "success",
+              changed: true,
+              session: completedSessionPayload,
+            },
+            error: null,
+          };
+        },
+      },
+      { familyId, childId, sessionDate, expectedSessionVersion: 2 },
+    );
+    assert.equal(completion.status, "success", role);
+    assert.deepEqual(completionCalls, ["complete_daily_preparation"], role);
+
+    for (const loadKind of ["completion", "reload"] as const) {
+      const calls: string[] = [];
+      const state = await loadSharedDailyDataForDate(
+        clientReturning(
+          {
+            status: "success",
+            session: completedSessionPayload,
+            items: completedItems,
+          },
+          null,
+          calls,
+        ),
+        input,
+      );
+      assert.equal(state.status, "success", `${role}:${loadKind}`);
+      assert.deepEqual(calls, ["load_daily_data"], `${role}:${loadKind}`);
+      if (state.status !== "success") continue;
+      assert.equal(state.checkView.items[0]?.observedQuantity, 3);
+      assert.deepEqual(
+        getSharedDailyCheckSpotItems(state.session).map(
+          (item) => item.dailyItemId,
+        ),
+        [deferredSpotItemId],
+      );
+      assert.deepEqual(
+        getSharedDailyCompletedRoughTemplateIds(state.session),
+        [roughTemplateId],
+      );
+      assert.equal(
+        state.session.items.find(
+          (item) => item.dailyItemId === deferredRoughItemId,
+        )?.roughState,
+        "refill",
+      );
+      assert.equal(
+        state.session.items.find(
+          (item) => item.dailyItemId === deferredRoughItemId,
+        )?.isDeferred,
+        true,
+      );
+    }
+  }
 });
 
 test("completed preparation reload reflects only prepared items for owner and member check views", async () => {
