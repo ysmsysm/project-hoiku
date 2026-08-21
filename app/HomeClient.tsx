@@ -109,6 +109,7 @@ import {
   type HomeDailyItemMutationOperation,
 } from "../src/lib/home-daily-initial-state";
 import {
+  applyHomeSharedItemTemplateMutationFallback,
   executeHomeSharedDailySpotMutation,
   executeHomeSharedRoughMutation,
   isHomeCompletedSpotCorrectionAction,
@@ -4615,11 +4616,36 @@ function HomeClientContent({
         );
         return;
       }
-      if (
-        dataSource.mode === "shared" &&
-        !(await reloadSharedDurableSettings())
-      ) {
-        throw new Error("shared_settings_reload_failed");
+      if (dataSource.mode === "shared" && result?.status === "success") {
+        const reloaded = await reloadSharedDurableSettings();
+        if (!reloaded) {
+          if (
+            !isCurrentHomeSharedSettingsRequest({
+              mounted: dailyItemMutationMountedRef.current,
+              requestToken,
+              currentToken: settingsMutationInFlightItemIdsRef.current.get(
+                item.id,
+              ),
+              requestScopeKey,
+              currentScopeKey: dailyItemMutationScopeKeyRef.current,
+              requestScopeGeneration,
+              currentScopeGeneration:
+                dailyItemMutationScopeGenerationRef.current,
+            }) ||
+            customItemsRef.current.find(
+              (candidate) => candidate.id === item.id,
+            )?.updatedAt !== currentItem.updatedAt
+          ) {
+            return;
+          }
+          const fallbackItems = applyHomeSharedItemTemplateMutationFallback({
+            itemId: item.id,
+            result,
+            customItems: customItemsRef.current,
+          });
+          customItemsRef.current = fallbackItems;
+          setCustomItems(fallbackItems);
+        }
       }
 
       if (nextCount === 0 && item.count !== 0) {

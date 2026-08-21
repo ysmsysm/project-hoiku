@@ -1726,6 +1726,29 @@ test("shared settings saves reload server updated_at tokens before later deletio
   assert.doesNotMatch(homeClientSource, /updatedAt: undefined/);
 });
 
+test("shared item edit keeps validated RPC success when canonical settings reload fails", () => {
+  const editStart = homeClientSource.indexOf(
+    "const saveCustomItemEditing = async",
+  );
+  const editEnd = homeClientSource.indexOf(
+    "const reorderDraftCustomItemsInCategory",
+    editStart,
+  );
+  const editSource = homeClientSource.slice(editStart, editEnd);
+
+  assert.ok(editStart >= 0 && editEnd > editStart);
+  assert.match(editSource, /await reloadSharedDurableSettings\(\)/);
+  assert.match(
+    editSource,
+    /applyHomeSharedItemTemplateMutationFallback\([\s\S]*?customItemsRef\.current = fallbackItems[\s\S]*?setCustomItems\(fallbackItems\)/,
+  );
+  assert.doesNotMatch(
+    editSource,
+    /throw new Error\("shared_settings_reload_failed"\)/,
+  );
+  assert.doesNotMatch(editSource, /saveLocalCustomItems\(fallbackItems\)/);
+});
+
 test("shared template edits use locked RPC clients, current tokens, and request guards", () => {
   assert.match(homeClientSource, /updateSharedItemTemplate\(/);
   assert.match(homeClientSource, /updateSharedRoughItemState\(/);

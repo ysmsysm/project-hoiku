@@ -44,6 +44,25 @@ export function applyHomeSharedRoughMutationFallback<RoughState extends string>(
   };
 }
 
+export function applyHomeSharedItemTemplateMutationFallback(input: {
+  itemId: string;
+  result: Extract<SharedTemplateMutationResult, { status: "success" }>;
+  customItems: CustomizableItem[];
+}) {
+  return input.customItems.map((item) =>
+    item.id === input.itemId
+      ? {
+          ...item,
+          name: input.result.name,
+          count: input.result.defaultQuantity,
+          unit: input.result.unit,
+          weekdays: [...input.result.weekdays],
+          updatedAt: input.result.updatedAt,
+        }
+      : item,
+  );
+}
+
 export type HomeSharedRoughExecutionResult<RoughState extends string> =
   | {
       status: "success";

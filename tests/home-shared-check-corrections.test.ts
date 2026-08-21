@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyHomeSharedItemTemplateMutationFallback,
   executeHomeSharedDailySpotMutation,
   executeHomeSharedRoughMutation,
   isHomeCompletedSpotCorrectionAction,
 } from "../src/lib/home-shared-check-corrections";
 import { mutateDailySpotItem } from "../src/lib/family-sharing/mutate-daily-spot-item";
-import { updateSharedRoughItemState } from "../src/lib/family-sharing/update-item-template";
+import {
+  updateSharedItemTemplate,
+  updateSharedRoughItemState,
+} from "../src/lib/family-sharing/update-item-template";
 import type { CustomizableItem } from "../src/types/preparation";
 
 const familyId = "11111111-1111-4111-8111-111111111111";
@@ -18,6 +22,105 @@ const memberId = "66666666-6666-4666-8666-666666666666";
 const userId = "77777777-7777-4777-8777-777777777777";
 const updatedAt = "2026-08-15T01:00:00.000000+00:00";
 const nextUpdatedAt = "2026-08-15T01:00:01.000000+00:00";
+
+test("owner and member shared durable quantity edits apply validated RPC success when settings reload fails", async () => {
+  for (const role of ["owner", "member"] as const) {
+    const customItems = [
+      {
+        id: templateId,
+        category: "持ち物",
+        name: "半袖",
+        count: 3,
+        unit: "枚",
+        weekdays: [],
+        updatedAt,
+      } as CustomizableItem,
+      {
+        id: dailyItemId,
+        category: "持ち物",
+        name: "下着",
+        count: 3,
+        unit: "枚",
+        weekdays: [],
+        updatedAt,
+      } as CustomizableItem,
+    ];
+    const result = await updateSharedItemTemplate(
+      {
+        async rpc() {
+          return {
+            data: {
+              status: "success",
+              changed: true,
+              reason: null,
+              family_id: familyId,
+              child_id: childId,
+              item_template_id: templateId,
+              kind: "regular",
+              name: "半袖",
+              default_quantity: 4,
+              unit: "枚",
+              current_rough_state: null,
+              weekdays: [],
+              sort_order: 0,
+              is_active: true,
+              updated_at: nextUpdatedAt,
+            },
+            error: null,
+          };
+        },
+      },
+      {
+        familyId,
+        childId,
+        itemTemplateId: templateId,
+        expectedUpdatedAt: updatedAt,
+        kind: "regular",
+        name: "半袖",
+        defaultQuantity: 4,
+        unit: null,
+      },
+    );
+    assert.equal(result.status, "success", role);
+    if (result.status !== "success") continue;
+
+    const fallbackItems = applyHomeSharedItemTemplateMutationFallback({
+      itemId: templateId,
+      result,
+      customItems,
+    });
+    assert.deepEqual(
+      fallbackItems.map(({ id, name, count, unit, weekdays, updatedAt: token }) => ({
+        id,
+        name,
+        count,
+        unit,
+        weekdays,
+        updatedAt: token,
+      })),
+      [
+        {
+          id: templateId,
+          name: "半袖",
+          count: 4,
+          unit: "枚",
+          weekdays: [],
+          updatedAt: nextUpdatedAt,
+        },
+        {
+          id: dailyItemId,
+          name: "下着",
+          count: 3,
+          unit: "枚",
+          weekdays: [],
+          updatedAt,
+        },
+      ],
+      role,
+    );
+    assert.equal(customItems[0].count, 3, role);
+  }
+});
 
 test("authenticated shared rough caller applies RPC success when settings reload fails", async () => {
   const customItems = [
