@@ -5,6 +5,14 @@ import test from "node:test";
 const homePage = readFileSync("app/page.tsx", "utf8");
 const homeClient = readFileSync("app/HomeClient.tsx", "utf8");
 const familyPage = readFileSync("app/family/page.tsx", "utf8");
+const membership = readFileSync(
+  "src/lib/family-sharing/membership.ts",
+  "utf8",
+);
+const membershipQuery = readFileSync(
+  "src/lib/family-sharing/membership-query.ts",
+  "utf8",
+);
 
 test("implemented family settings row navigates to the existing family route", () => {
   assert.match(
@@ -23,6 +31,28 @@ test("implemented family settings row navigates to the existing family route", (
     homeClient,
     /id: "notification", label: "通知設定", status: "準備中", enabled: false/,
   );
+});
+
+test("settings prefetches the family route before its row is selected", () => {
+  assert.match(
+    homeClient,
+    /if \(activeTab === "settings"\) \{\s*router\.prefetch\("\/family"\);\s*\}/,
+  );
+  assert.match(homeClient, /\[activeTab, router\]/);
+});
+
+test("membership reuses its embedded family status without a second query", () => {
+  assert.match(
+    membershipQuery,
+    /families!family_members_family_id_fkey\(sharing_started_at\)/,
+  );
+  assert.match(
+    membership,
+    /const membershipRow = data as CurrentFamilyMembershipRow;[\s\S]*return mapCurrentFamilyMembershipRow\(membershipRow\);/,
+  );
+  assert.match(membership, /familyRows === null/);
+  assert.doesNotMatch(membership, /\.from\("families"\)/);
+  assert.doesNotMatch(membership, /\.select\("sharing_started_at"\)/);
 });
 
 test("family page returns to an explicitly requested settings tab", () => {

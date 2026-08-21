@@ -1024,6 +1024,12 @@ function HomeClientContent({
   };
 
   useEffect(() => {
+    if (activeTab === "settings") {
+      router.prefetch("/family");
+    }
+  }, [activeTab, router]);
+
+  useEffect(() => {
     if (!sharedInitialData) {
       return;
     }
