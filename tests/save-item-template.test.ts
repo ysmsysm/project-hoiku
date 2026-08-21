@@ -160,6 +160,37 @@ test("transport rejection and response.error are classified without raw errors",
   assert.equal(JSON.stringify([rejected, errored]).includes("raw-secret"), false);
 });
 
+test("shared regular quantity RPC errors reach the reported save-result message", async () => {
+  const result = await updateSharedItemTemplate(
+    rpcClient(null, {
+      code: "42883",
+      message: "function pg_catalog.coalesce does not exist",
+    }).client,
+    {
+      familyId,
+      childId,
+      itemTemplateId: itemId,
+      expectedUpdatedAt: updatedAt,
+      kind: "regular",
+      name: "タオル",
+      defaultQuantity: 3,
+      unit: null,
+    },
+  );
+
+  assert.deepEqual(result, {
+    status: "transport_error",
+    changed: false,
+    reason: null,
+  });
+  if (result.status !== "success") {
+    assert.equal(
+      getSharedTemplateMutationErrorMessage(result),
+      "保存結果を確認できませんでした。再読み込みしてください。",
+    );
+  }
+});
+
 test("all business statuses and safe messages are mapped", async () => {
   const input = { familyId, childId, itemTemplateId: itemId, expectedUpdatedAt: updatedAt, currentRoughState: "low" as const };
   for (const payload of [
