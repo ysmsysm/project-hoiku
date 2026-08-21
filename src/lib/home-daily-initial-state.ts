@@ -424,6 +424,11 @@ export function isHomeSharedThanksSelf(
 
 export type HomeSharedThanksDisplay = "sent" | "received" | null;
 
+export type HomeSharedThanksActionDisplay =
+  | "send"
+  | Exclude<HomeSharedThanksDisplay, null>
+  | null;
+
 export function getHomeSharedThanksDisplay(
   currentMemberId: string,
   session: Pick<
@@ -446,6 +451,38 @@ export function getHomeSharedThanksDisplay(
   }
 
   return null;
+}
+
+export function getHomeSharedThanksActionDisplay(
+  currentMemberId: string,
+  session: Pick<
+    DailySession,
+    | "isCompleted"
+    | "completedAt"
+    | "completedByMemberId"
+    | "thanksSent"
+    | "thanksSentByMemberId"
+    | "thanksReceivedByMemberId"
+  >,
+): HomeSharedThanksActionDisplay {
+  if (
+    !session.isCompleted ||
+    !session.completedAt ||
+    !session.completedByMemberId
+  ) {
+    return null;
+  }
+
+  if (!session.thanksSent) {
+    return isHomeSharedThanksSelf(
+      currentMemberId,
+      session.completedByMemberId,
+    )
+      ? null
+      : "send";
+  }
+
+  return getHomeSharedThanksDisplay(currentMemberId, session);
 }
 
 export function getHomePreparationBulkTooManyItemsView(): HomeDailyItemMutationErrorView {

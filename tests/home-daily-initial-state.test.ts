@@ -17,6 +17,7 @@ import {
   createHomeLockerItems,
   createHomeDailyInitialState,
   deriveHomeSharedDailyState,
+  getHomeSharedThanksActionDisplay,
   getHomeSharedThanksDisplay,
   getHomeLocalDailySourceKey,
   getHomeDailyItemMutationErrorView,
@@ -739,6 +740,76 @@ test("shared thanks display distinguishes the sender and recipient", () => {
   );
 });
 
+test("shared thanks action remains available from canonical completion in both directions", () => {
+  const ownerMemberId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const memberMemberId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const ownerCompleted = {
+    isCompleted: true,
+    completedAt: "2026-08-21T12:00:00+00:00",
+    completedByMemberId: ownerMemberId,
+    thanksSent: false,
+    thanksSentByMemberId: null,
+    thanksReceivedByMemberId: null,
+  };
+
+  assert.equal(
+    getHomeSharedThanksActionDisplay(memberMemberId, ownerCompleted),
+    "send",
+  );
+  assert.equal(
+    getHomeSharedThanksActionDisplay(ownerMemberId, ownerCompleted),
+    null,
+  );
+  assert.equal(
+    getHomeSharedThanksActionDisplay(ownerMemberId, {
+      ...ownerCompleted,
+      completedByMemberId: memberMemberId,
+    }),
+    "send",
+  );
+
+  const memberSent = {
+    ...ownerCompleted,
+    thanksSent: true,
+    thanksSentByMemberId: memberMemberId,
+    thanksReceivedByMemberId: ownerMemberId,
+  };
+  assert.equal(
+    getHomeSharedThanksActionDisplay(memberMemberId, memberSent),
+    "sent",
+  );
+  assert.equal(
+    getHomeSharedThanksActionDisplay(ownerMemberId, memberSent),
+    "received",
+  );
+  assert.equal(
+    getHomeSharedThanksActionDisplay(memberMemberId, {
+      ...memberSent,
+      completedByMemberId: memberMemberId,
+      thanksSentByMemberId: ownerMemberId,
+      thanksReceivedByMemberId: memberMemberId,
+    }),
+    "received",
+  );
+  assert.equal(
+    getHomeSharedThanksActionDisplay(ownerMemberId, {
+      ...memberSent,
+      completedByMemberId: memberMemberId,
+      thanksSentByMemberId: ownerMemberId,
+      thanksReceivedByMemberId: memberMemberId,
+    }),
+    "sent",
+  );
+  assert.equal(
+    getHomeSharedThanksActionDisplay(memberMemberId, {
+      ...ownerCompleted,
+      isCompleted: false,
+      completedAt: null,
+    }),
+    null,
+  );
+});
+
 test("daily item mutation errors are operation-specific, safe, and reloadable", () => {
   const conflict = getHomeDailyItemMutationErrorView(
     { status: "conflict", item: dailyItem() },
@@ -1377,14 +1448,22 @@ test("shared thanks uses a guarded session mutation, full reload, and canonical 
   assert.match(sendHandler, /updateSession\(/);
 });
 
-test("thanks UI distinguishes received state, hides unsent self thanks, and disables pending sends", () => {
+test("thanks UI separates canonical action display from notification receipt state", () => {
   assert.match(
     homeClientSource,
-    /!sharedThanksSession\.thanksSent[\s\S]*?isHomeSharedThanksSelf\([\s\S]*?dataSource\.currentMemberId[\s\S]*?sharedThanksSession\.completedByMemberId/,
+    /getHomeSharedThanksActionDisplay\(\s*dataSource\.currentMemberId,\s*sharedThanksSession/,
   );
   assert.match(
     homeClientSource,
-    /sharedThanksSession\?\.thanksSent[\s\S]*?sharedThanksDisplay !== null[\s\S]*?!isUnsentSharedSelfThanks/,
+    /dailyMode === "local" && canShowPreparationStatus[\s\S]*?dailyMode === "shared-success" && sharedThanksActionDisplay !== null/,
+  );
+  const actionDisplaySource = homeClientSource.slice(
+    homeClientSource.indexOf("const sharedThanksActionDisplay"),
+    homeClientSource.indexOf("const isSharedThanksButtonDisabled"),
+  );
+  assert.doesNotMatch(
+    actionDisplaySource,
+    /receivedThanksToast|receivedThanksConsume|sessionItems\.length/,
   );
   assert.match(homeClientSource, /sharedThanksSession\.thanksSent \|\|/);
   assert.match(homeClientSource, /isSharedSessionMutationPending/);

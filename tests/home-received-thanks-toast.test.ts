@@ -12,10 +12,24 @@ test("Home consumes a thanks notification only for the shared receiver", () => {
   assert.doesNotMatch(
     source.slice(
       source.indexOf("const receivedThanksDailySessionId"),
-      source.indexOf("const isUnsentSharedSelfThanks"),
+      source.indexOf("const sharedThanksActionDisplay"),
     ),
     /localStorage|appRepository/,
   );
+});
+
+test("notification consume cannot remove the persistent shared thanks action", () => {
+  const actionDisplaySource = source.slice(
+    source.indexOf("const sharedThanksActionDisplay"),
+    source.indexOf("const isSharedThanksButtonDisabled"),
+  );
+  assert.match(actionDisplaySource, /getHomeSharedThanksActionDisplay/);
+  assert.doesNotMatch(
+    actionDisplaySource,
+    /receivedThanksToast|receivedThanksConsume|shouldDisplay|consumed/,
+  );
+  assert.match(source, /"✓ ありがとう済み"/);
+  assert.match(source, /"✓ ありがとうが届きました"/);
 });
 
 test("Home displays only a current successful first consume", () => {

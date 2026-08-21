@@ -89,6 +89,7 @@ import {
   createDefaultHomeCheckCounts,
   createHomeDailyInitialState,
   deriveHomeSharedDailyState,
+  getHomeSharedThanksActionDisplay,
   getHomeSharedThanksDisplay,
   getHomeLocalDailySourceKey,
   getHomeDailyItemMutationErrorView,
@@ -1772,22 +1773,18 @@ function HomeClientContent({
     };
   }, [receivedThanksToastEventKey]);
 
-  const isUnsentSharedSelfThanks =
+  const sharedThanksActionDisplay =
     dailyMode === "shared-success" &&
     dataSource.mode === "shared" &&
-    sharedThanksSession !== null &&
-    !sharedThanksSession.thanksSent &&
-    isHomeSharedThanksSelf(
-      dataSource.currentMemberId,
-      sharedThanksSession.completedByMemberId,
-    );
+    sharedThanksSession !== null
+      ? getHomeSharedThanksActionDisplay(
+          dataSource.currentMemberId,
+          sharedThanksSession,
+        )
+      : null;
   const shouldShowThanksButton =
-    canShowPreparationStatus &&
-    (dailyMode === "local" ||
-      (dailyMode === "shared-success" &&
-        (sharedThanksSession?.thanksSent
-          ? sharedThanksDisplay !== null
-          : !isUnsentSharedSelfThanks)));
+    (dailyMode === "local" && canShowPreparationStatus) ||
+    (dailyMode === "shared-success" && sharedThanksActionDisplay !== null);
   const isSharedThanksButtonDisabled =
     dailyMode !== "shared-success" ||
     !canRunSendThanksMutation ||
