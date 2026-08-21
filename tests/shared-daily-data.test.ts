@@ -29,6 +29,7 @@ import {
 } from "../src/lib/home-daily-initial-state";
 import { completeDailyCheck } from "../src/lib/family-sharing/complete-daily-check";
 import { completeDailyPreparation } from "../src/lib/family-sharing/complete-daily-preparation";
+import { updateDailyItem } from "../src/lib/family-sharing/update-daily-item";
 
 const familyId = "11111111-1111-4111-8111-111111111111";
 const childId = "22222222-2222-4222-8222-222222222222";
@@ -845,6 +846,264 @@ test("completed preparation reflects regular, spot, rough and deferred results f
           (item) => item.dailyItemId === deferredRoughItemId,
         )?.isDeferred,
         true,
+      );
+    }
+  }
+});
+
+test("rough refill crosses the shared check, preparation, completion and reload path for owner and member", async () => {
+  const lowItemId = "66666666-6666-4666-8666-666666666666";
+  const lowTemplateId = "77777777-7777-4777-8777-777777777777";
+  const enoughItemId = "88888888-8888-4888-8888-888888888888";
+  const enoughTemplateId = "99999999-9999-4999-8999-999999999999";
+  const checkedAt = "2026-07-29T00:10:00.000Z";
+  const completedAt = "2026-07-29T00:20:00.000Z";
+
+  for (const role of ["owner", "member"] as const) {
+    const initial = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload({
+          version: 2,
+          is_checked: false,
+          checked_at: null,
+          checked_by_member_id: null,
+          checked_by_user_id: null,
+          checked_by_display_name: null,
+        }),
+        items: [
+          itemPayload({
+            kind: "rough",
+            required_quantity: 1,
+            observed_quantity: null,
+            shortage_count: null,
+            rough_state: "enough",
+            is_checked: false,
+            version: 4,
+          }),
+        ],
+      }),
+      input,
+    );
+    assert.equal(initial.status, "success", role);
+    if (initial.status !== "success") continue;
+
+    const checkedSessionPayload = sessionPayload({
+      version: 3,
+      checked_at: checkedAt,
+      checked_by_member_id: familyId,
+      checked_by_user_id: childId,
+      checked_by_display_name: role,
+    });
+    const checkedResult = await completeDailyCheck(
+      {
+        async rpc() {
+          return {
+            data: {
+              status: "success",
+              changed: true,
+              session: checkedSessionPayload,
+            },
+            error: null,
+          };
+        },
+      },
+      { familyId, childId, sessionDate, expectedSessionVersion: 2 },
+    );
+    assert.equal(checkedResult.status, "success", role);
+
+    const refillPayload = itemPayload({
+      kind: "rough",
+      required_quantity: 1,
+      observed_quantity: null,
+      shortage_count: null,
+      rough_state: "refill",
+      is_checked: false,
+      version: 5,
+      updated_at: checkedAt,
+    });
+    const lowPayload = itemPayload({
+      id: lowItemId,
+      daily_item_id: lowItemId,
+      item_template_id: lowTemplateId,
+      kind: "rough",
+      required_quantity: 1,
+      observed_quantity: null,
+      shortage_count: null,
+      rough_state: "low",
+      is_checked: false,
+    });
+    const enoughPayload = itemPayload({
+      id: enoughItemId,
+      daily_item_id: enoughItemId,
+      item_template_id: enoughTemplateId,
+      kind: "rough",
+      required_quantity: 1,
+      observed_quantity: null,
+      shortage_count: null,
+      rough_state: "enough",
+      is_checked: false,
+    });
+    const checkedLoad = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: checkedSessionPayload,
+        items: [refillPayload, lowPayload, enoughPayload],
+      }),
+      input,
+    );
+    assert.equal(checkedLoad.status, "success", role);
+    if (checkedLoad.status !== "success") continue;
+    const checkedState = applyCheckedSessionToSharedDailyState(
+      initial,
+      {
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        expectedSessionVersion: 2,
+        responseSessionVersion: 3,
+        changed: true,
+        requestScopeKey: role,
+        currentScopeKey: role,
+        requestScopeGeneration: 1,
+        currentScopeGeneration: 1,
+      },
+      checkedLoad.session,
+    );
+    assert.equal(checkedState.status, "success", role);
+    if (checkedState.status !== "success") continue;
+    assert.deepEqual(
+      checkedState.preparationSession.items.map((item) => [
+        item.dailyItemId,
+        item.source,
+      ]),
+      [[itemId, "stock"]],
+      role,
+    );
+
+    const preparedPayload = {
+      ...refillPayload,
+      is_prepared: true,
+      version: 6,
+      updated_at: "2026-07-29T00:15:00.000Z",
+    };
+    const preparedResult = await updateDailyItem(
+      {
+        async rpc() {
+          return {
+            data: { status: "success", item: preparedPayload, session: null },
+            error: null,
+          };
+        },
+      },
+      {
+        action: "set_prepared",
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        dailyItemId: itemId,
+        expectedVersion: 5,
+        nextPrepared: true,
+        currentIsPrepared: false,
+        currentIsDeferred: false,
+      },
+    );
+    assert.equal(preparedResult.status, "success", role);
+    if (preparedResult.status !== "success") continue;
+    const preparedState = applyUpdatedItemToSharedDailyState(
+      checkedState,
+      {
+        familyId,
+        childId,
+        sessionDate,
+        dailySessionId: sessionId,
+        dailyItemId: itemId,
+        expectedVersion: 5,
+      },
+      preparedResult.item,
+    );
+    assert.equal(preparedState.status, "success", role);
+    if (preparedState.status !== "success") continue;
+    assert.equal(preparedState.preparationSession.items[0]?.checked, true, role);
+
+    const completedSessionPayload = sessionPayload({
+      version: 4,
+      checked_at: checkedAt,
+      checked_by_member_id: familyId,
+      checked_by_user_id: childId,
+      checked_by_display_name: role,
+      is_prepared: true,
+      prepared_at: completedAt,
+      prepared_by_member_id: familyId,
+      prepared_by_user_id: childId,
+      prepared_by_display_name: role,
+    });
+    const completionResult = await completeDailyPreparation(
+      {
+        async rpc() {
+          return {
+            data: {
+              status: "success",
+              changed: true,
+              session: completedSessionPayload,
+            },
+            error: null,
+          };
+        },
+      },
+      { familyId, childId, sessionDate, expectedSessionVersion: 3 },
+    );
+    assert.equal(completionResult.status, "success", role);
+
+    const completedItems = [
+      {
+        ...preparedPayload,
+        rough_state: "enough",
+        version: 7,
+        updated_at: completedAt,
+      },
+      lowPayload,
+      enoughPayload,
+    ];
+    for (const loadKind of ["completion", "reload"] as const) {
+      const completedLoad = await loadSharedDailyDataForDate(
+        clientReturning({
+          status: "success",
+          session: completedSessionPayload,
+          items: completedItems,
+        }),
+        input,
+      );
+      assert.equal(completedLoad.status, "success", `${role}:${loadKind}`);
+      if (completedLoad.status !== "success") continue;
+      const finalState = applyCompletedSessionToSharedDailyState(
+        preparedState,
+        {
+          familyId,
+          childId,
+          sessionDate,
+          dailySessionId: sessionId,
+          expectedSessionVersion: 3,
+          completedSessionVersion: 4,
+          changed: true,
+        },
+        completedLoad.session,
+      );
+      assert.equal(finalState.status, "success", `${role}:${loadKind}`);
+      if (finalState.status !== "success") continue;
+      assert.deepEqual(finalState.preparationSession.items, [], `${role}:${loadKind}`);
+      assert.equal(
+        finalState.session.items.find((item) => item.dailyItemId === itemId)
+          ?.roughState,
+        "enough",
+        `${role}:${loadKind}`,
+      );
+      assert.deepEqual(
+        getSharedDailyCompletedRoughTemplateIds(finalState.session),
+        [templateId],
+        `${role}:${loadKind}`,
       );
     }
   }
