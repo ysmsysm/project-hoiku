@@ -237,6 +237,31 @@ export type SendDailyThanksResult =
   | SendDailyThanksBusinessResult
   | DailyDataFailure;
 
+export type ConsumeDailyThanksNotificationInput = {
+  familyId: string;
+  childId: string;
+  sessionDate: string;
+  dailySessionId: string;
+  thanksSentAt: string;
+};
+
+export type ConsumeDailyThanksNotificationBusinessResult = {
+  status:
+    | "success"
+    | "conflict"
+    | "forbidden"
+    | "not_found"
+    | "invalid_state";
+  consumed: boolean;
+  shouldDisplay: boolean;
+  dailySessionId: string | null;
+  thanksSentAt: string | null;
+};
+
+export type ConsumeDailyThanksNotificationResult =
+  | ConsumeDailyThanksNotificationBusinessResult
+  | DailyDataFailure;
+
 export type DeleteDailyItemInput = {
   familyId: string;
   childId: string;
@@ -560,6 +585,22 @@ export type SendDailyThanksClient = {
       p_child_id: string;
       p_session_date: string;
       p_expected_version: number;
+    },
+  ) => PromiseLike<{
+    data: unknown;
+    error: unknown;
+  }>;
+};
+
+export type ConsumeDailyThanksNotificationClient = {
+  rpc: (
+    functionName: "consume_daily_thanks_notification",
+    args: {
+      p_family_id: string;
+      p_child_id: string;
+      p_session_date: string;
+      p_daily_session_id: string;
+      p_thanks_sent_at: string;
     },
   ) => PromiseLike<{
     data: unknown;

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   GripVertical,
+  Heart,
   Package,
   Pencil,
   Plus,
@@ -152,6 +153,7 @@ import {
 import { completeDailyPreparation } from "../src/lib/family-sharing/complete-daily-preparation";
 import { completeDailyCheck } from "../src/lib/family-sharing/complete-daily-check";
 import { sendDailyThanks } from "../src/lib/family-sharing/send-daily-thanks";
+import { consumeDailyThanksNotification } from "../src/lib/family-sharing/consume-daily-thanks-notification";
 import { deleteDailyItem } from "../src/lib/family-sharing/delete-daily-item";
 import {
   type DailySpotMutationClient,
@@ -188,6 +190,7 @@ import type { SpotAddition } from "../src/types/spot";
 import type { SharedDailyState } from "../src/types/shared-daily";
 import type {
   CompleteDailyCheckClient,
+  ConsumeDailyThanksNotificationClient,
   DailyDataClient,
   DailySession,
   DeleteDailyItemClient,
@@ -247,6 +250,14 @@ type SharedSpotMutationRequest = {
 type DeferredSharedDailyRequest = {
   scopeKey: string;
   promise: Promise<SharedDailyState>;
+};
+type ReceivedThanksConsumeRequest = {
+  eventKey: string;
+  promise: ReturnType<typeof consumeDailyThanksNotification>;
+};
+type ReceivedThanksToast = {
+  eventKey: string;
+  phase: "visible" | "fading";
 };
 
 const itemCategories: CustomItemCategory[] = [
@@ -743,6 +754,13 @@ function HomeClientContent({
   const dailyCheckClientRef = useRef<CompleteDailyCheckClient | null>(null);
   const dailyPreparationItemsClientRef = useRef<DailyDataClient | null>(null);
   const dailyThanksClientRef = useRef<SendDailyThanksClient | null>(null);
+  const receivedThanksClientRef =
+    useRef<ConsumeDailyThanksNotificationClient | null>(null);
+  const receivedThanksConsumeRequestRef =
+    useRef<ReceivedThanksConsumeRequest | null>(null);
+  const receivedThanksConsumeScopeKeyRef = useRef<string | null>(null);
+  const [receivedThanksToast, setReceivedThanksToast] =
+    useState<ReceivedThanksToast | null>(null);
   const dailyItemDeleteClientRef = useRef<DeleteDailyItemClient | null>(null);
   const dailySpotMutationClientRef = useRef<DailySpotMutationClient | null>(null);
   const sharedSpotMutationRequestRef = useRef<SharedSpotMutationRequest | null>(null);
@@ -1626,6 +1644,134 @@ function HomeClientContent({
           sharedThanksSession,
         )
       : null;
+  const receivedThanksDailySessionId =
+    sharedThanksDisplay === "received" && sharedThanksSession
+      ? sharedThanksSession.dailySessionId
+      : null;
+  const receivedThanksSentAt =
+    sharedThanksDisplay === "received" && sharedThanksSession
+      ? sharedThanksSession.thanksSentAt
+      : null;
+  const receivedThanksSessionDate =
+    sharedThanksDisplay === "received" && sharedThanksSession
+      ? sharedThanksSession.sessionDate
+      : null;
+  const receivedThanksEventKey =
+    dataSource.mode === "shared" &&
+    receivedThanksDailySessionId &&
+    receivedThanksSentAt &&
+    receivedThanksSessionDate
+      ? [
+          dataSource.familyId,
+          dataSource.currentMemberId,
+          dataSource.initialData.childId,
+          receivedThanksSessionDate,
+          receivedThanksDailySessionId,
+          receivedThanksSentAt,
+        ].join(":")
+      : null;
+  receivedThanksConsumeScopeKeyRef.current = receivedThanksEventKey;
+
+  useEffect(() => {
+    if (
+      dataSource.mode !== "shared" ||
+      !receivedThanksEventKey ||
+      !receivedThanksDailySessionId ||
+      !receivedThanksSentAt ||
+      !receivedThanksSessionDate
+    ) {
+      return;
+    }
+
+    const existingRequest = receivedThanksConsumeRequestRef.current;
+    if (existingRequest?.eventKey === receivedThanksEventKey) {
+      return;
+    }
+
+    const browserClient =
+      dailyMutationBrowserClientRef.current ?? createSupabaseClient();
+    dailyMutationBrowserClientRef.current = browserClient;
+    if (!receivedThanksClientRef.current) {
+      receivedThanksClientRef.current = {
+        rpc(functionName, args) {
+          return browserClient.rpc(functionName, args);
+        },
+      };
+    }
+
+    const currentRequest: ReceivedThanksConsumeRequest = {
+      eventKey: receivedThanksEventKey,
+      promise: consumeDailyThanksNotification(
+        receivedThanksClientRef.current,
+        {
+          familyId: dataSource.familyId,
+          childId: dataSource.initialData.childId,
+          sessionDate: receivedThanksSessionDate,
+          dailySessionId: receivedThanksDailySessionId,
+          thanksSentAt: receivedThanksSentAt,
+        },
+      ),
+    };
+    receivedThanksConsumeRequestRef.current = currentRequest;
+
+    void currentRequest.promise.then((result) => {
+      if (receivedThanksConsumeRequestRef.current !== currentRequest) {
+        return;
+      }
+      receivedThanksConsumeRequestRef.current = null;
+      if (
+        !dailyItemMutationMountedRef.current ||
+        receivedThanksConsumeScopeKeyRef.current !== currentRequest.eventKey ||
+        result.status !== "success" ||
+        !result.consumed ||
+        !result.shouldDisplay ||
+        result.dailySessionId?.toLowerCase() !==
+          receivedThanksDailySessionId.toLowerCase() ||
+        result.thanksSentAt !== receivedThanksSentAt
+      ) {
+        return;
+      }
+
+      setReceivedThanksToast({
+        eventKey: currentRequest.eventKey,
+        phase: "visible",
+      });
+    });
+  }, [
+    dataSource,
+    receivedThanksDailySessionId,
+    receivedThanksEventKey,
+    receivedThanksSentAt,
+    receivedThanksSessionDate,
+  ]);
+
+  const receivedThanksToastEventKey = receivedThanksToast?.eventKey ?? null;
+
+  useEffect(() => {
+    if (!receivedThanksToastEventKey) {
+      return;
+    }
+
+    const eventKey = receivedThanksToastEventKey;
+    const fadeTimer = window.setTimeout(() => {
+      setReceivedThanksToast((current) =>
+        current?.eventKey === eventKey
+          ? { ...current, phase: "fading" }
+          : current,
+      );
+    }, 1700);
+    const hideTimer = window.setTimeout(() => {
+      setReceivedThanksToast((current) =>
+        current?.eventKey === eventKey ? null : current,
+      );
+    }, 2100);
+
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(hideTimer);
+    };
+  }, [receivedThanksToastEventKey]);
+
   const isUnsentSharedSelfThanks =
     dailyMode === "shared-success" &&
     dataSource.mode === "shared" &&
@@ -6178,6 +6324,23 @@ function HomeClientContent({
                 削除する
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {receivedThanksToast ? (
+        <div className="pointer-events-none fixed inset-x-0 top-1/2 z-50 flex -translate-y-1/2 justify-center px-6">
+          <div
+            role="status"
+            aria-live="polite"
+            className={`flex items-center gap-2 rounded-section border border-[#efb5c3] bg-[#fff8fa] px-5 py-3 text-status font-semibold text-[#8f3d52] shadow-card transition-all duration-300 ease-out ${
+              receivedThanksToast.phase === "visible"
+                ? "translate-y-0 opacity-100"
+                : "-translate-y-1 opacity-0"
+            }`}
+          >
+            <Heart size={16} strokeWidth={2} className="text-[#d96d88]" />
+            <span>ありがとうが届きました</span>
           </div>
         </div>
       ) : null}

@@ -1422,7 +1422,7 @@ test("session mutation generalization keeps check, complete, thanks, and delete 
   );
   assert.equal(
     homeClientSource.match(/dailyMutationBrowserClientRef\.current \?\? createSupabaseClient\(\)/g)?.length,
-    7,
+    8,
   );
 });
 
