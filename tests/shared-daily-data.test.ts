@@ -448,6 +448,7 @@ test("selects every visible non-deferred preparation item and enforces the bulk 
       daily_item_id: "66666666-6666-4666-8666-666666666666",
       kind: "spot",
       required_quantity: 2,
+      is_checked: false,
       is_prepared: true,
     }),
     itemPayload({
@@ -743,7 +744,7 @@ test("completed preparation reflects regular, spot, rough and deferred results f
         kind: "spot",
         observed_quantity: null,
         shortage_count: null,
-        is_checked: false,
+        is_checked: true,
         is_prepared: true,
         version: 6,
         updated_at: completedAt,
@@ -845,6 +846,217 @@ test("completed preparation reflects regular, spot, rough and deferred results f
         )?.isDeferred,
         true,
       );
+    }
+  }
+});
+
+test("recheck starts a clean preparation cycle for every current kind and preserves carryover links", async () => {
+  const deferredRegularId = "66666666-6666-4666-8666-666666666666";
+  const completedSpotId = "77777777-7777-4777-8777-777777777777";
+  const currentSpotId = "88888888-8888-4888-8888-888888888888";
+  const completedRoughId = "99999999-9999-4999-8999-999999999999";
+  const currentRoughId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const carryoverSourceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const completedAt = "2026-07-29T00:10:00.000Z";
+  const correctedAt = "2026-07-29T00:20:00.000Z";
+  const recheckedAt = "2026-07-29T00:25:00.000Z";
+
+  for (const role of ["owner", "member"] as const) {
+    const beforeItems = [
+      itemPayload({
+        observed_quantity: 1,
+        shortage_count: 2,
+        is_prepared: true,
+        updated_at: correctedAt,
+      }),
+      itemPayload({
+        id: deferredRegularId,
+        daily_item_id: deferredRegularId,
+        item_template_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        observed_quantity: 1,
+        shortage_count: 2,
+        is_prepared: false,
+        is_deferred: true,
+        is_carryover: true,
+        carryover_pending_shortage_count: 2,
+        carried_from_daily_item_id: carryoverSourceId,
+        updated_at: "2026-07-29T00:09:00.000Z",
+      }),
+      itemPayload({
+        id: completedSpotId,
+        daily_item_id: completedSpotId,
+        item_template_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        kind: "spot",
+        observed_quantity: null,
+        shortage_count: null,
+        is_checked: true,
+        is_prepared: true,
+        updated_at: completedAt,
+      }),
+      itemPayload({
+        id: currentSpotId,
+        daily_item_id: currentSpotId,
+        item_template_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        kind: "spot",
+        observed_quantity: null,
+        shortage_count: null,
+        is_checked: false,
+        is_prepared: false,
+        is_deferred: true,
+        updated_at: "2026-07-29T00:09:00.000Z",
+      }),
+      itemPayload({
+        id: completedRoughId,
+        daily_item_id: completedRoughId,
+        item_template_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        kind: "rough",
+        observed_quantity: null,
+        shortage_count: null,
+        rough_state: "enough",
+        is_checked: false,
+        is_prepared: true,
+        updated_at: completedAt,
+      }),
+      itemPayload({
+        id: currentRoughId,
+        daily_item_id: currentRoughId,
+        item_template_id: "12121212-1212-4212-8212-121212121212",
+        kind: "rough",
+        observed_quantity: null,
+        shortage_count: null,
+        rough_state: "refill",
+        is_checked: false,
+        is_prepared: false,
+        is_deferred: true,
+        updated_at: "2026-07-29T00:09:00.000Z",
+      }),
+    ];
+    const before = await loadSharedDailyDataForDate(
+      clientReturning({
+        status: "success",
+        session: sessionPayload({
+          version: 10,
+          is_prepared: true,
+          prepared_at: completedAt,
+          prepared_by_member_id: familyId,
+          prepared_by_user_id: childId,
+          prepared_by_display_name: "previous",
+        }),
+        items: beforeItems,
+      }),
+      input,
+    );
+    assert.equal(before.status, "success", role);
+    if (before.status !== "success") continue;
+
+    const recheckedSessionPayload = sessionPayload({
+      version: 11,
+      checked_at: recheckedAt,
+      checked_by_member_id: familyId,
+      checked_by_user_id: childId,
+      checked_by_display_name: role,
+      is_prepared: false,
+      prepared_at: null,
+      prepared_by_member_id: null,
+      prepared_by_user_id: null,
+      prepared_by_display_name: null,
+    });
+    const rechecked = await completeDailyCheck(
+      {
+        async rpc() {
+          return {
+            data: {
+              status: "success",
+              changed: true,
+              session: recheckedSessionPayload,
+            },
+            error: null,
+          };
+        },
+      },
+      { familyId, childId, sessionDate, expectedSessionVersion: 10 },
+    );
+    assert.equal(rechecked.status, "success", role);
+
+    const resetItems = beforeItems.map((payload) => {
+      if (
+        payload.daily_item_id === itemId ||
+        payload.daily_item_id === deferredRegularId ||
+        payload.daily_item_id === currentSpotId ||
+        payload.daily_item_id === currentRoughId
+      ) {
+        return {
+          ...payload,
+          is_prepared: false,
+          is_deferred: false,
+          version: Number(payload.version) + 1,
+          updated_at: recheckedAt,
+        };
+      }
+      return payload;
+    });
+
+    for (const loadKind of ["canonical", "reload"] as const) {
+      const loaded = await loadSharedDailyDataForDate(
+        clientReturning({
+          status: "success",
+          session: recheckedSessionPayload,
+          items: resetItems,
+        }),
+        input,
+      );
+      assert.equal(loaded.status, "success", `${role}:${loadKind}`);
+      if (loaded.status !== "success") continue;
+      const applied = applyCheckedSessionToSharedDailyState(
+        before,
+        {
+          familyId,
+          childId,
+          sessionDate,
+          dailySessionId: sessionId,
+          expectedSessionVersion: 10,
+          responseSessionVersion: 11,
+          changed: true,
+          requestScopeKey: "scope",
+          currentScopeKey: "scope",
+          requestScopeGeneration: 1,
+          currentScopeGeneration: 1,
+        },
+        loaded.session,
+      );
+      assert.equal(applied.status, "success", `${role}:${loadKind}`);
+      if (applied.status !== "success") continue;
+      assert.deepEqual(
+        applied.preparationSession.items.map((item) => [
+          item.dailyItemId,
+          item.checked,
+          Boolean(item.later),
+        ]),
+        [
+          [itemId, false, false],
+          [deferredRegularId, false, false],
+          [currentSpotId, false, false],
+          [currentRoughId, false, false],
+        ],
+      );
+      assert.equal(
+        applied.preparationSession.items.some(
+          (item) => item.dailyItemId === completedSpotId,
+        ),
+        false,
+      );
+      assert.equal(
+        applied.preparationSession.items.some(
+          (item) => item.dailyItemId === completedRoughId,
+        ),
+        false,
+      );
+      const carried = applied.session.items.find(
+        (item) => item.dailyItemId === deferredRegularId,
+      );
+      assert.equal(carried?.isCarryover, true);
+      assert.equal(carried?.carriedFromDailyItemId, carryoverSourceId);
+      assert.equal(carried?.carryoverPendingShortageCount, 2);
     }
   }
 });

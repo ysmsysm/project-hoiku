@@ -35,6 +35,10 @@ export function isDailyItemVisibleInPreparation(item: DailyItem): boolean {
     return item.roughState === "refill" || item.isCarryover;
   }
 
+  if (item.kind === "spot") {
+    return !item.isChecked;
+  }
+
   return true;
 }
 

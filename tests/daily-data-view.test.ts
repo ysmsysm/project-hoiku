@@ -96,6 +96,7 @@ test("maps template identity and shared metadata without confusing daily IDs", (
     requiredQuantity: 2,
     shortageCount: null,
     observedQuantity: null,
+    isChecked: false,
     dueDate: "2026-08-01",
     version: 7,
   });
@@ -188,11 +189,13 @@ test("applies spot visibility, count, due date, and source mapping", () => {
     kind: "spot",
     isAdHoc: true,
     requiredQuantity: 2,
+    isChecked: false,
     dueDate: "2026-08-02",
   });
   const zero = dailyItem({
     kind: "spot",
     requiredQuantity: 0,
+    isChecked: false,
   });
   const mapped = mapDailySessionToPreparationSession(
     dailySession([visible, zero]),

@@ -58,7 +58,7 @@ export function getSharedDailyCheckSpotItems(
   return session.items.filter(
     (item) =>
       item.kind === "spot" &&
-      (!session.completedAt || !item.isPrepared || item.isDeferred),
+      !item.isChecked,
   );
 }
 
