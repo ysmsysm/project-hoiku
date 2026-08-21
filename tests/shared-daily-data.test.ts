@@ -852,6 +852,10 @@ test("completed preparation reflects regular, spot, rough and deferred results f
 });
 
 test("rough refill crosses the shared check, preparation, completion and reload path for owner and member", async () => {
+  const regularItemId = "12121212-1212-4212-8212-121212121212";
+  const regularTemplateId = "13131313-1313-4313-8313-131313131313";
+  const spotItemId = "14141414-1414-4414-8414-141414141414";
+  const spotTemplateId = "15151515-1515-4515-8515-151515151515";
   const lowItemId = "66666666-6666-4666-8666-666666666666";
   const lowTemplateId = "77777777-7777-4777-8777-777777777777";
   const enoughItemId = "88888888-8888-4888-8888-888888888888";
@@ -872,6 +876,23 @@ test("rough refill crosses the shared check, preparation, completion and reload 
           checked_by_display_name: null,
         }),
         items: [
+          itemPayload({
+            id: regularItemId,
+            daily_item_id: regularItemId,
+            item_template_id: regularTemplateId,
+            observed_quantity: 3,
+            shortage_count: 0,
+          }),
+          itemPayload({
+            id: spotItemId,
+            daily_item_id: spotItemId,
+            item_template_id: spotTemplateId,
+            kind: "spot",
+            required_quantity: 1,
+            observed_quantity: null,
+            shortage_count: null,
+            is_checked: true,
+          }),
           itemPayload({
             kind: "rough",
             required_quantity: 1,
@@ -948,7 +969,28 @@ test("rough refill crosses the shared check, preparation, completion and reload 
       clientReturning({
         status: "success",
         session: checkedSessionPayload,
-        items: [refillPayload, lowPayload, enoughPayload],
+        items: [
+          itemPayload({
+            id: regularItemId,
+            daily_item_id: regularItemId,
+            item_template_id: regularTemplateId,
+            observed_quantity: 3,
+            shortage_count: 0,
+          }),
+          itemPayload({
+            id: spotItemId,
+            daily_item_id: spotItemId,
+            item_template_id: spotTemplateId,
+            kind: "spot",
+            required_quantity: 1,
+            observed_quantity: null,
+            shortage_count: null,
+            is_checked: true,
+          }),
+          refillPayload,
+          lowPayload,
+          enoughPayload,
+        ],
       }),
       input,
     );
@@ -1058,6 +1100,23 @@ test("rough refill crosses the shared check, preparation, completion and reload 
     assert.equal(completionResult.status, "success", role);
 
     const completedItems = [
+      itemPayload({
+        id: regularItemId,
+        daily_item_id: regularItemId,
+        item_template_id: regularTemplateId,
+        observed_quantity: 3,
+        shortage_count: 0,
+      }),
+      itemPayload({
+        id: spotItemId,
+        daily_item_id: spotItemId,
+        item_template_id: spotTemplateId,
+        kind: "spot",
+        required_quantity: 1,
+        observed_quantity: null,
+        shortage_count: null,
+        is_checked: true,
+      }),
       {
         ...preparedPayload,
         rough_state: "enough",
