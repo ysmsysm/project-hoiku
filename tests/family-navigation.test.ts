@@ -5,6 +5,10 @@ import test from "node:test";
 const homePage = readFileSync("app/page.tsx", "utf8");
 const homeClient = readFileSync("app/HomeClient.tsx", "utf8");
 const familyPage = readFileSync("app/family/page.tsx", "utf8");
+const sharedDailyAction = readFileSync(
+  "app/shared-daily-actions.ts",
+  "utf8",
+);
 const membership = readFileSync(
   "src/lib/family-sharing/membership.ts",
   "utf8",
@@ -64,6 +68,50 @@ test("family page returns to an explicitly requested settings tab", () => {
     /<HomeClient dataSource=\{dataSource\} initialTab=\{initialTab\} \/>/,
   );
   assert.match(homeClient, /useState<AppTab>\(initialTab\)/);
+});
+
+test("settings return renders before shared daily bootstrap and loads it fresh", () => {
+  assert.match(
+    homePage,
+    /\{ deferSharedDailyData: initialTab === "settings" \}/,
+  );
+  assert.match(sharedDailyAction, /^"use server";/);
+  assert.match(
+    sharedDailyAction,
+    /return loadSharedDailyDataForFamily\(input\);/,
+  );
+  assert.match(
+    homeClient,
+    /dataSource\.initialDailyData\.status !== "loading"/,
+  );
+  assert.match(homeClient, /loadHomeSharedDailyData\(\{/);
+  assert.match(
+    homeClient,
+    /sharedDailyStateRef\.current = loaded;\s*setSharedDailyState\(loaded\);/,
+  );
+});
+
+test("shared daily tabs wait for the deferred canonical result", () => {
+  assert.match(
+    homeClient,
+    /if \(pendingTab\) \{\s*pendingSharedDailyTabRef\.current = pendingTab;/,
+  );
+  assert.match(
+    homeClient,
+    /const pendingTab = pendingSharedDailyTabRef\.current;[\s\S]*setActiveTab\(pendingTab\);/,
+  );
+  assert.match(
+    homeClient,
+    /if \(startDeferredSharedDailyLoad\(nextTab\)\) \{\s*return;/,
+  );
+  assert.match(
+    homeClient,
+    /deferredSharedDailyNavigationReadyRef\.current = true;\s*setActiveTab\(pendingTab\);/,
+  );
+  assert.match(
+    homeClient,
+    /<BottomNav activeTab=\{activeTab\} onChange=\{changeActiveTab\} \/>/,
+  );
 });
 
 test("family auth and setup routes remain unchanged", () => {

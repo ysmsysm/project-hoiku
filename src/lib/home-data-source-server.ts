@@ -24,6 +24,10 @@ type HomeDataSourceDependencies = {
   ) => Promise<SharedDailyState>;
 };
 
+type HomeDataSourceOptions = {
+  deferSharedDailyData?: boolean;
+};
+
 const dailyLoadFailure = (sessionDate: string): SharedDailyState => ({
   status: "transport_error",
   sessionDate,
@@ -35,6 +39,7 @@ const dailyLoadFailure = (sessionDate: string): SharedDailyState => ({
 
 export async function getHomeDataSource(
   dependencies: HomeDataSourceDependencies,
+  options: HomeDataSourceOptions = {},
 ): Promise<HomeDataSource> {
   const currentUser = await dependencies.getCurrentUserResult();
 
@@ -87,14 +92,18 @@ export async function getHomeDataSource(
   const sessionDate = dependencies.getJapanDateString();
   let initialDailyData: SharedDailyState;
 
-  try {
-    initialDailyData = await dependencies.loadSharedDailyDataForFamily({
-      familyId: membership.familyId,
-      childId: sharedSettings.data.childId,
-      sessionDate,
-    });
-  } catch {
-    initialDailyData = dailyLoadFailure(sessionDate);
+  if (options.deferSharedDailyData) {
+    initialDailyData = { status: "loading", sessionDate };
+  } else {
+    try {
+      initialDailyData = await dependencies.loadSharedDailyDataForFamily({
+        familyId: membership.familyId,
+        childId: sharedSettings.data.childId,
+        sessionDate,
+      });
+    } catch {
+      initialDailyData = dailyLoadFailure(sessionDate);
+    }
   }
 
   return {

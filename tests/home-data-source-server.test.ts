@@ -186,6 +186,31 @@ test("successful auth with user continues to membership and shared settings", as
   }
 });
 
+test("settings return defers shared daily bootstrap for owner and member", async () => {
+  for (const role of ["owner", "member"] as const) {
+    const { deps, calls } = createDependencies({
+      currentUser: { status: "authenticated", user },
+      membership: membership({ role }),
+    });
+
+    const dataSource = await getHomeDataSource(deps, {
+      deferSharedDailyData: true,
+    });
+
+    assert.equal(dataSource.mode, "shared");
+    assert.equal(calls.membership, 1);
+    assert.equal(calls.sharedSettings, 1);
+    assert.equal(calls.sessionDate, 1);
+    assert.deepEqual(calls.daily, []);
+    if (dataSource.mode === "shared") {
+      assert.deepEqual(dataSource.initialDailyData, {
+        status: "loading",
+        sessionDate,
+      });
+    }
+  }
+});
+
 test("invalid or missing shared member IDs fail closed before shared loading", async () => {
   const missingMemberId = membership();
   Reflect.deleteProperty(missingMemberId, "memberId");

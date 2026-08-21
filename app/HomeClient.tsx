@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -21,6 +22,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import { loadHomeSharedDailyData } from "./shared-daily-actions";
 import { AssigneeBadge } from "../src/components/AssigneeBadge";
 import { BabyHeader } from "../src/components/BabyHeader";
 import { BabyAvatar } from "../src/components/BabyAvatar";
@@ -242,6 +244,10 @@ type SharedSpotMutationRequest = {
   scopeKey: string;
   generation: number;
 };
+type DeferredSharedDailyRequest = {
+  scopeKey: string;
+  promise: Promise<SharedDailyState>;
+};
 
 const itemCategories: CustomItemCategory[] = [
   "持ち物",
@@ -308,6 +314,17 @@ const validateChildName = (value: string) =>
 
 const cardStackClassName = "space-y-5";
 const settingsSectionStackClassName = "space-y-4";
+
+const createDeferredSharedDailyLoadFailure = (
+  sessionDate: string,
+): SharedDailyState => ({
+  status: "transport_error",
+  sessionDate,
+  error: {
+    kind: "rpc_error",
+    message: "Shared daily data deferred load failed",
+  },
+});
 
 const createDefaultRoughStates = (items: CustomizableItem[]) =>
   items.reduce<Record<string, RoughState>>((states, item) => {
@@ -658,6 +675,10 @@ function HomeClientContent({
     useState<SharedDailyState | null>(dailyInitialState.sharedDailyState);
   const sharedDailyStateRef = useRef<SharedDailyState | null>(sharedDailyState);
   sharedDailyStateRef.current = sharedDailyState;
+  const deferredSharedDailyRequestRef =
+    useRef<DeferredSharedDailyRequest | null>(null);
+  const pendingSharedDailyTabRef = useRef<AppTab | null>(null);
+  const deferredSharedDailyNavigationReadyRef = useRef(false);
   const initialSharedDailyKeyRef = useRef<string | null>(
     dailyInitialState.sharedDailyState
       ? getHomeSharedDailyStateSyncKey(dailyInitialState.sharedDailyState)
@@ -750,9 +771,7 @@ function HomeClientContent({
     ? getHomeSharedDailyStateSyncKey(sharedInitialDailyData)
     : null;
   const dailyItemMutationScopeState =
-    sharedInitialDailyData?.status === "success"
-      ? sharedInitialDailyData
-      : null;
+    sharedDailyState?.status === "success" ? sharedDailyState : null;
   const dailyItemMutationScopeKey =
     dataSource.mode === "shared" && dailyItemMutationScopeState
       ? [
@@ -761,16 +780,15 @@ function HomeClientContent({
           dailyItemMutationScopeState.session.childId,
           dailyItemMutationScopeState.session.sessionDate,
           dailyItemMutationScopeState.session.dailySessionId,
-          sharedInitialDailyKey,
         ].join(":")
       : dataSource.mode === "shared"
         ? [
             dataSource.mode,
             dataSource.familyId,
             dataSource.currentMemberId,
-            dataSource.initialDailyData.status,
-            "sessionDate" in dataSource.initialDailyData
-              ? dataSource.initialDailyData.sessionDate
+            sharedDailyState?.status ?? "missing",
+            sharedDailyState && "sessionDate" in sharedDailyState
+              ? sharedDailyState.sessionDate
               : "none",
           ].join(":")
         : dataSource.mode;
@@ -1028,6 +1046,73 @@ function HomeClientContent({
       router.prefetch("/family");
     }
   }, [activeTab, router]);
+
+  const startDeferredSharedDailyLoad = useCallback(
+    (pendingTab: AppTab | null) => {
+      if (
+        dataSource.mode !== "shared" ||
+        dataSource.initialDailyData.status !== "loading" ||
+        deferredSharedDailyNavigationReadyRef.current
+      ) {
+        return false;
+      }
+
+      if (pendingTab) {
+        pendingSharedDailyTabRef.current = pendingTab;
+      }
+
+      const sessionDate = dataSource.initialDailyData.sessionDate;
+      const scopeKey = [
+        dataSource.familyId,
+        dataSource.currentMemberId,
+        dataSource.initialData.childId,
+        sessionDate,
+      ].join(":");
+      const existingRequest = deferredSharedDailyRequestRef.current;
+      if (existingRequest?.scopeKey === scopeKey) {
+        return true;
+      }
+
+      const currentRequest: DeferredSharedDailyRequest = {
+        scopeKey,
+        promise: loadHomeSharedDailyData({
+          familyId: dataSource.familyId,
+          childId: dataSource.initialData.childId,
+          sessionDate,
+        }).catch(() => createDeferredSharedDailyLoadFailure(sessionDate)),
+      };
+      deferredSharedDailyRequestRef.current = currentRequest;
+
+      void currentRequest.promise.then((loaded) => {
+        if (
+          !dailyItemMutationMountedRef.current ||
+          deferredSharedDailyRequestRef.current !== currentRequest
+        ) {
+          return;
+        }
+
+        deferredSharedDailyRequestRef.current = null;
+        sharedDailyStateRef.current = loaded;
+        setSharedDailyState(loaded);
+
+        const pendingTab = pendingSharedDailyTabRef.current;
+        pendingSharedDailyTabRef.current = null;
+        if (pendingTab && pendingTab !== "settings") {
+          deferredSharedDailyNavigationReadyRef.current = true;
+          setActiveTab(pendingTab);
+        }
+      });
+
+      return true;
+    },
+    [dataSource],
+  );
+
+  useEffect(() => {
+    if (activeTab === "settings") {
+      startDeferredSharedDailyLoad(null);
+    }
+  }, [activeTab, startDeferredSharedDailyLoad]);
 
   useEffect(() => {
     if (!sharedInitialData) {
@@ -1570,18 +1655,14 @@ function HomeClientContent({
     isSharedSessionMutationPending;
   const hasCurrentSharedCompleteCheckScope =
     dataSource.mode === "shared" &&
-    dataSource.initialDailyData.status === "success" &&
     sharedDailyState?.status === "success" &&
     dataSource.familyId.toLowerCase() ===
       sharedDailyState.session.familyId.toLowerCase() &&
-    dataSource.initialDailyData.session.familyId.toLowerCase() ===
-      sharedDailyState.session.familyId.toLowerCase() &&
-    dataSource.initialDailyData.session.childId.toLowerCase() ===
+    dataSource.initialData.childId.toLowerCase() ===
       sharedDailyState.session.childId.toLowerCase() &&
-    dataSource.initialDailyData.session.sessionDate ===
-      sharedDailyState.session.sessionDate &&
-    dataSource.initialDailyData.session.dailySessionId.toLowerCase() ===
-      sharedDailyState.session.dailySessionId.toLowerCase();
+    "sessionDate" in dataSource.initialDailyData &&
+    dataSource.initialDailyData.sessionDate ===
+      sharedDailyState.session.sessionDate;
   const canRunSharedCompleteCheck =
     dailyMode === "shared-success" &&
     canRunCompleteCheckMutation &&
@@ -1619,29 +1700,38 @@ function HomeClientContent({
     appRepository.savePreparationSession(nextSession);
   };
 
+  const changeActiveTab = (nextTab: AppTab) => {
+    if (nextTab === "settings") {
+      pendingSharedDailyTabRef.current = null;
+      setActiveTab(nextTab);
+      return;
+    }
+
+    if (startDeferredSharedDailyLoad(nextTab)) {
+      return;
+    }
+
+    setActiveTab(nextTab);
+  };
+
   const getCurrentSharedDailySession = () => {
     const currentSharedDailyState = sharedDailyStateRef.current;
     if (
       dailyMode !== "shared-success" ||
       dataSource.mode !== "shared" ||
-      dataSource.initialDailyData.status !== "success" ||
       currentSharedDailyState?.status !== "success"
     ) {
       return null;
     }
 
-    const initialSession = dataSource.initialDailyData.session;
     if (
       dataSource.familyId.toLowerCase() !==
         currentSharedDailyState.session.familyId.toLowerCase() ||
-      initialSession.familyId.toLowerCase() !==
-        currentSharedDailyState.session.familyId.toLowerCase() ||
-      initialSession.childId.toLowerCase() !==
+      dataSource.initialData.childId.toLowerCase() !==
         currentSharedDailyState.session.childId.toLowerCase() ||
-      initialSession.sessionDate !==
-        currentSharedDailyState.session.sessionDate ||
-      initialSession.dailySessionId.toLowerCase() !==
-        currentSharedDailyState.session.dailySessionId.toLowerCase()
+      !("sessionDate" in dataSource.initialDailyData) ||
+      dataSource.initialDailyData.sessionDate !==
+        currentSharedDailyState.session.sessionDate
     ) {
       return null;
     }
@@ -3851,7 +3941,7 @@ function HomeClientContent({
       }
     } else if (
       currentSharedState?.status === "not_found" &&
-      dataSource.initialDailyData.status === "not_found" &&
+      "sessionDate" in dataSource.initialDailyData &&
       currentSharedState.sessionDate === dataSource.initialDailyData.sessionDate
     ) {
       sessionDate = currentSharedState.sessionDate;
@@ -6092,7 +6182,7 @@ function HomeClientContent({
         </div>
       ) : null}
 
-      <BottomNav activeTab={activeTab} onChange={setActiveTab} />
+      <BottomNav activeTab={activeTab} onChange={changeActiveTab} />
 
       {isTodayOnlySheetOpen ? (
         <div className="fixed inset-0 z-40">

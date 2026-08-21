@@ -15,13 +15,16 @@ type HomeProps = {
 export default async function Home({ searchParams }: HomeProps) {
   const params = await searchParams;
   const initialTab = params.tab === "settings" ? "settings" : "check";
-  const dataSource = await getHomeDataSource({
-    getCurrentUserResult,
-    getCurrentFamilyMembership,
-    loadSharedSettingsForFamily,
-    getJapanDateString,
-    loadSharedDailyDataForFamily,
-  });
+  const dataSource = await getHomeDataSource(
+    {
+      getCurrentUserResult,
+      getCurrentFamilyMembership,
+      loadSharedSettingsForFamily,
+      getJapanDateString,
+      loadSharedDailyDataForFamily,
+    },
+    { deferSharedDailyData: initialTab === "settings" },
+  );
 
   return <HomeClient dataSource={dataSource} initialTab={initialTab} />;
 }
