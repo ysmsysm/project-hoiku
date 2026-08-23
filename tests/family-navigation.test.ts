@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const homePage = readFileSync("app/page.tsx", "utf8");
+const homeLoading = readFileSync("app/loading.tsx", "utf8");
 const homeClient = readFileSync("app/HomeClient.tsx", "utf8");
 const familyPage = readFileSync("app/family/page.tsx", "utf8");
 const sharedDailyAction = readFileSync(
@@ -100,6 +101,15 @@ test("home first paint does not wait for shared daily bootstrap", () => {
     homePage,
     /Promise\.all\(\[\s*searchParams,[\s\S]*\{ deferSharedDailyData: true \}/,
   );
+  assert.match(homeLoading, /aria-busy="true"/);
+  assert.match(homeLoading, /bg-\[#FFFBF2\]/);
+  assert.match(homeLoading, /pointer-events-none/);
+  assert.match(homeLoading, /今日の持ち物を確認しています/);
+  assert.match(homeLoading, /\{ label: "確認"/);
+  assert.match(homeLoading, /\{ label: "準備"/);
+  assert.match(homeLoading, />\s*持ち物\s*<\/span>/);
+  assert.match(homeLoading, /fixed inset-x-0 bottom-0/);
+  assert.match(homeLoading, /\["確認", "持ち物", "設定"\]/);
   assert.match(sharedDailyAction, /^"use server";/);
   assert.match(
     sharedDailyAction,
