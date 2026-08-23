@@ -95,10 +95,10 @@ test("settings return is one-shot so a later local or shared reload defaults to 
   assert.match(homePage, /params\.tab === "settings" \? "settings" : "check"/);
 });
 
-test("settings return renders before shared daily bootstrap and loads it fresh", () => {
+test("home first paint does not wait for shared daily bootstrap", () => {
   assert.match(
     homePage,
-    /\{ deferSharedDailyData: initialTab === "settings" \}/,
+    /Promise\.all\(\[\s*searchParams,[\s\S]*\{ deferSharedDailyData: true \}/,
   );
   assert.match(sharedDailyAction, /^"use server";/);
   assert.match(
@@ -113,6 +113,10 @@ test("settings return renders before shared daily bootstrap and loads it fresh",
   assert.match(
     homeClient,
     /sharedDailyStateRef\.current = loaded;\s*setSharedDailyState\(loaded\);/,
+  );
+  assert.match(
+    homeClient,
+    /useEffect\(\(\) => \{\s*startDeferredSharedDailyLoad\(null\);\s*\}, \[startDeferredSharedDailyLoad\]\);/,
   );
 });
 

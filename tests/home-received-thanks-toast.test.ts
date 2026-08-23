@@ -29,7 +29,10 @@ test("notification consume cannot remove the persistent shared thanks action", (
     /receivedThanksToast|receivedThanksConsume|shouldDisplay|consumed/,
   );
   assert.match(source, /"✓ ありがとう済み"/);
-  assert.match(source, /"✓ ありがとうが届きました"/);
+  assert.match(
+    source,
+    /<span className="whitespace-nowrap">✓ ありがとうが<\/span>\s*<span className="whitespace-nowrap">　届きました<\/span>/,
+  );
 });
 
 test("Home displays only a current successful first consume", () => {
@@ -45,8 +48,9 @@ test("Home displays only a current successful first consume", () => {
 });
 
 test("received thanks toast is centered, non-blocking and fades after about two seconds", () => {
+  const toastSource = source.slice(source.indexOf("{receivedThanksToast ?"));
   assert.match(source, /pointer-events-none fixed inset-x-0 top-1\/2/);
-  assert.match(source, /ありがとうが届きました/);
+  assert.match(toastSource, /<span>ありがとうが届きました<\/span>/);
   assert.match(source, /w-full max-w-\[310px\]/);
   assert.match(source, /px-6 py-4 text-button/);
   assert.match(source, /<Heart size=\{18\}/);

@@ -1147,10 +1147,8 @@ function HomeClientContent({
   );
 
   useEffect(() => {
-    if (activeTab === "settings") {
-      startDeferredSharedDailyLoad(null);
-    }
-  }, [activeTab, startDeferredSharedDailyLoad]);
+    startDeferredSharedDailyLoad(null);
+  }, [startDeferredSharedDailyLoad]);
 
   useEffect(() => {
     if (!sharedInitialData) {
@@ -5845,7 +5843,12 @@ function HomeClientContent({
               >
                 {session.thanksSent
                   ? sharedThanksDisplay === "received"
-                    ? "✓ ありがとうが届きました"
+                    ? (
+                        <span className="flex flex-col items-start leading-tight">
+                          <span className="whitespace-nowrap">✓ ありがとうが</span>
+                          <span className="whitespace-nowrap">　届きました</span>
+                        </span>
+                      )
                     : "✓ ありがとう済み"
                   : isSendThanksPending
                     ? "送信中…"

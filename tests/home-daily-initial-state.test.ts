@@ -1469,7 +1469,10 @@ test("thanks UI separates canonical action display from notification receipt sta
   assert.match(homeClientSource, /isSharedSessionMutationPending/);
   assert.match(homeClientSource, /aria-busy=\{isSendThanksPending \|\| undefined\}/);
   assert.match(homeClientSource, /"✓ ありがとう済み"/);
-  assert.match(homeClientSource, /"✓ ありがとうが届きました"/);
+  assert.match(
+    homeClientSource,
+    /<span className="whitespace-nowrap">✓ ありがとうが<\/span>\s*<span className="whitespace-nowrap">　届きました<\/span>/,
+  );
   assert.match(homeClientSource, /"♡ ありがとう"/);
   assert.match(homeClientSource, /"送信中…"/);
 });
