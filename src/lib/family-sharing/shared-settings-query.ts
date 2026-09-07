@@ -36,48 +36,49 @@ export async function loadSharedSettingsWithClient(
   supabase: SupabaseClient,
   familyId: string,
 ): Promise<SharedSettingsLoadResult> {
-  const childrenResult = await supabase
-    .from("children")
-    .select("id, family_id, name, icon_type, icon_id, icon_url")
-    .eq("family_id", familyId)
-    .order("sort_order", { ascending: true })
-    .order("id", { ascending: true });
+  const [childrenResult, itemTemplatesResult, weekdaysResult] =
+    await Promise.all([
+      supabase
+        .from("children")
+        .select("id, family_id, name, icon_type, icon_id, icon_url")
+        .eq("family_id", familyId)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true }),
+      supabase
+        .from("item_templates")
+        .select(
+          [
+            "id",
+            "family_id",
+            "child_id",
+            "kind",
+            "name",
+            "default_quantity",
+            "unit",
+            "sort_order",
+            "current_rough_state",
+            "updated_at",
+          ].join(", "),
+        )
+        .eq("family_id", familyId)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true }),
+      supabase
+        .from("item_template_weekdays")
+        .select("item_template_id, family_id, weekday")
+        .eq("family_id", familyId)
+        .order("item_template_id", { ascending: true })
+        .order("weekday", { ascending: true }),
+    ]);
 
   if (childrenResult.error) {
     return queryFailed("children", childrenResult.error.message);
   }
 
-  const itemTemplatesResult = await supabase
-    .from("item_templates")
-    .select(
-      [
-        "id",
-        "family_id",
-        "child_id",
-        "kind",
-        "name",
-        "default_quantity",
-        "unit",
-        "sort_order",
-        "current_rough_state",
-        "updated_at",
-      ].join(", "),
-    )
-    .eq("family_id", familyId)
-    .eq("is_active", true)
-    .order("sort_order", { ascending: true })
-    .order("id", { ascending: true });
-
   if (itemTemplatesResult.error) {
     return queryFailed("item_templates", itemTemplatesResult.error.message);
   }
-
-  const weekdaysResult = await supabase
-    .from("item_template_weekdays")
-    .select("item_template_id, family_id, weekday")
-    .eq("family_id", familyId)
-    .order("item_template_id", { ascending: true })
-    .order("weekday", { ascending: true });
 
   if (weekdaysResult.error) {
     return queryFailed("item_template_weekdays", weekdaysResult.error.message);

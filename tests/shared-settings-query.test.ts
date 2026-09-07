@@ -110,6 +110,66 @@ test("loads only active templates and filters weekdays before mapping", async ()
   }
 });
 
+test("starts independent shared settings queries in parallel", async () => {
+  const started: string[] = [];
+  const resolvers = new Map<
+    string,
+    (value: { data: unknown[]; error: null }) => void
+  >();
+  const client = {
+    from(table: string) {
+      const query = {
+        select() {
+          return this;
+        },
+        eq() {
+          return this;
+        },
+        order() {
+          return this;
+        },
+        then(
+          onFulfilled: (value: { data: unknown[]; error: null }) => unknown,
+          onRejected?: (reason: unknown) => unknown,
+        ) {
+          started.push(table);
+          return new Promise<{ data: unknown[]; error: null }>((resolve) => {
+            resolvers.set(table, resolve);
+          }).then(onFulfilled, onRejected);
+        },
+      };
+      return query;
+    },
+  } as unknown as SupabaseClient;
+
+  const loading = loadSharedSettingsWithClient(client, familyId);
+  await Promise.resolve();
+
+  assert.deepEqual(started, [
+    "children",
+    "item_templates",
+    "item_template_weekdays",
+  ]);
+
+  resolvers.get("children")?.({
+    data: [
+      {
+        id: childId,
+        family_id: familyId,
+        name: "Sota",
+        icon_type: "default",
+        icon_id: "default-baby",
+        icon_url: null,
+      },
+    ],
+    error: null,
+  });
+  resolvers.get("item_templates")?.({ data: [], error: null });
+  resolvers.get("item_template_weekdays")?.({ data: [], error: null });
+
+  assert.equal((await loading).ok, true);
+});
+
 function createSharedSettingsMockClient(
   calls: unknown[],
   rows: Record<string, unknown[]>,
