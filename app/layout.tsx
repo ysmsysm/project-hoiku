@@ -1,6 +1,19 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
+const appleStartupImages = [
+  [440, 956, 3, 1320, 2868],
+  [430, 932, 3, 1290, 2796],
+  [428, 926, 3, 1284, 2778],
+  [414, 896, 3, 1242, 2688],
+  [402, 874, 3, 1206, 2622],
+  [393, 852, 3, 1179, 2556],
+  [390, 844, 3, 1170, 2532],
+  [375, 812, 3, 1125, 2436],
+  [414, 896, 2, 828, 1792],
+  [375, 667, 2, 750, 1334],
+] as const;
+
 export const metadata: Metadata = {
   applicationName: "こどもロッカー",
   title: "こどもロッカー",
@@ -49,8 +62,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja">
-      <body>{children}</body>
+    <html lang="ja" style={{ backgroundColor: "#FFFBF2" }}>
+      <head>
+        {appleStartupImages.map(
+          ([deviceWidth, deviceHeight, pixelRatio, imageWidth, imageHeight]) => (
+            <link
+              key={`${deviceWidth}x${deviceHeight}@${pixelRatio}`}
+              rel="apple-touch-startup-image"
+              href={`/icons/startup/iphone-${imageWidth}x${imageHeight}.png`}
+              media={`(device-width: ${deviceWidth}px) and (device-height: ${deviceHeight}px) and (-webkit-device-pixel-ratio: ${pixelRatio}) and (orientation: portrait)`}
+            />
+          ),
+        )}
+      </head>
+      <body style={{ backgroundColor: "#FFFBF2" }}>{children}</body>
     </html>
   );
 }
