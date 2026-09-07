@@ -1,5 +1,5 @@
 import type { User } from "@supabase/supabase-js";
-import type { CurrentUserResult } from "./auth/session";
+import type { CurrentUserIdentityResult } from "./auth/session";
 import type { SharedSettingsLoadResult } from "./family-sharing/shared-settings-server";
 import type { CurrentFamilyMembership } from "../types/family";
 import type { LoadDailyDataInput } from "../types/daily";
@@ -11,9 +11,9 @@ import {
 } from "./home-data-source";
 
 type HomeDataSourceDependencies = {
-  getCurrentUserResult: () => Promise<CurrentUserResult>;
+  getCurrentUserIdentityResult: () => Promise<CurrentUserIdentityResult>;
   getCurrentFamilyMembership: (
-    user: User,
+    user: Pick<User, "id">,
   ) => Promise<CurrentFamilyMembership | null>;
   loadSharedSettingsForFamily: (
     familyId: string,
@@ -41,7 +41,7 @@ export async function getHomeDataSource(
   dependencies: HomeDataSourceDependencies,
   options: HomeDataSourceOptions = {},
 ): Promise<HomeDataSource> {
-  const currentUser = await dependencies.getCurrentUserResult();
+  const currentUser = await dependencies.getCurrentUserIdentityResult();
 
   if (currentUser.status === "error") {
     return {

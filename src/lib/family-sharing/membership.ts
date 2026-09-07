@@ -25,7 +25,7 @@ export function getOwnerDisplayName(user: User) {
 }
 
 export async function getCurrentFamilyMembership(
-  user: User,
+  user: Pick<User, "id">,
 ): Promise<CurrentFamilyMembership | null> {
   const supabase = await createClient();
   const { data, error } = await supabase

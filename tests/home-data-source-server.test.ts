@@ -4,7 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { getHomeDataSource } from "../src/lib/home-data-source-server";
 import {
   isAuthSessionMissingError,
-  type CurrentUserResult,
+  type CurrentUserIdentityResult,
 } from "../src/lib/auth/session";
 import type { SharedSettingsAppData } from "../src/lib/family-sharing/shared-settings";
 import type { SharedSettingsLoadResult } from "../src/lib/family-sharing/shared-settings-query";
@@ -96,7 +96,7 @@ function membership(
 }
 
 function createDependencies(input: {
-  currentUser: CurrentUserResult;
+  currentUser: CurrentUserIdentityResult;
   membership?: CurrentFamilyMembership | null;
   membershipError?: Error;
   sharedSettings?: SharedSettingsLoadResult;
@@ -114,7 +114,7 @@ function createDependencies(input: {
   return {
     calls,
     deps: {
-      getCurrentUserResult: async () => input.currentUser,
+      getCurrentUserIdentityResult: async () => input.currentUser,
       getCurrentFamilyMembership: async () => {
         calls.membership += 1;
         if (input.membershipError) {
@@ -481,15 +481,21 @@ test("sharing not started stays local and never resolves a daily date", async ()
 test("every local boundary skips the shared daily server bootstrap", async () => {
   for (const currentCase of [
     {
-      currentUser: { status: "unauthenticated" } as CurrentUserResult,
+      currentUser: { status: "unauthenticated" } as CurrentUserIdentityResult,
       currentMembership: undefined,
     },
     {
-      currentUser: { status: "authenticated", user } as CurrentUserResult,
+      currentUser: {
+        status: "authenticated",
+        user,
+      } as CurrentUserIdentityResult,
       currentMembership: null,
     },
     {
-      currentUser: { status: "authenticated", user } as CurrentUserResult,
+      currentUser: {
+        status: "authenticated",
+        user,
+      } as CurrentUserIdentityResult,
       currentMembership: membership({
         isSharingStarted: false,
         sharingStartedAt: null,

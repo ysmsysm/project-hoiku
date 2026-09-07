@@ -1,5 +1,5 @@
 import HomeClient from "./HomeClient";
-import { getCurrentUserResult } from "../src/lib/auth/session";
+import { getCurrentUserIdentityResult } from "../src/lib/auth/session";
 import { getCurrentFamilyMembership } from "../src/lib/family-sharing/membership";
 import { loadSharedSettingsForFamily } from "../src/lib/family-sharing/shared-settings-server";
 import { loadSharedDailyDataForFamily } from "../src/lib/family-sharing/shared-daily-data-server";
@@ -17,7 +17,7 @@ export default async function Home({ searchParams }: HomeProps) {
     searchParams,
     getHomeDataSource(
       {
-        getCurrentUserResult,
+        getCurrentUserIdentityResult,
         getCurrentFamilyMembership,
         loadSharedSettingsForFamily,
         getJapanDateString,

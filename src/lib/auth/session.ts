@@ -1,8 +1,13 @@
-import type { Session, User } from "@supabase/supabase-js";
+import type { Session, SupabaseClient, User } from "@supabase/supabase-js";
 import { createClient } from "../supabase/server";
 
 export type CurrentUserResult =
   | { status: "authenticated"; user: User }
+  | { status: "unauthenticated" }
+  | { status: "error"; error: unknown };
+
+export type CurrentUserIdentityResult =
+  | { status: "authenticated"; user: Pick<User, "id"> }
   | { status: "unauthenticated" }
   | { status: "error"; error: unknown };
 
@@ -45,6 +50,44 @@ export async function getCurrentUserResult(): Promise<CurrentUserResult> {
   }
 
   return { status: "authenticated", user };
+}
+
+export async function getCurrentUserIdentityResult(): Promise<
+  CurrentUserIdentityResult
+> {
+  const supabase = await createClient();
+  return getCurrentUserIdentityResultWithClient(supabase);
+}
+
+export async function getCurrentUserIdentityResultWithClient(
+  supabase: Pick<SupabaseClient, "auth">,
+): Promise<CurrentUserIdentityResult> {
+  let claimsResult;
+
+  try {
+    claimsResult = await supabase.auth.getClaims();
+  } catch (error) {
+    logCurrentUserError(error);
+    return { status: "error", error };
+  }
+
+  const { data, error } = claimsResult;
+
+  if (error) {
+    if (isAuthSessionMissingError(error)) {
+      return { status: "unauthenticated" };
+    }
+
+    logCurrentUserError(error);
+    return { status: "error", error };
+  }
+
+  const userId = data?.claims.sub;
+  if (typeof userId !== "string" || userId.length === 0) {
+    return { status: "unauthenticated" };
+  }
+
+  return { status: "authenticated", user: { id: userId } };
 }
 
 export async function getCurrentUser(): Promise<User | null> {
