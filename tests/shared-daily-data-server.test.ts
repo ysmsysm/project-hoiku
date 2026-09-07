@@ -23,6 +23,9 @@ writeFileSync(join(serverOnlyStubDirectory, "index.js"), "module.exports = {};\n
 let loadSharedDailyDataForFamilyWithDependencies: typeof import(
   "../src/lib/family-sharing/shared-daily-data-server"
 )["loadSharedDailyDataForFamilyWithDependencies"];
+let resolveActiveSharedDailySessionDateWithClient: typeof import(
+  "../src/lib/family-sharing/shared-daily-data-server"
+)["resolveActiveSharedDailySessionDateWithClient"];
 
 before(async () => {
   const serverModule = await import(
@@ -30,6 +33,8 @@ before(async () => {
   );
   loadSharedDailyDataForFamilyWithDependencies =
     serverModule.loadSharedDailyDataForFamilyWithDependencies;
+  resolveActiveSharedDailySessionDateWithClient =
+    serverModule.resolveActiveSharedDailySessionDateWithClient;
 });
 
 const familyId = "11111111-1111-4111-8111-111111111111";
@@ -277,6 +282,191 @@ test("runs ensure, carryover, and canonical load in order with one client and sc
       value: { client: orderedClient, input },
     },
   ]);
+});
+
+test("continues the latest checked and unprepared session across midnight", async () => {
+  const previousSessionDate = "2026-07-31";
+  const calls: Array<{ name: string; value: unknown }> = [];
+  const continuingClient: SharedDailyServerClient = {
+    resolveActiveSessionDate: async (receivedInput) => {
+      calls.push({ name: "resolve_active_session", value: receivedInput });
+      return previousSessionDate;
+    },
+    async rpc(functionName, args) {
+      calls.push({ name: functionName, value: args });
+      if (functionName === "ensure_daily_session") {
+        return {
+          ...ensureSuccessResponse(),
+          data: {
+            ...ensureSuccessResponse().data,
+            session: {
+              ...ensureSuccessResponse().data.session,
+              session_date: previousSessionDate,
+            },
+          },
+        };
+      }
+      if (functionName === "process_daily_carryovers") {
+        return carryoverSuccessResponse();
+      }
+      throw new Error("load_daily_data is owned by the injected loader");
+    },
+  };
+
+  const result = await loadSharedDailyDataForFamilyWithDependencies(input, {
+    createClient: async () => continuingClient,
+    loadDailyDataForDate: async (_client, receivedInput) => {
+      calls.push({ name: "load_daily_data", value: receivedInput });
+      return { status: "not_found", sessionDate: receivedInput.sessionDate };
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "not_found",
+    sessionDate: previousSessionDate,
+  });
+  assert.deepEqual(calls, [
+    { name: "resolve_active_session", value: input },
+    {
+      name: "ensure_daily_session",
+      value: {
+        p_family_id: familyId,
+        p_child_id: childId,
+        p_session_date: previousSessionDate,
+      },
+    },
+    {
+      name: "process_daily_carryovers",
+      value: {
+        p_family_id: familyId,
+        p_child_id: childId,
+        p_to_session_date: previousSessionDate,
+      },
+    },
+    {
+      name: "load_daily_data",
+      value: { ...input, sessionDate: previousSessionDate },
+    },
+  ]);
+});
+
+test("active session lookup selects only the latest checked and unprepared date", async () => {
+  const calls: unknown[][] = [];
+  const previousSessionDate = "2026-07-31";
+  const query = {
+    select(columns: string) {
+      calls.push(["select", columns]);
+      return this;
+    },
+    eq(column: string, value: unknown) {
+      calls.push(["eq", column, value]);
+      return this;
+    },
+    not(column: string, operator: string, value: unknown) {
+      calls.push(["not", column, operator, value]);
+      return this;
+    },
+    is(column: string, value: unknown) {
+      calls.push(["is", column, value]);
+      return this;
+    },
+    lte(column: string, value: unknown) {
+      calls.push(["lte", column, value]);
+      return this;
+    },
+    order(column: string, options: unknown) {
+      calls.push(["order", column, options]);
+      return this;
+    },
+    limit(value: number) {
+      calls.push(["limit", value]);
+      return this;
+    },
+    async maybeSingle() {
+      calls.push(["maybeSingle"]);
+      return { data: { session_date: previousSessionDate }, error: null };
+    },
+  };
+  const queryClient = {
+    from(table: string) {
+      calls.push(["from", table]);
+      return query;
+    },
+  };
+
+  assert.equal(
+    await resolveActiveSharedDailySessionDateWithClient(
+      queryClient as never,
+      input,
+    ),
+    previousSessionDate,
+  );
+  assert.deepEqual(calls, [
+    ["from", "daily_sessions"],
+    ["select", "session_date"],
+    ["eq", "family_id", familyId],
+    ["eq", "child_id", childId],
+    ["not", "checked_at", "is", null],
+    ["is", "prepared_at", null],
+    ["lte", "session_date", sessionDate],
+    ["order", "session_date", { ascending: false }],
+    ["limit", 1],
+    ["maybeSingle"],
+  ]);
+});
+
+test("active session lookup uses today when no unfinished cycle exists", async () => {
+  const query = {
+    select() { return this; },
+    eq() { return this; },
+    not() { return this; },
+    is() { return this; },
+    lte() { return this; },
+    order() { return this; },
+    limit() { return this; },
+    async maybeSingle() { return { data: null, error: null }; },
+  };
+  const queryClient = { from: () => query };
+
+  assert.equal(
+    await resolveActiveSharedDailySessionDateWithClient(
+      queryClient as never,
+      input,
+    ),
+    sessionDate,
+  );
+});
+
+test("active session lookup failure stays a shared transport failure", async () => {
+  let rpcCalls = 0;
+  let loaderCalls = 0;
+  const result = await loadSharedDailyDataForFamilyWithDependencies(input, {
+    createClient: async () => ({
+      resolveActiveSessionDate: async () => {
+        throw new Error("raw active lookup failure");
+      },
+      async rpc() {
+        rpcCalls += 1;
+        return ensureSuccessResponse();
+      },
+    }),
+    loadDailyDataForDate: async () => {
+      loaderCalls += 1;
+      return { status: "not_found", sessionDate };
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "transport_error",
+    sessionDate,
+    error: {
+      kind: "rpc_error",
+      message: "Shared daily data server load failed",
+    },
+  });
+  assert.equal(rpcCalls, 0);
+  assert.equal(loaderCalls, 0);
+  assert.doesNotMatch(JSON.stringify(result), /raw active lookup failure/);
 });
 
 test("active and completed sessions reach canonical load for owner and member", async () => {

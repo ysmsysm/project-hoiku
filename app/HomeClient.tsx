@@ -1820,9 +1820,7 @@ function HomeClientContent({
       sharedDailyState.session.familyId.toLowerCase() &&
     dataSource.initialData.childId.toLowerCase() ===
       sharedDailyState.session.childId.toLowerCase() &&
-    "sessionDate" in dataSource.initialDailyData &&
-    dataSource.initialDailyData.sessionDate ===
-      sharedDailyState.session.sessionDate;
+    sharedDailyState.sessionDate === sharedDailyState.session.sessionDate;
   const canRunSharedCompleteCheck =
     dailyMode === "shared-success" &&
     canRunCompleteCheckMutation &&
@@ -1889,8 +1887,7 @@ function HomeClientContent({
         currentSharedDailyState.session.familyId.toLowerCase() ||
       dataSource.initialData.childId.toLowerCase() !==
         currentSharedDailyState.session.childId.toLowerCase() ||
-      !("sessionDate" in dataSource.initialDailyData) ||
-      dataSource.initialDailyData.sessionDate !==
+      currentSharedDailyState.sessionDate !==
         currentSharedDailyState.session.sessionDate
     ) {
       return null;
@@ -4100,9 +4097,7 @@ function HomeClientContent({
         dailyItemVersion = target.expectedDailyItemVersion;
       }
     } else if (
-      currentSharedState?.status === "not_found" &&
-      "sessionDate" in dataSource.initialDailyData &&
-      currentSharedState.sessionDate === dataSource.initialDailyData.sessionDate
+      currentSharedState?.status === "not_found"
     ) {
       sessionDate = currentSharedState.sessionDate;
     } else {

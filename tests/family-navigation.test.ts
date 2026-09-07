@@ -153,6 +153,21 @@ test("shared daily tabs wait for the deferred canonical result", () => {
   );
 });
 
+test("shared daily mutations accept a server-resolved active session date", () => {
+  assert.match(
+    homeClient,
+    /sharedDailyState\.sessionDate === sharedDailyState\.session\.sessionDate/,
+  );
+  assert.match(
+    homeClient,
+    /currentSharedDailyState\.sessionDate !==\s*currentSharedDailyState\.session\.sessionDate/,
+  );
+  assert.doesNotMatch(
+    homeClient,
+    /dataSource\.initialDailyData\.sessionDate !==\s*currentSharedDailyState\.session\.sessionDate/,
+  );
+});
+
 test("family auth and setup routes remain unchanged", () => {
   assert.match(familyPage, /redirect\("\/family\/auth\?next=\/family"\)/);
   assert.match(familyPage, /membership \? \(/);

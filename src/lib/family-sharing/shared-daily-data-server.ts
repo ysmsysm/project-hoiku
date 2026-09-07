@@ -1,9 +1,11 @@
 import "server-only";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DailyDataClient, LoadDailyDataInput } from "../../types/daily";
 import type { SharedDailyState } from "../../types/shared-daily";
 import { createClient } from "../supabase/server";
 import {
+  isDailyDataIsoDate,
   isDailyDataUuid,
   isPostgresInteger,
   normalizeDailyDataUuid,
@@ -24,6 +26,7 @@ export type SharedDailyServerClient = {
           p_to_session_date: string;
         },
   ) => ReturnType<DailyDataClient["rpc"]>;
+  resolveActiveSessionDate?: (input: LoadDailyDataInput) => Promise<string>;
 };
 
 export type SharedDailyDataServerDependencies = {
@@ -208,23 +211,65 @@ export async function loadSharedDailyDataForFamilyWithDependencies(
 ): Promise<SharedDailyState> {
   try {
     const client = await dependencies.createClient();
-    const ensureFailure = await ensureDailySession(client, input);
+    const activeSessionDate = client.resolveActiveSessionDate
+      ? await client.resolveActiveSessionDate(input)
+      : input.sessionDate;
+    const activeInput =
+      activeSessionDate === input.sessionDate
+        ? input
+        : { ...input, sessionDate: activeSessionDate };
+    const ensureFailure = await ensureDailySession(client, activeInput);
     if (ensureFailure) {
       return ensureFailure;
     }
 
-    const carryoverFailure = await processDailyCarryovers(client, input);
+    const carryoverFailure = await processDailyCarryovers(client, activeInput);
     if (carryoverFailure) {
       return carryoverFailure;
     }
 
-    const loaded = await dependencies.loadDailyDataForDate(client, input);
+    const loaded = await dependencies.loadDailyDataForDate(client, activeInput);
     return loaded.status === "transport_error"
-      ? serverLoadFailure(input.sessionDate)
+      ? serverLoadFailure(activeInput.sessionDate)
       : loaded;
   } catch {
     return serverLoadFailure(input.sessionDate);
   }
+}
+
+export async function resolveActiveSharedDailySessionDateWithClient(
+  supabase: Pick<SupabaseClient, "from">,
+  input: LoadDailyDataInput,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("daily_sessions")
+    .select("session_date")
+    .eq("family_id", input.familyId)
+    .eq("child_id", input.childId)
+    .not("checked_at", "is", null)
+    .is("prepared_at", null)
+    .lte("session_date", input.sessionDate)
+    .order("session_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error("Active shared daily session lookup failed");
+  }
+
+  if (!data) {
+    return input.sessionDate;
+  }
+
+  const activeSessionDate = (data as { session_date?: unknown }).session_date;
+  if (
+    !isDailyDataIsoDate(activeSessionDate) ||
+    activeSessionDate > input.sessionDate
+  ) {
+    throw new Error("Invalid active shared daily session date");
+  }
+
+  return activeSessionDate;
 }
 
 async function createDailyDataServerClient(): Promise<SharedDailyServerClient> {
@@ -233,6 +278,9 @@ async function createDailyDataServerClient(): Promise<SharedDailyServerClient> {
   return {
     rpc(functionName, args) {
       return supabase.rpc(functionName, args);
+    },
+    resolveActiveSessionDate(input) {
+      return resolveActiveSharedDailySessionDateWithClient(supabase, input);
     },
   };
 }
