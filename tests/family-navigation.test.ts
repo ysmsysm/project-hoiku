@@ -136,7 +136,7 @@ test("home first paint does not wait for shared daily bootstrap", () => {
   assert.match(homeLoading, /今日の持ち物を確認しています/);
   assert.match(homeLoading, /\{ label: "確認"/);
   assert.match(homeLoading, /\{ label: "準備"/);
-  assert.match(homeLoading, /\{preview \? "持ち物設定" : "持ち物"\}/);
+  assert.match(homeLoading, /data-shared-preview-title/);
   assert.match(homeLoading, /fixed inset-x-0 bottom-0/);
   assert.match(homeLoading, /\["確認", "持ち物", "設定"\]/);
   assert.match(sharedDailyAction, /^"use server";/);
@@ -160,9 +160,18 @@ test("home first paint does not wait for shared daily bootstrap", () => {
 });
 
 test("home loading previews static shared settings without cached daily state", () => {
-  assert.match(homeLoading, /loadSharedSettingsPreview\(\)/);
-  assert.match(homeLoading, /preview\.childName/);
-  assert.match(homeLoading, /preview\?\.items\.slice/);
+  assert.doesNotMatch(homeLoading, /^"use client";|useEffect|useState/);
+  assert.match(
+    homeLoading,
+    /window\.localStorage\.getItem\([\s\S]*data-shared-preview-root/,
+  );
+  assert.match(homeLoading, /name\.textContent = value\.childName/);
+  assert.match(homeLoading, /value\.items\.slice\(0, 6\)/);
+  assert.match(homeLoading, /dangerouslySetInnerHTML/);
+  assert.ok(
+    homeLoading.lastIndexOf("data-shared-preview-root") <
+      homeLoading.lastIndexOf("dangerouslySetInnerHTML"),
+  );
   assert.match(
     homeClient,
     /if \(dataSource\.mode === "local"\) \{\s*clearSharedSettingsPreview\(\);/,
