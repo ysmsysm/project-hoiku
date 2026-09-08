@@ -18,6 +18,10 @@ const membershipQuery = readFileSync(
   "src/lib/family-sharing/membership-query.ts",
   "utf8",
 );
+const sharedSettingsPreviewCache = readFileSync(
+  "src/lib/family-sharing/shared-settings-preview-cache.ts",
+  "utf8",
+);
 
 test("implemented family settings row navigates to the existing family route", () => {
   assert.match(
@@ -132,7 +136,7 @@ test("home first paint does not wait for shared daily bootstrap", () => {
   assert.match(homeLoading, /今日の持ち物を確認しています/);
   assert.match(homeLoading, /\{ label: "確認"/);
   assert.match(homeLoading, /\{ label: "準備"/);
-  assert.match(homeLoading, />\s*持ち物\s*<\/span>/);
+  assert.match(homeLoading, /\{preview \? "持ち物設定" : "持ち物"\}/);
   assert.match(homeLoading, /fixed inset-x-0 bottom-0/);
   assert.match(homeLoading, /\["確認", "持ち物", "設定"\]/);
   assert.match(sharedDailyAction, /^"use server";/);
@@ -152,6 +156,28 @@ test("home first paint does not wait for shared daily bootstrap", () => {
   assert.match(
     homeClient,
     /useEffect\(\(\) => \{\s*startDeferredSharedDailyLoad\(null\);\s*\}, \[startDeferredSharedDailyLoad\]\);/,
+  );
+});
+
+test("home loading previews static shared settings without cached daily state", () => {
+  assert.match(homeLoading, /loadSharedSettingsPreview\(\)/);
+  assert.match(homeLoading, /preview\.childName/);
+  assert.match(homeLoading, /preview\?\.items\.slice/);
+  assert.match(
+    homeClient,
+    /if \(dataSource\.mode === "local"\) \{\s*clearSharedSettingsPreview\(\);/,
+  );
+  assert.match(
+    homeClient,
+    /function SharedErrorScreen[\s\S]*?useEffect\(\(\) => \{\s*clearSharedSettingsPreview\(\);\s*\}, \[\]\);/,
+  );
+  assert.match(
+    homeClient,
+    /saveSharedSettingsPreview\(\{\s*childId: dataSource\.initialData\.childId,\s*childProfile,\s*customItems,\s*roughStates,/,
+  );
+  assert.doesNotMatch(
+    sharedSettingsPreviewCache,
+    /SharedDailyState|DailySession|PreparationSession/,
   );
 });
 

@@ -167,6 +167,10 @@ import {
 } from "../src/lib/family-sharing/daily-data";
 import { loadSharedSettingsWithClient } from "../src/lib/family-sharing/shared-settings-query";
 import {
+  clearSharedSettingsPreview,
+  saveSharedSettingsPreview,
+} from "../src/lib/family-sharing/shared-settings-preview-cache";
+import {
   isDeferredDailyItemMutationNoOp,
   isPreparedDailyItemMutationNoOp,
   updateDailyItem,
@@ -615,6 +619,10 @@ function SharedErrorScreen({
   const router = useRouter();
   const errorCopy = getHomeSharedErrorCopy(reason);
 
+  useEffect(() => {
+    clearSharedSettingsPreview();
+  }, []);
+
   return (
     <main className="min-h-dvh bg-background px-5 py-8 text-hoiku-ink">
       <div className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-[430px] items-center">
@@ -862,6 +870,21 @@ function HomeClientContent({
   const [roughStates, setRoughStates] = useState<Record<string, RoughState>>(
     () => initialRoughStates,
   );
+
+  useEffect(() => {
+    if (dataSource.mode === "local") {
+      clearSharedSettingsPreview();
+      return;
+    }
+
+    saveSharedSettingsPreview({
+      childId: dataSource.initialData.childId,
+      childProfile,
+      customItems,
+      roughStates,
+    });
+  }, [childProfile, customItems, dataSource, roughStates]);
+
   const [selectedTodayOnlyIds, setSelectedTodayOnlyIds] = useState<string[]>([]);
   const [spotAdditions, setSpotAdditions] = useState<SpotAddition[]>([]);
   const [spotDeadlines, setSpotDeadlines] = useState<Record<string, string>>({});
