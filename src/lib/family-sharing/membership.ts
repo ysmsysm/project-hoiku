@@ -1,4 +1,4 @@
-import type { User } from "@supabase/supabase-js";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 import type { CurrentFamilyMembership } from "../../types/family";
 import { createClient } from "../supabase/server";
 import {
@@ -27,7 +27,13 @@ export function getOwnerDisplayName(user: User) {
 export async function getCurrentFamilyMembership(
   user: Pick<User, "id">,
 ): Promise<CurrentFamilyMembership | null> {
-  const supabase = await createClient();
+  return getCurrentFamilyMembershipWithClient(await createClient(), user);
+}
+
+export async function getCurrentFamilyMembershipWithClient(
+  supabase: SupabaseClient,
+  user: Pick<User, "id">,
+): Promise<CurrentFamilyMembership | null> {
   const { data, error } = await supabase
     .from("family_members")
     .select(currentFamilyMembershipSelect)

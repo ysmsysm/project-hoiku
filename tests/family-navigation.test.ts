@@ -60,6 +60,27 @@ test("membership reuses its embedded family status without a second query", () =
   assert.doesNotMatch(membership, /\.select\("sharing_started_at"\)/);
 });
 
+test("home reuses one request client for claims, membership, and shared settings", () => {
+  assert.equal(homePage.match(/createClient\(\)/g)?.length, 1);
+  assert.match(
+    homePage,
+    /const dataSourcePromise = createClient\(\)\.then\(\(supabase\) =>/,
+  );
+  assert.match(
+    homePage,
+    /getCurrentUserIdentityResultWithClient\(supabase\)/,
+  );
+  assert.match(
+    homePage,
+    /getCurrentFamilyMembershipWithClient\(supabase, user\)/,
+  );
+  assert.match(homePage, /loadSharedSettingsWithClient\(supabase, familyId\)/);
+  assert.match(
+    membership,
+    /return getCurrentFamilyMembershipWithClient\(await createClient\(\), user\);/,
+  );
+});
+
 test("family page returns to an explicitly requested settings tab", () => {
   assert.match(familyPage, /href="\/\?tab=settings"/);
   assert.match(familyPage, />\s*設定へ戻る\s*<\/Link>/);
@@ -99,7 +120,11 @@ test("settings return is one-shot so a later local or shared reload defaults to 
 test("home first paint does not wait for shared daily bootstrap", () => {
   assert.match(
     homePage,
-    /Promise\.all\(\[\s*searchParams,[\s\S]*\{ deferSharedDailyData: true \}/,
+    /const dataSourcePromise = createClient\(\)\.then\([\s\S]*\{ deferSharedDailyData: true \}/,
+  );
+  assert.match(
+    homePage,
+    /Promise\.all\(\[\s*searchParams,\s*dataSourcePromise,\s*\]\)/,
   );
   assert.match(homeLoading, /aria-busy="true"/);
   assert.match(homeLoading, /bg-\[#FFFBF2\]/);
